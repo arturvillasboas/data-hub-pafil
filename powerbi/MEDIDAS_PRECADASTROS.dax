@@ -1,0 +1,278 @@
+// =============================================================================
+// Medidas — página "Pré Cadastro" (funil de crédito), sobre a GOLD
+// (gold.fato_precadastros). Reimplementação da página "Pré Cadastro" do BI
+// Matriz legado (REGRAS_NEGOCIO.md DP-05 / KPI-25..27 / KPI-37), decifrada de
+// _bi_ref/matriz_model.bim + matriz_report.json (35 visuais na página).
+//
+// ETAPA BI / BI DETALHADA (DP-05): a "Situação" crua do CVCRM não é o funil de
+// crédito que o negócio enxerga. silver.dpara_etapa_precadastro (aba Apoio do
+// Base - Crédito.xlsm, popular_seeds.py --etapa-precadastro) traduz:
+//   Situação -> etapa_bi (Montagem de Pasta / Análise Documental / Análise de
+//   Crédito / Crédito Aprovado / Crédito Reprovado / Com Reserva / Ajustes /
+//   Cancelada / Vencida) + etapa_bi_detalhada (a mesma, numerada "0."->"6.").
+// Carga 24/jul/2026: 24 linhas, cobertura 6.513/6.518 pré-cadastros (99,9%;
+// só "Conferência GV" e "Montagem de Pasta2" sem match — situações novas,
+// adicionar na aba Apoio quando aparecerem de novo).
+//
+// SITUAÇÃO DA RESERVA: gold.fato_precadastros liga de volta em
+// gold.fato_reservas por id_precadastro (a reserva "sabe" de qual pré-cadastro
+// nasceu). Os CÓDIGOS da esteira desta base são DIFERENTES da numeração do BI
+// Matriz legado (ex.: aqui "14. Vendida"/"16. Distrato"; lá era "12."/"14.") —
+// mesmo conceito, número mudou porque a esteira (dpara_situacao_esteira) é
+// nossa, não a importada do legado. Cuidado ao portar qualquer filtro por
+// código numérico do legado: sempre conferir contra
+// gold.fato_reservas.situacao_tratada, não copiar o texto literal.
+//
+// EQUIPE / HOUSE-PARCERIAS / REGIONAL do corretor: NÃO são colunas da fato —
+// vêm de depara_corretor_headcount (relacionamento já existente por
+// corretor_chave, mesmo padrão de fato_leads/fato_reservas desde 21/jul/2026):
+//   depara_corretor_headcount[supervisor]      -> "Equipe Corretor" do legado
+//   depara_corretor_headcount[house_parcerias] -> "House ou Parceria" do legado
+//   depara_corretor_headcount[regional]        -> "Regional" (slicer EP/Empreend.)
+// O de-para "equipe_corretor" do legado (Corretor -> Categoria, xlsx separado)
+// foi supersedido por essa fonte — não recarregado (ver config/deparas.yml).
+//
+// APROVAÇÃO DE CRÉDITO / ENCAMINHADO AO CCA (24/jul/2026): as 2 colunas que
+// faltavam pros donuts "Aprovação de Crédito"/"Encaminhado ao CCA" do legado
+// — NÃO existem na API CVDW, só no export manual "Relatório Web" do CVCRM
+// (Crédito/Relatório Web/relatorios_precadastro.xlsx). Trazidas via nova
+// silver.precadastros_credito_manual (NÃO é de-para, é 1 linha/pré-cadastro
+// — popular_seeds.py --credito-manual) e ligadas em gold.fato_precadastros
+// por id_precadastro. Cobertura baixa É ESPERADA (~9%: 580/6.289 aprovação,
+// 539/6.289 CCA) — cobre só os pré-cadastros tocados pelo time de crédito;
+// NULL não é falha de match, é "ainda não chegou nessa etapa do fluxo".
+// Colunas: fato_precadastros[aprovacao_credito] / [encaminhado_cca].
+// São DONUTS NATIVOS do Power BI (legenda = a coluna, valores = [Qtd Pastas]
+// ou COUNTROWS) — não dá pra criar visual via powerbi-mcp (só o modelo
+// semântico), montar no Desktop.
+//
+// Validado no Postgres local (24/jul/2026, 6.518 pré-cadastros):
+//   Qtd Pastas 4.674 · Qtd Analise Documental 654 · Qtd Credito Avaliado 4.020 ·
+//   Qtd Credito Aprovado 3.292 · Taxa de Crédito Analisado 86,0% ·
+//   Taxa de Aprovação 81,9% · Qtd Vendida dos pré-cadastros 1.825 ·
+//   Taxa de Vendas 55,4%.
+// =============================================================================
+
+Qtd Pastas =                       // pré-cadastros exceto Montagem de Pasta e Cancelada
+CALCULATE (
+    COUNTROWS ( fato_precadastros ),
+    NOT ( fato_precadastros[etapa_bi_detalhada] IN { "0. Montagem de Pasta", "5. Cancelada" } )
+)
+
+Qtd Montagem Pasta =
+CALCULATE ( COUNTROWS ( fato_precadastros ), fato_precadastros[etapa_bi_detalhada] = "0. Montagem de Pasta" )
+
+Qtd Analise Documental =
+CALCULATE ( COUNTROWS ( fato_precadastros ), fato_precadastros[etapa_bi] = "Análise Documental" )
+
+Qtd Credito Avaliado =
+[Qtd Pastas] - [Qtd Analise Documental]
+
+// etapa_bi = Vencida herda o desfecho anterior quando já tinha sido aprovado
+// (mesma exceção do legado — sem isso, pré-cadastro aprovado que "venceu"
+// depois de ficar parado sumiria da métrica de aprovação).
+Qtd Credito Aprovado =
+CALCULATE (
+    COUNTROWS ( fato_precadastros ),
+    fato_precadastros[etapa_bi] IN { "Crédito Aprovado", "Com Reserva", "Ajustes" }
+        || (
+            fato_precadastros[etapa_bi] = "Vencida"
+            && fato_precadastros[situacao_anterior] IN {
+                "Crédito Aprovado", "Com Reserva", "Ajustes",
+                "Crédito Aprovado Condicionado",
+                "Crédito Aprovado c/ Pendência Comercial",
+                "Credito Aprovado s/ SICAQ",
+                "Crédito Aprovado com Restrição"
+            }
+        )
+)
+
+Taxa de Crédito Analisado =        // era "Divisao_Credito_Avaliado" no legado
+DIVIDE ( [Qtd Credito Avaliado], [Qtd Pastas] )
+
+Taxa de Aprovação =
+DIVIDE ( [Qtd Credito Aprovado], [Qtd Credito Avaliado] )
+
+// Pré-cadastro cuja reserva ligada chegou a Vendida ou Distrato (ver nota de
+// códigos da esteira no cabeçalho — NÃO são os códigos do legado).
+Qtd Vendida dos pré-cadastros =
+CALCULATE ( COUNTROWS ( fato_precadastros ), fato_precadastros[situacao_reserva] IN { "14. Vendida", "16. Distrato" } )
+
+Taxa de Vendas =
+DIVIDE ( [Qtd Vendida dos pré-cadastros], [Qtd Credito Aprovado] )
+
+// Grão já é 1 linha/id_precadastro na gold (o legado lia um CSV que podia
+// duplicar linha por atualização diária) — SUMX(DISTINCT...) mantido pelo
+// padrão do legado, mas equivale a um SUM direto aqui.
+Valor Aprovado Sem Duplicados =
+SUMX ( DISTINCT ( fato_precadastros[id_precadastro] ), CALCULATE ( MAX ( fato_precadastros[valor_aprovado] ) ) )
+
+// =============================================================================
+// HTML Content — mesmo padrão visual das medidas da página Leads (KPIs Leads
+// HTML / Funil Comercial HTML), adaptado para Pré Cadastro. CSS/HTML/proporções
+// preservados de propósito (pedido do dev, 24/jul/2026); só a lógica de dados
+// muda. Cole em visuais "HTML Content" (mesma extensão usada no resto do .pbix).
+// =============================================================================
+
+// 5 cards (Leads / Pastas / Crédito Avaliado / Crédito Aprovado / Vendas) —
+// pedido do dev (05/ago/2026): tirar os 2 cards de taxa (Tx Avaliação/Tx
+// Aprovação) e entrar com Leads no início, lendo como funil Leads -> Pastas ->
+// Avaliado -> Aprovado -> Vendas. "Leads" usa [Leads c/ Pre-cadastro]
+// (MEDIDAS_LEADS.dax) — só os leads que geraram pré-cadastro, não o total
+// bruto de leads, pra bater com o mesmo recorte do resto dos cards. "Vendas"
+// trocado (mesmo dia) pra [QTD Vendas (incl. distratadas)] de MEDIDAS_GOLD.dax
+// — KPI-08, fato_reservas[eh_venda_ou_distrato]=TRUE, definição R1 do
+// REGRAS_NEGOCIO.md — em vez de [Qtd Vendida dos pré-cadastros]; por isso a
+// taxa ao lado é recalculada na hora (_vendas / _aprovado) em vez de usar
+// [Taxa de Vendas], que ainda é a razão antiga (ambas medidas continuam
+// existindo, só o card mudou de fonte). Taxas de conversão (Tx
+// Avaliação/Aprovação/Vendas) seguem existindo como medidas e aparecem no
+// Funil Pré-Cadastro HTML logo abaixo — só saíram destes cards.
+// Card "Vendas" em verde (#00C36B), mesma cor da barra "Vendas" do funil abaixo.
+KPIs Pré-Cadastro HTML =
+
+VAR _leads = [Leads c/ Pre-cadastro]
+VAR _pastas = [Qtd Pastas]
+VAR _avaliado = [Qtd Credito Avaliado]
+VAR _aprovado = [Qtd Credito Aprovado]
+VAR _vendas = [QTD Vendas (incl. distratadas)]
+VAR _txVendas = DIVIDE ( _vendas, _aprovado )
+
+VAR _icoLeads = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2'></path><circle cx='9' cy='7' r='4'></circle><path d='M23 21v-2a4 4 0 0 0-3-3.87'></path><path d='M16 3.13a4 4 0 0 1 0 7.75'></path></svg>"
+
+VAR _icoPastas = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z'></path></svg>"
+
+VAR _icoAvaliado = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z'></path><polyline points='14 2 14 8 20 8'></polyline><line x1='16' y1='13' x2='8' y2='13'></line><line x1='16' y1='17' x2='8' y2='17'></line></svg>"
+
+VAR _icoAprovado = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M22 11.08V12a10 10 0 1 1-5.93-9.14'></path><polyline points='22 4 12 14.01 9 11.01'></polyline></svg>"
+
+VAR _icoVendas = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'></path><polyline points='9 22 9 12 15 12 15 22'></polyline></svg>"
+
+VAR _css =
+    "<style>" &
+    "html,body{margin:0;padding:0;height:100%;}" &
+    ".k{font-family:'Segoe UI Semibold','Segoe UI',Arial,sans-serif;font-weight:600;display:flex;flex-direction:row;gap:14px;width:100%;height:100%;box-sizing:border-box;}" &
+    ".k .c{position:relative;overflow:hidden;flex:1 1 0;background:#003254;color:#fff;border-radius:16px;padding:18px 22px;box-sizing:border-box;}" &
+    ".k .c.g{background:#6B7280;}" &
+    ".k .c.r{background:#8A1C1C;}" &
+    ".k .c.v{background:#00C36B;}" &                  // novo: card "Vendas" (verde, tom do funil)
+    ".k .ic{position:absolute;top:14px;right:18px;width:40px;height:40px;background:rgba(255,255,255,.15);border-radius:12px;display:flex;align-items:center;justify-content:center;}" &
+    ".k .ic svg{width:22px;height:22px;color:#fff;opacity:.95;}" &
+    ".k .l{font-size:22px;letter-spacing:.02em;opacity:.9;max-width:78%;}" &
+    ".k .v{font-size:48px;margin-top:8px;line-height:1;}" &
+    ".k .s{font-size:22px;opacity:.85;margin-top:6px;}" &
+    "</style>"
+
+RETURN
+    _css &
+    "<div class='k'>" &
+        "<div class='c'><div class='ic'>" & _icoLeads & "</div><div class='l'>LEADS</div><div class='v'>" &
+            FORMAT ( _leads, "#,0" ) & "</div><div class='s'>leads que geraram pré-cadastro</div></div>" &
+        "<div class='c'><div class='ic'>" & _icoPastas & "</div><div class='l'>PASTAS</div><div class='v'>" &
+            FORMAT ( _pastas, "#,0" ) & "</div><div class='s'>pré-cadastros no período</div></div>" &
+        "<div class='c'><div class='ic'>" & _icoAvaliado & "</div><div class='l'>CRÉDITO AVALIADO</div><div class='v'>" &
+            FORMAT ( _avaliado, "#,0" ) & "</div><div class='s'>documentação analisada</div></div>" &
+        "<div class='c'><div class='ic'>" & _icoAprovado & "</div><div class='l'>CRÉDITO APROVADO</div><div class='v'>" &
+            FORMAT ( _aprovado, "#,0" ) & "</div><div class='s'>avaliado -&gt; aprovado</div></div>" &
+        "<div class='c v'><div class='ic'>" & _icoVendas & "</div><div class='l'>VENDAS</div><div class='v'>" &
+            FORMAT ( _vendas, "#,0" ) & "</div><div class='s'>Tx Vendas " & FORMAT ( _txVendas, "0.0%" ) & " dos aprovados</div></div>" &
+    "</div>"
+
+// Funil Pastas -> Crédito Analisado -> Crédito Aprovado -> Venda (funil de
+// CRÉDITO). Barras horizontais PROPORCIONAIS ao valor, seta de conversão
+// encostada no fim de cada barra, badge "Total X%" (Pastas -> Venda) na barra
+// de Venda. Reusa as MESMAS medidas do KPIs Pré-Cadastro HTML (Taxa de
+// Crédito Analisado/Aprovação/Vendas) — os dois widgets sempre batem.
+//
+// 24/jul/2026 (8ª rodada): dimensionado pro visual real (870x796). Passou por
+// 64px → 48px → 58px → 42px (só o número) → esta rodada: BUG corrigido — a
+// barra "Venda" (menor valor do funil) ficava estreita demais pro número
+// (`1.825` aparecia cortado como `.825`, o dígito à esquerda saindo por fora
+// do fundo colorido). Fix: `_wMin` 100->170px (piso maior) + número
+// CENTRALIZADO na barra (era `justify-content:flex-end`, por isso vazava pra
+// fora à esquerda em vez de cortar dos dois lados). Barra também maior
+// (altura 135->160px) e legenda um pouco maior (23->27px).
+// `_wMax`/`_wMin` (largura máx/mín da barra em px) escalados junto — se o
+// visual for redimensionado no Desktop, reajustar estes números (não há como
+// ler o tamanho do visual via DAX).
+Funil Pré-Cadastro HTML =
+
+VAR _pastas = [Qtd Pastas]
+
+VAR _analisado = [Qtd Credito Avaliado]
+
+VAR _aprovado = [Qtd Credito Aprovado]
+
+VAR _venda = [Qtd Vendida dos pré-cadastros]
+
+VAR _max = MAX ( _pastas, MAX ( _analisado, MAX ( _aprovado, _venda ) ) )
+
+VAR _wMax = 330
+VAR _wMin = 170
+VAR _w1 = MAX ( _wMin, ROUND ( _wMax * DIVIDE ( _pastas, _max, 0 ), 0 ) )
+VAR _w2 = MAX ( _wMin, ROUND ( _wMax * DIVIDE ( _analisado, _max, 0 ), 0 ) )
+VAR _w3 = MAX ( _wMin, ROUND ( _wMax * DIVIDE ( _aprovado, _max, 0 ), 0 ) )
+VAR _w4 = MAX ( _wMin, ROUND ( _wMax * DIVIDE ( _venda, _max, 0 ), 0 ) )
+
+VAR _tx1 = [Taxa de Crédito Analisado]   // Pastas -> Crédito Analisado
+VAR _tx2 = [Taxa de Aprovação]           // Crédito Analisado -> Crédito Aprovado
+VAR _tx3 = [Taxa de Vendas]              // Crédito Aprovado -> Venda
+VAR _txT = DIVIDE ( _venda, _pastas, 0 ) // TOTAL: Pastas -> Venda
+
+VAR _linhas =
+    "<div class='row'>"
+        & "<div class='legend'><span class='dot p1'></span>Pastas</div>"
+        & "<div class='barwrap'>"
+            & "<div class='bar p1' style='width:" & FORMAT ( _w1, "0" ) & "px'>" & FORMAT ( _pastas, "#,0" ) & "</div>"
+            & "<div class='conv'><span class='seta'>↓</span>" & FORMAT ( _tx1, "0%" ) & "</div>"
+        & "</div>"
+        & "</div>"
+        & "<div class='row'>"
+        & "<div class='legend'><span class='dot p2'></span>Crédito Analisado</div>"
+        & "<div class='barwrap'>"
+            & "<div class='bar p2' style='width:" & FORMAT ( _w2, "0" ) & "px'>" & FORMAT ( _analisado, "#,0" ) & "</div>"
+            & "<div class='conv'><span class='seta'>↓</span>" & FORMAT ( _tx2, "0%" ) & "</div>"
+        & "</div>"
+        & "</div>"
+        & "<div class='row'>"
+        & "<div class='legend'><span class='dot p3'></span>Crédito Aprovado</div>"
+        & "<div class='barwrap'>"
+            & "<div class='bar p3' style='width:" & FORMAT ( _w3, "0" ) & "px'>" & FORMAT ( _aprovado, "#,0" ) & "</div>"
+            & "<div class='conv'><span class='seta'>↓</span>" & FORMAT ( _tx3, "0%" ) & "</div>"
+        & "</div>"
+        & "</div>"
+        & "<div class='row'>"
+        & "<div class='legend'><span class='dot p4'></span>Venda</div>"
+        & "<div class='barwrap'>"
+            & "<div class='bar p4' style='width:" & FORMAT ( _w4, "0" ) & "px'>" & FORMAT ( _venda, "#,0" ) & "</div>"
+            & "<div class='conv total'><b>Total " & FORMAT ( _txT, "0%" ) & "</b></div>"
+        & "</div>"
+        & "</div>"
+
+RETURN
+    "<style>"
+        & ".fp3{font-family:'Segoe UI',Arial,sans-serif;background:#fff;width:100%;height:100%;box-sizing:border-box;padding:27px 31px;display:flex;flex-direction:column;justify-content:center;gap:25px}"
+        & ".fp3 .row{display:flex;align-items:center;gap:18px}"
+        & ".fp3 .legend{flex:0 0 260px;display:flex;align-items:center;gap:9px;font-size:27px;font-weight:700;color:#16242f;white-space:nowrap}"
+        & ".fp3 .dot{width:15px;height:15px;min-width:15px;border-radius:4px;display:inline-block}"
+        & ".fp3 .barwrap{flex:1 1 auto;display:flex;align-items:center}"
+        & ".fp3 .bar{height:160px;border-radius:14px;display:flex;align-items:center;justify-content:center;padding:0 12px;color:#fff;font-weight:800;font-size:42px;box-sizing:border-box;white-space:nowrap}"
+        & ".fp3 .p1{background:#0B3556}.fp3 .p2{background:#12578A}.fp3 .p3{background:#1C86C4}.fp3 .p4{background:#4FB6E8}"
+        & ".fp3 .conv{display:inline-flex;align-items:center;gap:7px;color:#0B3556;font-weight:700;font-size:25px;margin-left:16px;white-space:nowrap}"
+        & ".fp3 .conv .seta{color:#e2574c;font-size:29px;line-height:0}"
+        & ".fp3 .conv.total{color:#12578A}"
+        & ".fp3 .vazio{font-size:31px;color:#6b7c8c;text-align:center}"
+        & "</style>"
+        & "<div class='fp3'>"
+        & IF ( _max = 0, "<div class='vazio'>Sem dados no período</div>", _linhas )
+        & "</div>"
+
+// -----------------------------------------------------------------------------
+// PENDENTE (não modelado — sem fonte de dado ainda):
+// - "Pastas por Corretor" / "Pastas Gerentes House" com HC mensal: o legado usa
+//   "dpara headcount" (DATA, REGIONAL, HC) — série mensal de headcount por
+//   regional, para medir produtividade (pastas ÷ HC do mês). Não modelado
+//   ainda (o de-para "headcount" do config/deparas.yml está listado como
+//   arquivo, mas sem tabela silver/loader — só HeadCount/depara headcount.xlsx
+//   apontado). Fazer depois se o gestor pedir a métrica de produtividade.
+// =============================================================================

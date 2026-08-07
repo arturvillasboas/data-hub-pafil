@@ -1,0 +1,98 @@
+KPIs Leads HTML =
+
+VAR _prospects =
+    DISTINCTCOUNT(
+        fato_leads[id_lead] )
+
+VAR _ativos =
+    CALCULATE(
+         DISTINCTCOUNT( fato_leads[id_lead] ),
+          fato_leads[atv/recept 2] = "Ativo" )
+
+VAR _receptivos =
+    CALCULATE(
+         DISTINCTCOUNT(fato_leads[id_lead]),
+          fato_leads[atv/recept 2] = "Receptivo" )
+
+VAR _leadsPasta =
+    CALCULATE(
+         DISTINCTCOUNT ( fato_leads[id_lead] ),
+         TREATAS(
+            VALUES( fato_precadastros[id_lead] ), fato_leads[id_lead] ))
+
+VAR _txAvanco =
+    DIVIDE ( _leadsPasta, _prospects )
+
+// Taxa de qualificação: repassado ao corretor = etapa 04 até "10. Descartado
+// Corretor" (INCLUI descartado depois de já qualificado). NÃO soma "10. Descartado
+// SDR" (descartado antes de sair da esteira do SDR, nunca foi qualificado) nem as
+// etapas 00-03 (ainda na esteira do SDR, sem decisão). Escopo canal 2.0="Lead" nos
+// DOIS lados (numerador e denominador) — só a esteira de Lead passa por 00-03/
+// Descartado SDR; sem o filtro simétrico no denominador, leads de Painel Corretor
+// (que não passam pelo SDR e por isso "qualificam" quase automaticamente) inflavam
+// a taxa (80,0% -> 34,5% ao corrigir, validado 23/jul/2026).
+VAR _prospectsLead =
+    CALCULATE ( _prospects, fato_leads[canal 2.0] = "Lead" )
+
+VAR _qualificados =
+    CALCULATE(
+         DISTINCTCOUNT ( fato_leads[id_lead] ),
+         fato_leads[canal 2.0] = "Lead",
+         NOT ( fato_leads[Situação Leads Tratada 2.0] IN {
+             "00. Aguardando Atendimento SDR",
+             "01. Aguardando Resposta Cliente SDR",
+             "02. Atendimento SDR",
+             "03. Interesse SDR",
+             "10. Descartado SDR"
+         } ) )
+
+VAR _txQualificacao =
+    DIVIDE ( _qualificados, _prospectsLead )
+
+VAR _descartes =
+    CALCULATE(
+         DISTINCTCOUNT ( fato_leads[id_lead] ),
+          fato_leads[Situação] = "Perdido" )
+
+VAR _icoProsp = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2'></path><circle cx='9' cy='7' r='4'></circle><path d='M23 21v-2a4 4 0 0 0-3-3.87'></path><path d='M16 3.13a4 4 0 0 1 0 7.75'></path></svg>"
+
+VAR _icoAtivo = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='22 12 18 12 15 21 9 3 6 12 2 12'></polyline></svg>"
+
+VAR _icoRecep = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='22 12 16 12 14 15 10 15 8 12 2 12'></polyline><path d='M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z'></path></svg>"
+
+VAR _icoTx = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='23 6 13.5 15.5 8.5 10.5 1 18'></polyline><polyline points='17 6 23 6 23 12'></polyline></svg>"
+
+VAR _icoQuali = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2'></path><circle cx='8.5' cy='7' r='4'></circle><polyline points='17 11 19 13 23 9'></polyline></svg>"
+
+VAR _icoDesc = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2'></path><circle cx='8.5' cy='7' r='4'></circle><line x1='18' y1='8' x2='23' y2='13'></line><line x1='23' y1='8' x2='18' y2='13'></line></svg>"
+
+VAR _css =
+    "<style>" &
+    "html,body{margin:0;padding:0;height:100%;}" &
+    ".k{font-family:'Segoe UI Semibold','Segoe UI',Arial,sans-serif;font-weight:600;display:flex;flex-direction:row;gap:14px;width:100%;height:100%;box-sizing:border-box;}" &
+    ".k .c{position:relative;overflow:hidden;flex:1 1 0;background:#003254;color:#fff;border-radius:16px;padding:18px 22px;box-sizing:border-box;}" &
+    ".k .c.g{background:#6B7280;}" &
+    ".k .c.r{background:#8A1C1C;}" &
+    ".k .ic{position:absolute;top:14px;right:18px;width:40px;height:40px;background:rgba(255,255,255,.15);border-radius:12px;display:flex;align-items:center;justify-content:center;}" &
+    ".k .ic svg{width:22px;height:22px;color:#fff;opacity:.95;}" &
+    ".k .l{font-size:22px;letter-spacing:.02em;opacity:.9;max-width:78%;}" &
+    ".k .v{font-size:48px;margin-top:8px;line-height:1;}" &
+    ".k .s{font-size:22px;opacity:.85;margin-top:6px;}" &
+    "</style>"
+
+RETURN
+    _css &
+    "<div class='k'>" &
+        "<div class='c'><div class='ic'>" & _icoProsp & "</div><div class='l'>PROSPECTS</div><div class='v'>" &
+            FORMAT ( _prospects, "#,0" ) & "</div><div class='s'>leads no período</div></div>" &
+        "<div class='c'><div class='ic'>" & _icoAtivo & "</div><div class='l'>ATIVOS</div><div class='v'>" &
+            FORMAT ( _ativos, "#,0" ) & "</div><div class='s'>prospecção ativa</div></div>" &
+        "<div class='c'><div class='ic'>" & _icoRecep & "</div><div class='l'>RECEPTIVOS</div><div class='v'>" &
+            FORMAT ( _receptivos, "#,0" ) & "</div><div class='s'>prospecção receptiva</div></div>" &
+        "<div class='c'><div class='ic'>" & _icoTx & "</div><div class='l'>TX AVANÇO PRÉ-CAD</div><div class='v'>" &
+            FORMAT ( _txAvanco, "0.0%" ) & "</div><div class='s'>lead -&gt; pré-cadastro</div></div>" &
+        "<div class='c'><div class='ic'>" & _icoQuali & "</div><div class='l'>TX QUALIFICAÇÃO</div><div class='v'>" &
+            FORMAT ( _txQualificacao, "0.0%" ) & "</div><div class='s'>SDR -&gt; corretor (canal Lead)</div></div>" &
+        "<div class='c g'><div class='ic'>" & _icoDesc & "</div><div class='l'>DESCARTES</div><div class='v'>" &
+            FORMAT ( _descartes, "#,0" ) & "</div><div class='s'>perdidos (canal Lead+Painel C)</div></div>" &
+    "</div>"

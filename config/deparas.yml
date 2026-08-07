@@ -1,0 +1,129 @@
+# =============================================================================
+# Registro dos de-paras do projeto (BI V3 CVDW). Fonte unica de verdade do que
+# existe, de onde vem e como atualizar. Consumido por montar_estrutura_depara.py,
+# que materializa a estrutura versionada em <DEPARA_DIR>/depara_<nome>/{arquivo,caminho}.
+#
+# tipo:
+#   arquivo  -> copia um .xlsx/.xlsm de-para ja pronto (fonte_rel sob base_sharepoint)
+#   silver   -> materializa a tabela silver.<silver> para .xlsx (de-para hoje embutido no pipeline)
+#   gerado   -> arquivo produzido por um script do projeto (fonte = arquivo ja gerado)
+#   pendente -> ainda sem fonte local (documenta o buraco)
+# =============================================================================
+
+base_sharepoint: "C:/Users/Artur Filho/Pafil Construtora e Empreendimentos Imobiliarios/COMERCIAL - Documentos/GESTÃO COMERCIAL/Backoffice Comercial/BI - Comercial/Relatórios Comercial"
+
+deparas:
+  # ---- file-based (de-paras ja prontos no SharePoint) ----------------------
+  - nome: gerentes
+    silver: dpara_gerente_contexto
+    tipo: arquivo
+    fonte_rel: "BI V.2/BI Matriz/Gerentes/depara_gerentes.xlsx"
+    descricao: "Gerente Responsável (texto cru da reserva) -> share / house-parcerias / regional. So classificacao de reserva; NAO e fonte de equipe do corretor (ver corretor_headcount)."
+
+  - nome: corretor_headcount
+    silver: dpara_corretor_headcount
+    tipo: arquivo
+    fonte_rel: "HeadCount/Base Corretores Pafil 22-23.xlsx"
+    descricao: "Fonte AUTORITATIVA da equipe do corretor (Nome -> Gerente/Supervisor), planilha manual do backoffice (aba 'Base Pafil', so Ativos). Substitui a derivacao via CVDW/reserva como fonte primaria de equipe em gold.dim_corretor (21/jul/2026)."
+
+  - nome: empreendimentos
+    silver: dpara_empreendimento_regional
+    tipo: arquivo
+    fonte_rel: "BI V.2/BI Matriz/Empreendimentos/d_para empreendimentos.xlsx"
+    descricao: "Dimensão de empreendimento: regional, viabilidade e IVV (não vêm do CVDW)."
+
+  - nome: metas
+    silver: null
+    tipo: arquivo
+    fonte_rel: "BI V.2/BI Matriz/Meta.xlsx"
+    descricao: "Metas mensais de QTD/VGV por empreendimento."
+
+  - nome: estrutura_precos
+    silver: null
+    tipo: arquivo
+    fonte_rel: "BI V.2/BI Matriz/base_precos.xlsm"
+    descricao: "Estrutura/preço base por empreendimento e unidade."
+
+  - nome: headcount
+    silver: null
+    tipo: arquivo
+    fonte_rel: "BI V.2/BI Matriz/depara headcount.xlsx"
+    descricao: "Headcount por equipe/mês (base de CAC e produtividade)."
+
+  - nome: equipe_corretor
+    silver: dpara_equipe_corretor
+    tipo: arquivo
+    fonte_rel: "Crédito/Relatório Web/depara equipe corretor.xlsx"
+    descricao: "Corretor -> categoria/equipe (usado pelo legado só na página Pré Cadastro). SEM LOADER em popular_seeds.py de propósito: superado pelo mesmo padrão já decidido p/ leads (21/jul/2026) — gold.dim_corretor[equipe] (headcount do backoffice) é a fonte autoritativa de equipe/gerente do corretor. fato_precadastros relaciona por id_corretor -> dim_corretor, não por este xlsx."
+
+  - nome: canal_midia
+    silver: dpara_canal_midia
+    tipo: arquivo
+    fonte_rel: "Leads/Base de Leads.xlsm"
+    descricao: "Aba Apoio (Canal_Mídia/Canal/Mídia): 'Primeira Origem_Primeira Mídia' -> canal/mídia. Decide o canal 2.0 dos leads ATÉ out/24. Recarga: popular_seeds --leads-apoio."
+
+  - nome: canal_midia_dc
+    silver: dpara_canal_midia_dc
+    tipo: arquivo
+    fonte_rel: "Leads/Base de Leads.xlsm"
+    descricao: "Aba Apoio (CONCAT/CANAL/MÍDIA/ORIGEM DA MÍDIA): chave UTM (utm_source__utm_medium+form_url_última mídia!última origem) -> canal/mídia/tráfego. Decide o canal 2.0 PÓS-out/24. Recarga: popular_seeds --leads-apoio."
+
+  # ---- gerado por script do projeto ----------------------------------------
+  - nome: classificacao
+    silver: null
+    tipo: gerado
+    fonte_rel: "de_para_classificacao.xlsx"   # relativo a DEPARA_DIR (saida do gerador)
+    descricao: "Classificação oficial por proposta (origem/canal/mídia/é lead/house-parcerias/on-off/reciclagem/ativação/roleta). Gerado por gerar_depara_classificacao.py da Vendas Consolidadas."
+
+  # ---- materializados do silver (hoje embutidos em JSON no pipeline) --------
+  - nome: empreendimento_produtos
+    silver: dpara_empreendimento
+    tipo: silver
+    descricao: "Produto (nome CRM) -> nome conformado + EP (aba DE_PARA_PRODUTOS)."
+  - nome: ativo_receptivo
+    silver: dpara_ativo_receptivo
+    tipo: arquivo
+    fonte_rel: "Leads/Base de Leads.xlsm"
+    descricao: "Aba Apoio (Canal/Lead ou Prospect): Canal -> Ativo/Receptivo/Diretoria. Recarga: popular_seeds --leads-apoio."
+  - nome: qualificacao_lead
+    silver: dpara_qualificacao_lead
+    tipo: arquivo
+    fonte_rel: "Leads/Base de Leads.xlsm"
+    descricao: "Aba Apoio (Situação/Qualificado?): situação do lead -> MQL. FALTAM as situações novas do CVDW (Em Contato/Em Negociação/Venda Realizada) — adicionar no Excel. Recarga: popular_seeds --leads-apoio."
+  - nome: ordem_etapa
+    silver: dpara_ordem_etapa
+    tipo: silver
+    descricao: "Etapa/situação -> ordem do funil."
+  - nome: situacao_esteira
+    silver: dpara_situacao_esteira
+    tipo: silver
+    descricao: "Situação da reserva -> situação tratada + ordem (esteira)."
+  - nome: imobiliaria_house
+    silver: dpara_imobiliaria_house
+    tipo: arquivo
+    fonte_rel: "BI V.2/BI Matriz/Gerentes/depara_gerentes.xlsx"
+    descricao: "Aba 'imobiliaria': escritorio -> Share / House-Parcerias / Regional. E por aqui que LEADS e PRE-CADASTROS ganham a classificacao que a reserva tem via depara gerentes (essas fatos nao tem 'Gerente Responsavel'; o que se sabe do corretor e o escritorio, vindo do headcount). Era hard-code em seeds.sql ate 21/jul/2026."
+  - nome: corretor_fora_ranking
+    silver: dpara_corretor_fora_ranking
+    tipo: silver
+    descricao: "Corretores de coordenação excluídos do ranking."
+  - nome: responsavel_imobiliaria
+    silver: dpara_responsavel_imobiliaria
+    tipo: silver
+    descricao: "Responsável -> imobiliária."
+
+  - nome: etapa_precadastro
+    silver: dpara_etapa_precadastro
+    tipo: arquivo
+    fonte_rel: "Crédito/Base - Crédito.xlsm"
+    descricao: "Aba Apoio (Etapa WKF/Etapa precadastro BI/Etapa precadastro BI Detalhada): situação crua do CVCRM -> etapa do funil de crédito (Montagem/Análise Documental/Análise de Crédito/Crédito Aprovado/Com Reserva/Ajustes/Cancelada/Vencida). Base do dashboard Pré Cadastro (DP-05). Recarga: popular_seeds --etapa-precadastro."
+
+  # ---- pendentes (SharePoint, ainda sem carga) -----------------------------
+  - nome: profissoes
+    silver: dpara_profissoes
+    tipo: pendente
+    descricao: "Profissão original -> micro/macro (perfil de cliente)."
+  - nome: feriados
+    silver: dpara_feriados
+    tipo: pendente
+    descricao: "Calendário de feriados (tempos médios / SLA em dias úteis)."

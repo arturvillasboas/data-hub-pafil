@@ -1,0 +1,6 @@
+﻿# Dependências do pipeline de ingestão CVDW -> bronze (Postgres).
+# Mantido enxuto de propósito: sem Spark/Airflow/ORM pesado.
+requests==2.32.3          # cliente HTTP da API CVDW
+psycopg[binary]==3.2.3    # driver PostgreSQL (psycopg 3, com binários inclusos)
+python-dotenv==1.0.1      # carrega variáveis de ambiente do .env
+PyYAML==6.0.2             # leitura do config/objetos.yml

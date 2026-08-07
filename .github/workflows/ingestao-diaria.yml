@@ -1,0 +1,51 @@
+﻿name: Ingestão CVDW diária
+
+# Roda a ingestão incremental todo dia e permite disparo manual (full/incremental).
+on:
+  schedule:
+    # 06:00 UTC ~ 03:00 no horário de Brasília (BRT, UTC-3).
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: "Modo de carga"
+        type: choice
+        options: [incremental, full]
+        default: incremental
+
+concurrency:
+  # Evita duas ingestões simultâneas (mesmo objeto, mesmo dia).
+  group: ingestao-cvdw
+  cancel-in-progress: false
+
+jobs:
+  ingestao:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Rodar ingestão
+        env:
+          CVCRM_SUBDOMINIO: ${{ secrets.CVCRM_SUBDOMINIO }}
+          CVCRM_EMAIL: ${{ secrets.CVCRM_EMAIL }}
+          CVCRM_TOKEN: ${{ secrets.CVCRM_TOKEN }}
+          CVCRM_HEADER_EMAIL: ${{ vars.CVCRM_HEADER_EMAIL || 'email' }}
+          CVCRM_HEADER_TOKEN: ${{ vars.CVCRM_HEADER_TOKEN || 'token' }}
+          PG_HOST: ${{ secrets.PG_HOST }}
+          PG_PORT: ${{ secrets.PG_PORT }}
+          PG_DB: ${{ secrets.PG_DB }}
+          PG_USER: ${{ secrets.PG_USER }}
+          PG_PASSWORD: ${{ secrets.PG_PASSWORD }}
+          PG_SSLMODE: ${{ vars.PG_SSLMODE || 'require' }}
+          BRONZE_SCHEMA: ${{ vars.BRONZE_SCHEMA || 'bronze' }}
+        run: |
+          python ingestao.py --${{ github.event.inputs.modo || 'incremental' }}

@@ -1,0 +1,36 @@
+﻿# =============================================================================
+# Objetos do CVDW a ingerir na camada bronze.
+#
+# Cada item:
+#   nome_logico : nome da tabela em bronze (ex.: bronze.reservas)
+#   path        : caminho do endpoint após /api/v1/cvdw/  (ex.: reservas/contratos)
+#   id          : campo de chave de negócio usado no upsert. Opções:
+#                   auto        -> detecta automaticamente (campo 'id', 'id<obj>',
+#                                  etc.) E valida que é único na amostra.
+#                   <nome_campo> -> fixa manualmente o campo (ex.: idreserva).
+#                   ~ (null)    -> força o uso do hash técnico da linha.
+#
+# Se o id detectado/fixado NÃO for único na amostra (caso típico de tabelas
+# "filhas", ex.: comissões por reserva), a descoberta cai automaticamente para
+# o hash técnico da linha (_hash_linha), evitando perda de registros no upsert.
+# =============================================================================
+objetos:
+  - { nome_logico: reservas,                        path: reservas,                       id: auto }
+  - { nome_logico: reservas_contratos,              path: reservas/contratos,             id: auto }
+  - { nome_logico: reservas_comissoes,              path: reservas/comissoes,             id: auto }
+  - { nome_logico: reservas_historico_situacoes,    path: reservas/historico/situacoes,   id: auto }
+  - { nome_logico: reservas_condicoes,              path: reservas/condicoes,             id: auto }
+  - { nome_logico: leads,                           path: leads,                          id: auto }
+  - { nome_logico: leads_infos,                     path: leads/infos,                    id: auto }
+  - { nome_logico: leads_conversoes,                path: leads/conversoes,               id: auto }
+  - { nome_logico: comissoes,                       path: comissoes,                      id: auto }
+  - { nome_logico: comissoes_pagamentos,            path: comissoes/pagamentos,           id: auto }
+  - { nome_logico: precadastros,                    path: precadastros,                   id: auto }
+  - { nome_logico: precadastro_historico_situacoes, path: precadastro/historico/situacoes, id: auto }
+  - { nome_logico: vendas,                          path: vendas,                         id: auto }
+  - { nome_logico: distratos,                       path: distratos,                      id: auto }
+  - { nome_logico: unidades,                        path: unidades,                       id: auto }
+  - { nome_logico: corretores,                      path: corretores,                     id: auto }
+  - { nome_logico: imobiliarias,                    path: imobiliarias,                   id: auto }
+  - { nome_logico: pessoas,                         path: pessoas,                        id: auto }
+  - { nome_logico: campos_adicionais,               path: campos_adicionais,              id: auto }

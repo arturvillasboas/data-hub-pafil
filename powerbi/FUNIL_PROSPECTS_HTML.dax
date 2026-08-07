@@ -1,0 +1,90 @@
+// =============================================================================
+// Funil Prospects → Pré-Cadastros → Vendas em HTML/CSS — medidas DAX para o
+// visual "HTML Content" (Daniel Marsh-Patrick, grátis no AppSource). A medida
+// devolve uma STRING HTML; o visual só renderiza. Substitui a imagem estática
+// colada no relatório (sem responsividade) por um funil que reage a filtros/
+// slicers da página. Mesmo padrão do funil em ESTEIRA_HTML.dax.
+//
+// Pré-requisitos no modelo:
+//   - fato_leads[id_lead]
+//   - f_precadastros[ID], f_precadastros[siutacao]
+//   - f_reservas[Situação]
+//   ⚠️ Esses nomes (f_precadastros/f_reservas, sem prefixo "fato_") são os que
+//   vieram do modelo atual — confirme se não é o legado BI Matriz antes de colar.
+//
+// Paleta Pafil: navy #003254 · navy2 #0a4a73 · verde #00c36b
+// =============================================================================
+
+
+// ---- 1) Medidas-base do funil (como pedido) ---------------------------------
+Prospects = DISTINCTCOUNT ( fato_leads[id_lead] )
+
+'Pré-Cadastros' =
+CALCULATE(
+    COUNTROWS(
+        DISTINCT(
+            SELECTCOLUMNS(
+                FILTER(
+                    f_precadastros,
+                    NOT f_precadastros[siutacao] IN {"Montagem de Pasta", "Cancelada"}
+                ),
+                "ID", f_precadastros[ID]
+            )
+        )
+    )
+)
+
+Vendas =
+VAR Resultado =
+    CALCULATE(
+        COUNTROWS(f_reservas),
+        f_reservas[Situação] IN {"Vendida", "Distrato"}
+    )
+RETURN
+    IF(ISBLANK(Resultado), 0, Resultado)
+
+
+// ---- 2) Funil visual (trapézios afunilando, largura ∝ quantidade) -----------
+// Cada etapa é um trapézio (clip-path) cuja base já é a largura da etapa
+// seguinte, dando o efeito de funil contínuo (não barras soltas). A largura
+// de cada etapa é relativa ao maior dos três valores (normalmente Prospects).
+// dica: o tamanho do funil é controlado só pelo "font-size:26px" do .fp
+//       (a régua toda é em "em"). Mude só esse número para escalar.
+Funil Comercial HTML =
+VAR _p    = [Prospects]
+VAR _c    = [Pré-Cadastros]
+VAR _v    = [Vendas]
+VAR _max  = MAX ( _p, MAX ( _c, _v ) )
+VAR _wP   = DIVIDE ( _p, _max, 0 ) * 100
+VAR _wC   = DIVIDE ( _c, _max, 0 ) * 100
+VAR _wV   = DIVIDE ( _v, _max, 0 ) * 100
+VAR _bC   = MIN ( _wC, _wP )                          // base da 1ª etapa nunca "abre" além da própria largura
+VAR _bV   = MIN ( _wV, _wC )                          // base da 2ª etapa
+VAR _insP = DIVIDE ( _wP - _bC, 2 * _wP, 0 ) * 100     // recuo (%) do trapézio na base da 1ª etapa
+VAR _insC = DIVIDE ( _wC - _bV, 2 * _wC, 0 ) * 100     // recuo (%) na base da 2ª etapa
+VAR _txC  = DIVIDE ( _c, _p, 0 )                       // conversão Prospect -> Pré-Cadastro
+VAR _txV  = DIVIDE ( _v, _c, 0 )                       // conversão Pré-Cadastro -> Venda
+VAR _funil =
+    "<div class='et'><div class='rot'>Prospects</div>"
+    & "<div class='barra p1' style='width:" & FORMAT ( _wP, "0" ) & "%;clip-path:polygon(0% 0%,100% 0%,"
+    & FORMAT ( 100 - _insP, "0" ) & "% 100%," & FORMAT ( _insP, "0" ) & "% 100%)'>" & FORMAT ( _p, "#,0" ) & "</div></div>"
+    & "<div class='conv'>conversão <b>" & FORMAT ( _txC, "0.0%" ) & "</b></div>"
+    & "<div class='et'><div class='rot'>Pré-Cadastros</div>"
+    & "<div class='barra p2' style='width:" & FORMAT ( _wC, "0" ) & "%;clip-path:polygon(0% 0%,100% 0%,"
+    & FORMAT ( 100 - _insC, "0" ) & "% 100%," & FORMAT ( _insC, "0" ) & "% 100%)'>" & FORMAT ( _c, "#,0" ) & "</div></div>"
+    & "<div class='conv'>conversão <b>" & FORMAT ( _txV, "0.0%" ) & "</b></div>"
+    & "<div class='et'><div class='rot'>Vendas</div>"
+    & "<div class='barra p3' style='width:" & FORMAT ( _wV, "0" ) & "%'>" & FORMAT ( _v, "#,0" ) & "</div></div>"
+RETURN
+"<style>"
+& ".fp{font-family:'Segoe UI',Arial,sans-serif;font-size:26px;background:#fff;padding:.8em 1em 1em;display:flex;flex-direction:column;align-items:center}"
+& ".fp .et{width:100%;display:flex;flex-direction:column;align-items:center}"
+& ".fp .rot{font-size:.6em;font-weight:700;color:#16242f;text-transform:uppercase;letter-spacing:.03em;margin-bottom:.3em}"
+& ".fp .barra{height:2.1em;min-width:2.1em;display:flex;align-items:center;justify-content:center;color:#fff;font-size:1.05em;font-weight:800;transition:width .3s}"
+& ".fp .p1{background:#003254}.fp .p2{background:#0a4a73}.fp .p3{background:#00c36b}"
+& ".fp .conv{font-size:.52em;font-weight:700;color:#6b7c8c;margin:.4em 0}.fp .conv b{color:#003254}"
+& ".fp .vazio{font-size:.6em;color:#6b7c8c;padding:1em 0}"
+& "</style>"
+& "<div class='fp'>"
+& IF ( _max = 0, "<div class='vazio'>Sem dados no período</div>", _funil )
+& "</div>"

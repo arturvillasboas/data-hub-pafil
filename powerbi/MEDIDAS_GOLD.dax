@@ -1,0 +1,83 @@
+// =============================================================================
+// Medidas DAX — núcleo de vendas, sobre a camada GOLD (gold.fato_reservas).
+//
+// Reimplementação das medidas autoritativas do REGRAS_NEGOCIO.md (KPI-*) já
+// reconciliadas: o legado dependia de f_reservas (CSV manual); aqui apontam para
+// a fato vinda da API (silver -> gold). Cole numa tabela de medidas no Power BI.
+//
+// Tabelas (importadas do schema gold): fato_reservas, dim_calendario,
+// dim_empreendimento, dim_unidade, dim_corretor.
+// Colunas-chave da fato: valor_contrato, valor_distrato, eh_venda (bool),
+// eh_venda_ou_distrato (bool), eh_distrato (bool), data_venda, data_distrato.
+// =============================================================================
+
+// ---- Quantidades ----
+QTD Bruto =                       // KPI-04
+CALCULATE ( COUNTROWS ( fato_reservas ), fato_reservas[eh_venda] = TRUE () )
+
+QTD Distratos =                   // KPI-05
+CALCULATE ( COUNTROWS ( fato_reservas ), fato_reservas[eh_distrato] = TRUE () )
+
+QTD Líquido = [QTD Bruto] - [QTD Distratos]   // KPI-06
+
+// ---- VGV (R$) ----
+VGV Bruto =                       // KPI-01
+CALCULATE ( SUM ( fato_reservas[valor_contrato] ), fato_reservas[eh_venda] = TRUE () )
+
+VGV Distrato =                    // KPI-02
+CALCULATE ( SUM ( fato_reservas[valor_contrato] ), fato_reservas[eh_distrato] = TRUE () )
+
+VGV Líquido = [VGV Bruto] - [VGV Distrato]    // KPI-03
+
+// ---- Derivadas ----
+Ticket Médio = DIVIDE ( [VGV Bruto], [QTD Bruto] )            // KPI-09
+
+Taxa de Distrato = DIVIDE ( [QTD Distratos], [QTD Bruto] )    // KPI-18
+
+// ---- R1: definição alternativa de "venda" (Vendida ∪ Distrato) -------------
+// O legado usa as DUAS em contextos diferentes. Exponha ambas e deixe a gestão
+// decidir a autoritativa (ver REGRAS_NEGOCIO.md R1).
+QTD Vendas (incl. distratadas) =  // KPI-08
+CALCULATE ( COUNTROWS ( fato_reservas ), fato_reservas[eh_venda_ou_distrato] = TRUE () )
+
+VGV (incl. distratadas) =
+CALCULATE ( SUM ( fato_reservas[valor_contrato] ), fato_reservas[eh_venda_ou_distrato] = TRUE () )
+
+// ---- Time intelligence (relacionamento ativo dim_calendario[data] -> data_venda) ----
+VGV Bruto YTD =
+CALCULATE ( [VGV Bruto], DATESYTD ( dim_calendario[data] ) )
+
+VGV Bruto MoM % =
+VAR _atual = [VGV Bruto]
+VAR _ant = CALCULATE ( [VGV Bruto], DATEADD ( dim_calendario[data], -1, MONTH ) )
+RETURN DIVIDE ( _atual - _ant, _ant )
+
+// NOTA distratos por mês: a fato relaciona dim_calendario por data_venda (ativo).
+// Para "distratos no mês do distrato", crie um relacionamento INATIVO
+// dim_calendario[data] -> fato_reservas[data_distrato] e ative com USERELATIONSHIP
+// dentro de [VGV Distrato].
+
+
+// ---- Metas / Forecast (dim_metas_empreendimentos, grão = empreendimento × mês) -------
+// Requer as relações: dim_calendario[data] 1─* dim_metas_empreendimentos[data]  E
+//                     dim_empreendimento 1─* dim_metas_empreendimentos.
+// Ajuste os nomes de coluna se diferirem (confirme em dim_metas_empreendimentos).
+
+Meta VGV = SUM ( dim_metas_empreendimentos[meta_vgv] )
+
+Meta QTD = SUM ( dim_metas_empreendimentos[meta_qtd] )
+
+Forecast VGV = SUM ( dim_metas_empreendimentos[forecast_vgv] )
+
+// Atingimento = realizado ÷ meta. Uso VGV Bruto (como o legado "Diferenca_meta");
+// troque por [VGV Líquido] se a meta for líquida de distrato.
+% Atingimento VGV = DIVIDE ( [VGV Bruto], [Meta VGV] )
+
+% Atingimento QTD = DIVIDE ( [QTD Bruto], [Meta QTD] )
+
+% Forecast VGV = DIVIDE ( [VGV Bruto], [Forecast VGV] )
+
+// Acumulado no ano (YTD)
+Meta VGV YTD = CALCULATE ( [Meta VGV], DATESYTD ( dim_calendario[data] ) )
+
+% Atingimento VGV YTD = DIVIDE ( [VGV Bruto YTD], [Meta VGV YTD] )

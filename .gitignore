@@ -1,0 +1,35 @@
+﻿# === Segredos / ambiente ===
+.env
+.env.*
+!.env.example
+
+# === Schema gerado pela descoberta (pode conter exemplos de dados reais) ===
+schema/cvdw_schema.json
+schema/cvdw_schema_report.md
+cvdw_schema.json
+cvdw_schema_report.md
+
+# === Python ===
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+
+# === Logs ===
+*.log
+
+# === Backups locais de planilha (histórico de edição, sem valor de documentação) ===
+_backups_fechamento/
+
+# === Claude Code ===
+.claude/
+
+# === Editores / SO ===
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,16 @@
+{
+  "version": "0.1",
+  "connections": [
+    {
+      "details": {
+        "protocol": "postgresql",
+        "address": {
+          "server": "localhost:5433",
+          "database": "pafil_dw"
+        }
+      },
+      "options": {},
+      "mode": "Import"
+    }
+  ]
+}
