@@ -1,22 +1,24 @@
 // =============================================================================
-// Esteira de Vendas em HTML/CSS — medidas DAX para o visual "HTML Content"
-// (Daniel Marsh-Patrick, grátis no AppSource). Cada medida devolve uma STRING
+// Esteira de Vendas em HTML/CSS — medida DAX para o visual "HTML Content"
+// (Daniel Marsh-Patrick, grátis no AppSource). A medida devolve uma STRING
 // HTML; o visual renderiza. Mesmo padrão dos cards/sparklines do BI legado.
 //
 // Pré-requisitos no modelo:
-//   - fato_reservas com: situacao_tratada, situacao_ordem, valor_contrato,
-//     eh_venda, regional, house_parcerias (tudo já vem da gold).
-//   - Medidas [VGV Bruto] e [QTD Bruto] (do MEDIDAS_GOLD.dax).
+//   - fato_reservas com: valor_contrato, m2_unidade, situacao_ordem.
 //   - dim_calendario marcada como tabela de datas (p/ o slicer de mês filtrar).
 //
 // Paleta Pafil: navy #003254 · navy2 #0a4a73 · verde #00c36b · vermelho #e2574c
+//
+// Poda (ago/2026): mantida só "KPIs Esteira HTML", confirmada ligada ao card da
+// página "Acompanhamento de reservas". Removidas "Preço M2" (medida solta, não
+// referenciada por nada — KPIs Esteira HTML recalcula o m² inline) e "Esteira
+// Funil HTML" (não amarrada a nenhum visual da página hoje — pode ter sido
+// substituída por outro visual ou ainda não colada no Desktop). Recuperáveis
+// no git se o funil da esteira for montado como HTML Content.
 // =============================================================================
 
 
-// Preço médio por m²: soma do valor do contrato ÷ soma do m² da unidade.
-Preço M2 = DIVIDE ( SUM ( fato_reservas[valor_contrato] ), SUM ( fato_reservas[m2_unidade] ) )
-
-// ---- 1) Cards de KPI (VGV, QTD, Ticket, Preço m², Pipeline) ------------------
+// ---- Cards de KPI (VGV, QTD, Ticket, Preço m², Pipeline) --------------------
 // Fontes escaladas ~2,3x p/ página grande (3250x3000). Calibre .v/.l/.s ao tamanho do visual.
 KPIs Esteira HTML =
 VAR _vgv  = SUM ( fato_reservas[valor_contrato] )         // troque por [VGV Bruto] se quiser só vendas
@@ -36,40 +38,3 @@ RETURN
 & "<div class='c'><div class='l'>PREÇO M²</div><div class='v'>R$ " & FORMAT ( _m2/1000, "0.0" ) & " mil</div><div class='s'>por m²</div></div>"
 & "<div class='c g'><div class='l'>PIPELINE ABERTO</div><div class='v'>" & _pipe & "</div><div class='s'>em aberto</div></div>"
 & "</div>"
-
-
-// ---- 2) Funil da esteira (segmentos CENTRALIZADOS, largura ∝ quantidade) -----
-// Forma de funil: cada situação é um segmento centrado, empilhado na ordem do funil.
-// Para o "funil clássico" que só estreita, troque a ordenação final por:
-//   CALCULATE ( COUNTROWS ( fato_reservas ) ), DESC
-Esteira Funil HTML =
-VAR _maxN =
-    MAXX ( VALUES ( fato_reservas[situacao_tratada] ), CALCULATE ( COUNTROWS ( fato_reservas ) ) )
-VAR _linhas =
-    CONCATENATEX (
-        VALUES ( fato_reservas[situacao_tratada] ),
-        VAR _st  = fato_reservas[situacao_tratada]
-        VAR _n   = CALCULATE ( COUNTROWS ( fato_reservas ) )
-        VAR _vgv = CALCULATE ( SUM ( fato_reservas[valor_contrato] ) )
-        VAR _w   = FORMAT ( DIVIDE ( _n, _maxN ) * 100, "0" )
-        VAR _cls =
-            SWITCH ( TRUE (),
-                LEFT ( _st, 2 ) = "14", "win",
-                LEFT ( _st, 2 ) IN { "15", "16" }, "lost",
-                "" )
-        RETURN
-            "<div class='row'><span class='lab'>" & _st & "</span>"
-            & "<span class='wrap'><span class='seg " & _cls & "' style='width:" & _w & "%'>" & _n & "</span></span>"
-            & "<span class='vg'>R$ " & FORMAT ( _vgv/1000000, "0.0" ) & " Mi</span></div>",
-        "",
-        fato_reservas[situacao_tratada], ASC
-    )
-RETURN
-"<style>.fn{font-family:'Segoe UI',Arial,sans-serif;background:#fff;border:1px solid #e6ebf0;border-radius:.3em;padding:.6em .8em;font-size:32px}"
-& ".fn .row{display:grid;grid-template-columns:9em 1fr 4.6em;align-items:center;gap:.5em}.fn .row+.row{margin-top:.22em}"
-& ".fn .lab{font-size:.95em;font-weight:600;color:#16242f;text-align:right}.fn .wrap{display:flex;justify-content:center}"
-& ".fn .seg{height:1.9em;background:#0a4a73;color:#fff;font-size:1em;font-weight:800;display:flex;align-items:center;justify-content:center;min-width:1.3em;border-radius:.14em}"
-& ".fn .seg.win{background:#00c36b}.fn .seg.lost{background:#e2574c}.fn .vg{font-size:.95em;font-weight:600;color:#6b7c8c}</style>"
-& "<div class='fn'>" & _linhas & "</div>"
-// dica: o tamanho do funil é controlado SÓ pelo "font-size:42px" lá no topo do .fn
-//       (42 = grande · 32 = médio · 24 = menor). Mude só esse número.

@@ -3,36 +3,20 @@
 // Complementa ESTEIRA_HTML.dax. Paleta Pafil: navy #003254 · verde #00c36b.
 //
 // Dependências:
-//   - Medidas [VGV Bruto], [QTD Bruto] (MEDIDAS_GOLD.dax) e [Meta VGV] (metas).
-//   - fato_reservas[regional]; dim_empreendimento[empreendimento_conformado];
-//     dim_calendario[trimestre]; dim_metas_empreendimentos relacionada a
-//     dim_calendario e dim_empreendimento (senão [Meta VGV] vem em branco).
+//   - Medidas [VGV Bruto] e [Meta VGV] (MEDIDAS_GOLD.dax).
+//   - dim_metas_empreendimentos relacionada a dim_calendario e dim_empreendimento
+//     (senão [Meta VGV] vem em branco).
+//
+// Poda (ago/2026): mantida só "Atingimento Gauge HTML", a única confirmada
+// ligada a um visual das 4 páginas do .pbix hoje. Removidas "VGV Regional HTML",
+// "Meta Realizado Empreend HTML" e "Meta Realizado Trimestre HTML" — nenhuma
+// aparecia amarrada a um visual; pareciam preparo para uma página de dashboard/
+// fechamento que ainda não existe neste arquivo. Recuperáveis no git se essa
+// página for montada.
 // =============================================================================
 
 
-// ---- 1) VGV por Regional (barras horizontais) -------------------------------
-VGV Regional HTML =
-VAR _max = MAXX ( VALUES ( fato_reservas[regional] ), [VGV Bruto] )
-VAR _rows =
-    CONCATENATEX (
-        VALUES ( fato_reservas[regional] ),
-        VAR _r   = fato_reservas[regional]
-        VAR _v   = [VGV Bruto]
-        VAR _pct = FORMAT ( DIVIDE ( _v, _max ), "0%" )
-        RETURN
-            "<div class='reg'><span class='n'>" & IF ( ISBLANK ( _r ), "s/ reg", _r ) & "</span>"
-            & "<span class='t'><span class='f' style='width:" & _pct & "'></span></span>"
-            & "<span class='val'>R$ " & FORMAT ( _v/1000000, "0.0" ) & " Mi</span></div>",
-        "", [VGV Bruto], DESC
-    )
-RETURN
-"<style>.rg{font-family:'Segoe UI',Arial,sans-serif}.rg .reg{display:grid;grid-template-columns:46px 1fr 70px;align-items:center;gap:10px;padding:6px 0}"
-& ".rg .n{font-size:12.5px;font-weight:700;color:#16242f}.rg .t{height:16px;background:#eef2f6;border-radius:5px;overflow:hidden}"
-& ".rg .f{height:100%;background:#0a4a73;border-radius:5px}.rg .val{font-size:12.5px;font-weight:700;color:#003254;text-align:right}</style>"
-& "<div class='rg'>" & _rows & "</div>"
-
-
-// ---- 2) Atingimento da Meta (medidor / gauge SVG) ---------------------------
+// ---- Atingimento da Meta (medidor / gauge SVG) ------------------------------
 Atingimento Gauge HTML =
 VAR _real  = [VGV Bruto]
 VAR _meta  = [Meta VGV]
@@ -55,54 +39,3 @@ RETURN
 & "<div><div class='k'>Meta</div><div class='x'>R$ " & FORMAT ( _meta/1000000, "0.0" ) & " Mi</div></div>"
 & "<div><div class='k'>Faltam</div><div class='x r'>R$ " & FORMAT ( _falta/1000000, "0.0" ) & " Mi</div></div>"
 & "</div></div>"
-
-
-// ---- 3) Meta × Realizado por Empreendimento (top 8, barra de progresso) ------
-Meta Realizado Empreend HTML =
-VAR _top = TOPN ( 8, VALUES ( dim_empreendimento[empreendimento_conformado] ), [VGV Bruto], DESC )
-VAR _rows =
-    CONCATENATEX (
-        _top,
-        VAR _e    = dim_empreendimento[empreendimento_conformado]
-        VAR _real = [VGV Bruto]
-        VAR _meta = [Meta VGV]
-        VAR _pct  = DIVIDE ( _real, _meta )
-        RETURN
-            "<div class='mr'><span class='e'>" & _e & "<div class='sub'>R$ "
-            & FORMAT ( _real/1000000, "0.0" ) & " / " & FORMAT ( _meta/1000000, "0.0" ) & " Mi</div></span>"
-            & "<span class='t'><span class='f' style='width:" & FORMAT ( MIN ( _pct, 1 ), "0%" ) & "'></span></span>"
-            & "<span class='pc'>" & FORMAT ( _pct, "0%" ) & "</span></div>",
-        "", [VGV Bruto], DESC
-    )
-RETURN
-"<style>.me{font-family:'Segoe UI',Arial,sans-serif}.me .mr{display:grid;grid-template-columns:140px 1fr 40px;align-items:center;gap:10px;padding:5px 0}"
-& ".me .e{font-size:12px;font-weight:600;color:#16242f}.me .sub{font-size:10.5px;color:#6b7c8c}.me .t{height:15px;background:#eef2f6;border-radius:4px;overflow:hidden}"
-& ".me .f{height:100%;background:#00c36b;border-radius:4px}.me .pc{font-size:12px;font-weight:800;color:#003254;text-align:right}</style>"
-& "<div class='me'>" & _rows & "</div>"
-
-
-// ---- 4) Meta × Realizado por Trimestre (barras agrupadas) -------------------
-Meta Realizado Trimestre HTML =
-VAR _maxV = MAXX ( VALUES ( dim_calendario[trimestre] ), MAX ( [VGV Bruto], [Meta VGV] ) )
-VAR _bars =
-    CONCATENATEX (
-        VALUES ( dim_calendario[trimestre] ),
-        VAR _q    = dim_calendario[trimestre]
-        VAR _real = [VGV Bruto]
-        VAR _meta = [Meta VGV]
-        VAR _hm   = FORMAT ( DIVIDE ( _meta, _maxV ) * 120, "0" )
-        VAR _hr   = FORMAT ( DIVIDE ( _real, _maxV ) * 120, "0" )
-        RETURN
-            "<div class='col'><div class='grp'>"
-            & "<div class='bar meta' style='height:" & _hm & "px'>" & FORMAT ( _meta/1000000, "0.0" ) & "</div>"
-            & "<div class='bar real' style='height:" & _hr & "px'>" & FORMAT ( _real/1000000, "0.0" ) & "</div>"
-            & "</div><div class='lab'>" & _q & "</div></div>",
-        "", dim_calendario[trimestre], ASC
-    )
-RETURN
-"<style>.tr{font-family:'Segoe UI',Arial,sans-serif}.tr .tri{display:flex;gap:26px;align-items:flex-end;justify-content:center;height:150px}"
-& ".tr .grp{display:flex;gap:8px;align-items:flex-end}.tr .bar{width:34px;border-radius:5px 5px 0 0;color:#fff;font-size:10.5px;font-weight:700;text-align:center;padding-top:4px}"
-& ".tr .meta{background:#c3ced8;color:#003254}.tr .real{background:#003254}.tr .lab{text-align:center;font-size:12px;font-weight:700;margin-top:6px}"
-& ".tr .leg2{display:flex;gap:14px;justify-content:center;margin-top:8px;font-size:11px;color:#6b7c8c}.tr .dot{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px}</style>"
-& "<div class='tr'><div class='tri'>" & _bars & "</div>"
-& "<div class='leg2'><span><span class='dot' style='background:#c3ced8'></span>Meta</span><span><span class='dot' style='background:#003254'></span>Realizado</span> · R$ Mi</div></div>"

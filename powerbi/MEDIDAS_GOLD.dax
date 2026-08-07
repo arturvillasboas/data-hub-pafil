@@ -9,6 +9,15 @@
 // dim_empreendimento, dim_unidade, dim_corretor.
 // Colunas-chave da fato: valor_contrato, valor_distrato, eh_venda (bool),
 // eh_venda_ou_distrato (bool), eh_distrato (bool), data_venda, data_distrato.
+//
+// Status (ago/2026): QTD Bruto/VGV Bruto/Meta VGV/Meta QTD/QTD Vendas (incl.
+// distratadas) já estão em uso no .pbix "Esteira de reservas" (cards/gauge).
+// O restante do catálogo (VGV Distrato/Líquido, QTD Distratos/Líquido, Ticket
+// Médio, Taxa de Distrato, YTD, MoM%, Forecast, % Atingimento*) ainda não está
+// amarrado a nenhum visual — mas é o conjunto que powerbi/README.md seção 4
+// instrui colar ao montar o .pbix da apresentação mensal de fechamento (que
+// ainda não foi criado). Não é rascunho: é o catálogo KPI-01..18 preparado
+// para esse relatório futuro. Manter o arquivo inteiro até esse .pbix existir.
 // =============================================================================
 
 // ---- Quantidades ----

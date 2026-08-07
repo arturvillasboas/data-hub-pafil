@@ -13,6 +13,16 @@
 // Validado no .pbix (Esteira de reservas) vs SQL, carga 16/jul/2026:
 //   Qtd Prospect 58.515 · Qtd Ativo 27.095 · Qtd Receptivo 31.080 · Qtd Leads 31.435 ·
 //   Qtd Lead Quali 8.097 · Qtd Leads Descartados 12.669 · Tx Avanço 9,9%.
+//
+// Poda (ago/2026): mantidas só a coluna e as medidas confirmadas ligadas a um
+// visual do .pbix hoje (Qtd Prospect, Qtd Leads Descartados diretamente; Leads
+// c/ Pre-cadastro via KPIs Pré-Cadastro HTML em MEDIDAS_PRECADASTROS.dax).
+// Removidas: Qtd Ativo, Qtd Receptivo, Qtd Lead, Qtd Lead Quali, Tx_Qualif_Leads,
+// % Leads Descartados, Tx Avanco p/ Pre-cadastro — o KPIs_Leads_HTML.dax já
+// reimplementa a mesma lógica desses inline (_ativos/_receptivos/_qualificados/
+// _txQualificacao/_txAvanco), então elas ficaram redundantes/órfãs; a nota
+// original abaixo sobre essa duplicação segue válida. Recuperável no git se
+// decidir consolidar as duas implementações numa só no futuro.
 // =============================================================================
 
 // ---- COLUNA CALCULADA (idêntica à f_leads[atv/recept 2] do BI Matriz) --------
@@ -26,26 +36,9 @@ IF ( fato_leads[midia acdc] = "Campanha de Ativação", "Ativo", fato_leads[atv/
 Qtd Prospect =                     // total de leads distintos
 DISTINCTCOUNT ( fato_leads[id_lead] )
 
-// ---- Ativo / Receptivo (atv/recept 2 do legado) ----
-Qtd Ativo     = CALCULATE ( [Qtd Prospect], fato_leads[atv/recept 2] = "Ativo" )
-Qtd Receptivo = CALCULATE ( [Qtd Prospect], fato_leads[atv/recept 2] = "Receptivo" )
-
-// ---- Canal "Lead" e qualificação (MQL 2) ----
-Qtd Lead =                         // "Qtd Leads" no BI Matriz (canal 2.0 = Lead)
-CALCULATE ( [Qtd Prospect], fato_leads[canal 2.0] = "Lead" )
-
-Qtd Lead Quali =
-CALCULATE ( [Qtd Prospect], fato_leads[canal 2.0] = "Lead", fato_leads[MQL 2] = "SIM" )
-
-Tx_Qualif_Leads =
-DIVIDE ( [Qtd Lead Quali], [Qtd Lead] )
-
 // ---- Descarte / Perdido (Descartado = situação Perdido no legado) ----
 Qtd Leads Descartados =
 CALCULATE ( [Qtd Prospect], fato_leads[canal 2.0] = "Lead", fato_leads[Situação] = "Perdido" )
-
-% Leads Descartados =
-DIVIDE ( [Qtd Leads Descartados], [Qtd Lead] )
 
 // ---- Avanço para pré-cadastro (card "Tx de Avanço para pré cadastro") ----
 // Leads que geraram pré-cadastro. TREATAS liga fato_precadastros[id_lead] à fato_leads
@@ -56,14 +49,13 @@ CALCULATE (
     TREATAS ( VALUES ( fato_precadastros[id_lead] ), fato_leads[id_lead] )
 )
 
-Tx Avanco p/ Pre-cadastro =
-DIVIDE ( [Leads c/ Pre-cadastro], [Qtd Prospect] )
-
 // -----------------------------------------------------------------------------
 // NOTAS:
-// 1. Nome de medida a alinhar: o rascunho [Qtd Leads] (do dev) = total distinto =
-//    [Qtd Prospect]. No BI Matriz "Qtd Leads" = canal 2.0=Lead (aqui é [Qtd Lead]).
-//    Para bater 100%: aposentar o rascunho e renomear [Qtd Lead] -> "Qtd Leads".
+// 1. Duplicação conhecida: KPIs_Leads_HTML.dax reimplementa Ativo/Receptivo/
+//    Qualificação/Tx Avanço/Tx Qualificação INLINE (VARs), em vez de chamar
+//    medidas nomeadas daqui. Se essas métricas precisarem existir como medida
+//    nomeada de novo (matriz, outro visual, etc.), prefira recriá-las aqui e
+//    fazer o KPIs_Leads_HTML.dax chamá-las, em vez de duplicar a lógica de novo.
 // 2. Relacionamento de data ATIVO na fato_leads = data_conversao; data_cad inativo.
 //    Para "leads por mês de ENTRADA" ativar data_cad ou usar USERELATIONSHIP.
 // =============================================================================
