@@ -1,10 +1,13 @@
 ﻿name: Ingestão CVDW diária
 
-# Roda a ingestão incremental todo dia e permite disparo manual (full/incremental).
+# Disparo manual habilitado; o cron diário fica DESLIGADO até a VPS existir e os
+# secrets PG_* apontarem para um Postgres real (sem isso, toda execução agendada
+# falharia com "PG_HOST ausente"). Reativar removendo o comentário abaixo quando
+# a Parte B do plano de infra (VPS) estiver concluída — ver ARCHITECTURE.md.
 on:
-  schedule:
-    # 06:00 UTC ~ 03:00 no horário de Brasília (BRT, UTC-3).
-    - cron: "0 6 * * *"
+  # schedule:
+  #   # 06:00 UTC ~ 03:00 no horário de Brasília (BRT, UTC-3).
+  #   - cron: "0 6 * * *"
   workflow_dispatch:
     inputs:
       modo:
