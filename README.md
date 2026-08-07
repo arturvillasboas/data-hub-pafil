@@ -44,13 +44,15 @@ tabelas de CRM. Agendamento por **cron** ou **GitHub Actions**.
 │   ├── tipos.py             # inferência de tipos BR, nomes de coluna, normalização, hash
 │   ├── db.py                # conexão SSL, introspecção, bulk upsert, snapshot, controle
 │   └── log.py               # logging estruturado
-├── descoberta_schema.py     # 1) descobre o schema  -> schema/cvdw_schema.json + report.md
-├── gerar_ddl_bronze.py      # 2) gera o DDL         -> sql/bronze/bronze.sql
-├── ingestao.py              # 3) ingere            -> bronze.<obj> + bronze.<obj>_snapshot
-├── sql/{bronze,silver,gold} # SQL por camada (silver/gold ainda vazias)
-├── schema/                  # JSON/relatório da descoberta (gitignored)
+├── ingestao.py              # ingere -> bronze.<obj> + bronze.<obj>_snapshot (dirigido por sql/bronze/bronze.sql)
+├── sql/{bronze,silver,gold} # SQL por camada
 └── .github/workflows/ingestao-diaria.yml
 ```
+
+> `descoberta_schema.py` e `gerar_ddl_bronze.py` (os scripts que originalmente
+> mapearam a API e geraram o `bronze.sql`) não fazem mais parte do repositório —
+> a API já está mapeada e o `bronze.sql` resultante é a fonte da verdade
+> versionada. Ver "Adicionando/alterando objetos" abaixo se a API mudar.
 
 ## Como funciona (visão rápida)
 
@@ -128,25 +130,11 @@ são versionados.
 
 ## Uso (na ordem)
 
-### 1. Descobrir o schema
+### 1. Aplicar o DDL da bronze
 
-```bash
-python descoberta_schema.py            # todos os objetos
-python descoberta_schema.py --objetos reservas,leads --registros 20 --verbose
-```
-
-Gera `schema/cvdw_schema.json` e `schema/cvdw_schema_report.md`. **Confira o
-relatório**, principalmente a coluna *Chave de upsert* de cada objeto. Se algum
-id estiver errado, fixe manualmente em `config/objetos.yml` (campo `id:`) e rode
-a descoberta de novo.
-
-### 2. Gerar o DDL da bronze
-
-```bash
-python gerar_ddl_bronze.py
-```
-
-Gera `sql/bronze/bronze.sql`. Aplique no banco:
+O schema da API já foi descoberto e o DDL já está gerado e versionado em
+`sql/bronze/bronze.sql` — não é preciso regenerá-lo para rodar o projeto.
+Aplique no banco:
 
 ```bash
 psql "host=$PG_HOST port=$PG_PORT dbname=$PG_DB user=$PG_USER sslmode=require" \
@@ -156,7 +144,7 @@ psql "host=$PG_HOST port=$PG_PORT dbname=$PG_DB user=$PG_USER sslmode=require" \
 > Alternativa: rodar a ingestão com `--criar-tabelas`, que aplica o `bronze.sql`
 > automaticamente antes de carregar.
 
-### 3. Ingerir
+### 2. Ingerir
 
 ```bash
 # Carga inicial completa (primeira vez):
@@ -228,7 +216,14 @@ Configure em **Settings → Secrets and variables → Actions**:
 
 ## Adicionando/alterando objetos
 
-Edite `config/objetos.yml`, rode `descoberta_schema.py` e `gerar_ddl_bronze.py`
-de novo e aplique o `bronze.sql` (os `CREATE ... IF NOT EXISTS` são seguros). Em
-caso de *drift* (a API passou a devolver colunas novas), a ingestão avisa nos
-logs e ignora as colunas desconhecidas até você regenerar o DDL.
+Drift pequeno (a API passou a devolver colunas novas num objeto já mapeado) não
+exige nada: a ingestão avisa nos logs e ignora as colunas desconhecidas —
+edite `sql/bronze/bronze.sql` à mão para adicionar a coluna.
+
+Para mapear um objeto **novo** do zero (a API do CVDW passou a expor um
+endpoint que não existia), os scripts que faziam isso (`descoberta_schema.py` +
+`gerar_ddl_bronze.py`) não estão mais neste repositório — eram ferramentas de
+uma única vez, usadas quando a estrutura da API ainda era desconhecida. Eles
+continuam disponíveis localmente na máquina do dev (fora do controle de
+versão); se precisar remapear algo, é só rodá-los de novo apontando pro objeto
+novo em `config/objetos.yml` e colar o DDL gerado em `sql/bronze/bronze.sql`.

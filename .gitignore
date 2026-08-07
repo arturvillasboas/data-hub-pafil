@@ -25,6 +25,11 @@ env/
 # === Backups locais de planilha (histórico de edição, sem valor de documentação) ===
 _backups_fechamento/
 
+# === Ferramentas de descoberta de schema (uso único; API já mapeada em ===
+# === sql/bronze/bronze.sql, que é a fonte da verdade versionada) =========
+descoberta_schema.py
+gerar_ddl_bronze.py
+
 # === Claude Code ===
 .claude/
 
