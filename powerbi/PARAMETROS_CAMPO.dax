@@ -1,0 +1,47 @@
+// =============================================================================
+// Field Parameters (parâmetros de campo) — Power BI. Réplica do padrão do BI
+// Legado (página "Vendas Geral"): um slicer troca a medida usada nos visuais
+// (VGV Bruto / VGV Líquido / VGV Distrato) sem precisar triplicar gráfico.
+//
+// Depende de MEDIDAS_GOLD.dax já colado numa tabela de medidas chamada
+// "Medidas" (ajuste o nome entre aspas simples abaixo se a sua tabela tiver
+// outro nome — é o mesmo nome usado em NAMEOF('Medidas'[...])).
+//
+// Como criar no Desktop:
+//   1. Modelagem -> Nova tabela -> cole o bloco abaixo (ou Modelagem -> Novo
+//      parâmetro -> Campo -> selecione VGV Bruto/VGV Líquido/VGV Distrato,
+//      que gera este mesmo código automaticamente).
+//   2. No visual: arraste a coluna "Seleção Tipo de Venda" (a de campos, tipo
+//      ícone de medida) pro poço de Valores; a coluna de texto (nomes) vira o
+//      slicer que troca a medida.
+// =============================================================================
+
+Seleção Tipo de Venda = {
+    ("VGV Bruto", NAMEOF('Medidas'[VGV Bruto]), 0),
+    ("VGV Líquido", NAMEOF('Medidas'[VGV Líquido]), 1),
+    ("VGV Distrato", NAMEOF('Medidas'[VGV Distrato]), 2)
+}
+
+// -----------------------------------------------------------------------------
+// QTD amarrada ao mesmo slicer (Bruto-com-Bruto, Líquido-com-Líquido) — NÃO crie
+// um 2º field parameter para Quantidade nem relacione as duas tabelas: field
+// parameter é tabela desconectada sem grão em comum, então o relacionamento não
+// propaga a seleção (é isso que dava número errado/negativo na linha).
+//
+// TAMBÉM não use SELECTEDVALUE na coluna de texto da tabela do parâmetro pra
+// isso — dá o erro "a coluna faz parte da chave composta..." (o NAMEOF cria uma
+// chave composta interna nas 3 colunas do parâmetro; ler só 1 delas por fora,
+// no mesmo visual em que a tabela já está ligada num eixo, quebra).
+//
+// A forma certa (suportada oficialmente p/ esse cenário) é ISSELECTEDMEASURE():
+// verifica diretamente qual MEDIDA está ativa no parâmetro, sem tocar nas
+// colunas da tabela. Cole isso na tabela "Medidas" (não na tabela do parâmetro).
+// -----------------------------------------------------------------------------
+QTD Tipo de Venda Selecionado =
+SWITCH (
+    TRUE(),
+    ISSELECTEDMEASURE ( [VGV Bruto] ),    [QTD Bruto],
+    ISSELECTEDMEASURE ( [VGV Líquido] ),  [QTD Líquido],
+    ISSELECTEDMEASURE ( [VGV Distrato] ), [QTD Distratos],
+    [QTD Bruto]                           -- default (nenhuma seleção / múltiplas)
+)

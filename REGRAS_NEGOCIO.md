@@ -102,6 +102,8 @@ Já há um esboço em [`MODELO_SEMANTICO.md`](MODELO_SEMANTICO.md). O legado con
 | `dim_imobiliaria` | imobiliária | → `cvdw.imobiliarias` | não materializada como dim na gold; nome fica em `fato_reservas`/`dim_corretor` |
 | `d_metas_empreendimentos` | mês×empreend. | xlsx `Meta.xlsx` | ✅ **`gold.dim_metas_empreendimentos`** (task 6.4): 1.704 linhas (`meta_2`, aba base_meta), seed via `--metas-empreendimentos`. Continua **sem origem na API** (input manual da gestão) |
 | `d_viabilidade` | empreend. | xlsx | ✅ **`gold.dim_viabilidade`** (task 6.4): pivot EAV → 1 linha/`codigo_cv` (receita bruta, terreno/construção/deduções/despesas), seed via `--viabilidade`. Parametriza a medida de Margem — ver KPI-17 |
+| `d_ivv` | empreend. x mês (1..36) | xlsx (mesmo `d_para empreendimentos.xlsx`, aba IVV_padrão) | ✅ **`gold.dim_ivv_padrao`** (ago/2026): curva PADRÃO de IVV acumulado desde o lançamento, despivotada de `base_cv4` (formato largo, colunas "1".."36"). Achado durante uma auditoria do visual "IVV x Empreendimento" do BI legado: não estava catalogada aqui, embora referenciada nas medidas de `RESUMO_Empreendimentos.md` (`m_ivv_padrao`) — corrigido. Depende de `d_empreendimento_legado` (Data Lançamento) pra achar o "mês atual" da curva |
+| `d_empreendimento_legado` | empreend. | xlsx (mesmo arquivo, aba d_para empreendimentos, tabela base_cv) | ✅ **`silver.d_empreendimento_legado`**: Data Lançamento + Tipo Produto (Lançamento/Lançado/Remanescente) por `codigo_cv` — único uso hoje é alimentar `gold.dim_ivv_padrao[meses_desde_lancamento]` |
 | `d_calendario` | dia | gerada (DAX/M) | gerar na Gold |
 
 > ⚠️ **Metas, viabilidade e verba de marketing não existem na API CVDW** — são planejamento da
@@ -145,6 +147,7 @@ Padrão repetido por empreendimento (PA, TR, PSU, PCJ, ARB, PO, PR, F16, QBV, VM
 | KPI-15 | ✅ **M²Médio / M²ARealizar** | `AVERAGE(Vendas[M² Praticado])`; `EstoqueVGV / MetragemAVender` | — |
 | KPI-16 | ✅ **VSO** | `DIVIDE(unidades realizadas, unidades totais)` | Velocidade de vendas (d_estrutura `status_unidade="Realizado"`) |
 | KPI-17 | ⭐ ✅ **Margem / MargemViab** | `(Projetado − custo − %ded − %desp) / (Projetado × fator)` | Parametrizado (ver nota abaixo) |
+| KPI-17b | ✅ **IVV Padrão** (`m_ivv_padrao`) | `SUM(d_ivv[%IVV])` filtrado no mês da curva (1..36) correspondente à idade do produto hoje | Curva de meta/benchmark de velocidade de vendas por empreendimento — visual "IVV x Empreendimento". Comparar contra `VSO` (KPI-16, realizado) — ver `gold.dim_ivv_padrao`/`Diferença IVV x Padrão` |
 
 > ✅ **Task 6.4 (ago/2026) resolveu a duplicação (R4):** o modelo "Preço" repetia as MESMAS 8
 > medidas para ~12 empreendimentos com constantes coladas no DAX. Na Gold virou **UMA** medida

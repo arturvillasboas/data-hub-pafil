@@ -314,6 +314,38 @@ CREATE TABLE IF NOT EXISTS silver.d_viabilidade (
     PRIMARY KEY (codigo_cv, tipo)
 );
 
+-- d_empreendimento_legado — atributos de planejamento por empreendimento (Data
+-- Lançamento, Tipo Produto) que também não vêm da API CVDW. Mesmo arquivo do
+-- d_viabilidade (d_para empreendimentos.xlsx), aba "d_para empreendimentos",
+-- tabela base_cv. Usado pra calcular em que mês da curva de d_ivv cada
+-- empreendimento está hoje (visual "IVV x Empreendimento" do BI legado).
+CREATE TABLE IF NOT EXISTS silver.d_empreendimento_legado (
+    codigo_cv       int PRIMARY KEY,
+    ep              text,
+    empreendimento  text,
+    regional        text,
+    data_lancamento date,
+    tipo_produto    text,   -- Lançamento / Lançado / Remanescente
+    assinatura      text,
+    _origem         text DEFAULT 'SharePoint: BI Matriz/Empreendimentos/d_para empreendimentos.xlsx (aba d_para empreendimentos, tabela base_cv)'
+);
+
+-- d_ivv — curva PADRÃO de IVV (índice de velocidade de vendas) acumulado por
+-- mês desde o lançamento, 1 valor por empreendimento x mês (1..36). Mesmo
+-- arquivo, aba "IVV_padrão", tabela base_cv4 (formato largo no Excel: colunas
+-- "1".."36" — despivotado aqui pro grão codigo_cv x mês).
+CREATE TABLE IF NOT EXISTS silver.d_ivv (
+    codigo_cv      int,
+    ep             text,
+    empreendimento text,
+    regional       text,
+    assinatura     text,
+    mes            int,       -- mês desde o lançamento (1..36)
+    pct_ivv        numeric,   -- %IVV acumulado padrão pra esse mês
+    _origem        text DEFAULT 'SharePoint: BI Matriz/Empreendimentos/d_para empreendimentos.xlsx (aba IVV_padrão, tabela base_cv4)',
+    PRIMARY KEY (codigo_cv, mes)
+);
+
 -- distratos 2025 — detalhe financeiro de distrato (multa, valor pago, devolução,
 -- parcelas) que NÃO existe na API CVDW. Uma das 3 fontes de distrato do legado
 -- (risco R2 do REGRAS_NEGOCIO.md — cvdw.distratos/silver.distratos já é a fonte

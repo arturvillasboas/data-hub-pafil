@@ -78,6 +78,12 @@ em `powerbi/MEDIDAS_ESTOQUE_PRECO.dax` (Estoque/VSO/Margem) e `powerbi/MEDIDAS_G
 (Meta/Forecast/% Atingimento). Detalhe de colunas e o achado de normalização de `bloco` (produto
 de torre única) em `REGRAS_NEGOCIO.md` seção 3 e R17.
 
+**`dim_ivv_padrao`, `d_empreendimento_legado`** (ago/2026) — curva padrão de IVV (velocidade de
+vendas) por empreendimento x mês desde o lançamento, mesmo arquivo/lógica das dims acima
+(`d_para empreendimentos.xlsx`). `meses_desde_lancamento`/`eh_mes_atual` são calculados ao vivo
+na view (não em DAX) — filtre `eh_mes_atual = TRUE` pra pegar o ponto da curva de hoje. Compare
+com `VSO` (realizado) via `[Diferença IVV x Padrão]`.
+
 **`dim_calendario`** (cole no Desktop, *Nova tabela*):
 ```dax
 dim_calendario =

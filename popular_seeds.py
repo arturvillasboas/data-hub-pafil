@@ -315,6 +315,93 @@ def carregar_viabilidade(conn, xlsx: Path) -> int:
     return len(registros)
 
 
+def carregar_empreendimento_legado(conn, xlsx: Path) -> int:
+    """Carrega silver.d_empreendimento_legado (Data Lançamento/Tipo Produto por
+    empreendimento) da tabela base_cv (mesmo d_para empreendimentos.xlsx, aba
+    "d_para empreendimentos"). Fonte de Data Lançamento pro cálculo do IVV padrão
+    (gold.dim_ivv_padrao) — não vem da API CVDW.
+    """
+    import openpyxl
+    from psycopg import sql
+
+    wb = openpyxl.load_workbook(xlsx, data_only=True)
+    ws = wb["d_para empreendimentos"]
+    linhas = _tabela_openpyxl(ws, "base_cv")
+    wb.close()
+    origem_txt = f"SharePoint: {xlsx.name} (aba d_para empreendimentos, tabela base_cv)"
+
+    def _data(v):
+        return v.date() if hasattr(v, "date") else v
+
+    registros = []
+    vistos = set()
+    for r in linhas:
+        cod_cv = r.get("codigo_cv")
+        if cod_cv is None or int(cod_cv) in vistos:
+            continue
+        vistos.add(int(cod_cv))
+        registros.append((
+            int(cod_cv), r.get("EP"), r.get("Empreendimentos"), r.get("Regional"),
+            _data(r.get("Data Lançamento")), r.get("Tipo Produto"), r.get("Assinatura"),
+        ))
+
+    with conn.cursor() as cur:
+        cur.execute("TRUNCATE silver.d_empreendimento_legado")
+        for reg in registros:
+            cur.execute(
+                sql.SQL("INSERT INTO silver.d_empreendimento_legado "
+                        "(codigo_cv, ep, empreendimento, regional, data_lancamento, tipo_produto, assinatura, _origem) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING"),
+                reg + (origem_txt,),
+            )
+    log.info("  silver.%-24s <- %4d linhas (de %d na tabela base_cv)",
+              "d_empreendimento_legado", len(registros), len(linhas))
+    return len(registros)
+
+
+def carregar_ivv_padrao(conn, xlsx: Path) -> int:
+    """Carrega silver.d_ivv (curva padrão de IVV acumulado por mês desde o
+    lançamento) da tabela base_cv4 (mesmo d_para empreendimentos.xlsx, aba
+    "IVV_padrão"). Formato largo no Excel (colunas "1".."36" = mês desde o
+    lançamento); despivotado aqui pro grão codigo_cv x mês.
+    """
+    import openpyxl
+    from psycopg import sql
+
+    wb = openpyxl.load_workbook(xlsx, data_only=True)
+    ws = wb["IVV_padrão"]
+    linhas = _tabela_openpyxl(ws, "base_cv4")
+    wb.close()
+    origem_txt = f"SharePoint: {xlsx.name} (aba IVV_padrão, tabela base_cv4)"
+
+    registros = []
+    for r in linhas:
+        cod_cv = r.get("codigo_cv")
+        if cod_cv is None:
+            continue
+        for mes in range(1, 37):
+            valor = r.get(str(mes))
+            if valor is None:
+                continue
+            registros.append((
+                int(cod_cv), r.get("EP"), r.get("Empreendimentos"), r.get("Regional"),
+                r.get("Assinatura"), mes, float(valor),
+            ))
+
+    with conn.cursor() as cur:
+        cur.execute("TRUNCATE silver.d_ivv")
+        for reg in registros:
+            cur.execute(
+                sql.SQL("INSERT INTO silver.d_ivv "
+                        "(codigo_cv, ep, empreendimento, regional, assinatura, mes, pct_ivv, _origem) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING"),
+                reg + (origem_txt,),
+            )
+    log.info("  silver.%-24s <- %4d linhas (de %d empreendimentos x 36 meses)",
+              "d_ivv", len(registros), len(linhas))
+    return len(registros)
+
+
 def carregar_distratos_2025(conn, xlsx: Path) -> int:
     """Carrega silver.distratos_2025 (detalhe financeiro de distrato: multa, valor
     pago, devolução, parcelas — não existe na API CVDW) da aba "Base Distratos" de
@@ -901,10 +988,14 @@ def main() -> int:
         if viabilidade_path:
             vb = Path(viabilidade_path)
             if vb.exists():
+                # mesmo arquivo alimenta 3 seeds: viabilidade, launch date (IVV) e a
+                # curva padrão de IVV em si (abas diferentes do mesmo workbook).
                 total += carregar_viabilidade(conn, vb)
-                n_seeds += 1
+                total += carregar_empreendimento_legado(conn, vb)
+                total += carregar_ivv_padrao(conn, vb)
+                n_seeds += 3
             else:
-                log.warning("  viabilidade xlsx não encontrado (%s) — d_viabilidade mantida como está.", vb)
+                log.warning("  viabilidade xlsx não encontrado (%s) — d_viabilidade/d_empreendimento_legado/d_ivv mantidas como estão.", vb)
         if distratos_2025_path:
             d25 = Path(distratos_2025_path)
             if d25.exists():

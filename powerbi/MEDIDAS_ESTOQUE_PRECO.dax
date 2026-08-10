@@ -57,6 +57,16 @@ VAR _total     = COUNTROWS ( dim_estrutura )
 VAR _realizado = CALCULATE ( COUNTROWS ( dim_estrutura ), dim_estrutura[status_unidade] = "Realizado" )
 RETURN DIVIDE ( _realizado, _total )
 
+// ---- IVV Padrão x Realizado (visual "IVV x Empreendimento" do BI legado) ----
+// dim_ivv_padrao já vem com eh_mes_atual calculado ao vivo (idade do produto em
+// meses, comparada à curva de 36 meses) — não precisa de coluna calculada nem
+// de relacionamento com data de lançamento no Power BI, diferente do legado
+// (m_ivv_padrao = CALCULATE(SUM(d_ivv[%IVV]), d_ivv[validacao]="sim")).
+% IVV Padrão =                                    // equivalente a m_ivv_padrao do legado
+CALCULATE ( SUM ( dim_ivv_padrao[pct_ivv] ), dim_ivv_padrao[eh_mes_atual] = TRUE () )
+
+Diferença IVV x Padrão = [VSO] - [% IVV Padrão]   // >0 = vendendo acima do ritmo padrão
+
 // ---- Margem (KPI-17) — parametrizada por dim_viabilidade -------------------
 // CustoObra = |Terreno + Construção| (fixo, não escala com o VGV realizado/
 // projetado); Deduções/Despesas escalam com a receita (impostos, comissão,

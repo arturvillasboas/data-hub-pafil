@@ -712,6 +712,36 @@ FROM silver.d_viabilidade
 GROUP BY codigo_cv;
 
 
+-- Curva PADRÃO de IVV (índice de velocidade de vendas) por empreendimento x mês
+-- desde o lançamento — visual "IVV x Empreendimento" do BI legado (mesmo arquivo
+-- de dim_viabilidade, abas IVV_padrão + d_para empreendimentos). Não vem da API
+-- CVDW: input de planejamento da gestão.
+--
+-- meses_desde_lancamento/eh_mes_atual substituem a coluna calculada DAX do legado
+-- (`DATEDIFF(RELATED(...), TODAY(), MONTH)` + comparação) — aqui é 1 view viva
+-- (recalcula a cada consulta), então não precisa de relacionamento nem de coluna
+-- calculada no Power BI: a medida só filtra `eh_mes_atual = TRUE` pra pegar o
+-- ponto da curva referente a hoje (equivalente à MEDIDA m_ivv_padrao do legado).
+DROP VIEW IF EXISTS gold.dim_ivv_padrao CASCADE;
+CREATE VIEW gold.dim_ivv_padrao AS
+SELECT
+    v.codigo_cv,
+    v.empreendimento,
+    silver.conformar_empreendimento(v.empreendimento) AS empreendimento_conformado,
+    v.regional,
+    v.assinatura,
+    v.mes,
+    v.pct_ivv,
+    el.data_lancamento,
+    el.tipo_produto,
+    ( extract(year  FROM age(current_date, el.data_lancamento)) * 12
+    + extract(month FROM age(current_date, el.data_lancamento)) )::int AS meses_desde_lancamento,
+    v.mes = ( extract(year  FROM age(current_date, el.data_lancamento)) * 12
+            + extract(month FROM age(current_date, el.data_lancamento)) )::int AS eh_mes_atual
+FROM silver.d_ivv v
+LEFT JOIN silver.d_empreendimento_legado el ON el.codigo_cv = v.codigo_cv;
+
+
 -- distratos 2025 — detalhe financeiro (multa/pago/devolução/parcelas) que não vem
 -- da API CVDW; complementa gold.fato_reservas (que já cobre motivo/data/valor via
 -- cvdw.distratos, fonte viva — ver R2 do REGRAS_NEGOCIO.md). Share/House-Parcerias/
