@@ -123,6 +123,291 @@ def carregar(conn, mapa: dict) -> int:
     return inseridos
 
 
+def _tabela_openpyxl(ws, nome_tabela: str) -> list[dict]:
+    """Lê uma Excel Table nomeada (ws.tables) e devolve as linhas como dicts
+    {cabeçalho: valor}, pulando linhas totalmente vazias."""
+    cells = ws[ws.tables[nome_tabela].ref]
+    header = [c.value for c in cells[0]]
+    linhas = []
+    for row in cells[1:]:
+        valores = [c.value for c in row]
+        if all(v is None for v in valores):
+            continue
+        linhas.append(dict(zip(header, valores)))
+    return linhas
+
+
+def carregar_estrutura_precos(conn, xlsm: Path) -> int:
+    """Carrega silver.d_estrutura (matriz de preço/estoque por unidade) das abas
+    Matriz_XX de base_precos.xlsm (BI V.2/BI Matriz) — task 6.4 do roadmap. Cada aba
+    é 1 empreendimento; a Excel Table tem o mesmo layout em todas (ver
+    _bi_ref/M_Empreendimentos.md, TABELA d_estrutura). Dedup por Código Interno
+    (ING-08, primeiro-vence, mesmo critério dos demais loaders).
+    """
+    import openpyxl
+    from psycopg import sql
+
+    wb = openpyxl.load_workbook(xlsm, data_only=True)
+    origem_txt = f"SharePoint: {xlsm.name} (abas Matriz_*)"
+
+    def _num(v):
+        try:
+            return float(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None  # ex.: '#N/A' / '#DIV/0!' de fórmula quebrada na planilha
+
+    def _txt(v):
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
+
+    registros: dict[str, tuple] = {}
+    n_abas = 0
+    for ws in wb.worksheets:
+        for nome_tabela in list(ws.tables):
+            if not nome_tabela.startswith("Matriz_"):
+                continue
+            n_abas += 1
+            for r in _tabela_openpyxl(ws, nome_tabela):
+                cod_interno = _txt(r.get("Código Interno"))
+                if not cod_interno or cod_interno in registros:
+                    continue
+                registros[cod_interno] = (
+                    cod_interno,
+                    int(r["codigo_cv"]) if r.get("codigo_cv") is not None else None,
+                    _txt(r.get("Produto")),
+                    _txt(r.get("Bloco")),
+                    _txt(r.get("Unidade")),
+                    _txt(r.get("ID_Preço")),
+                    _num(r.get("Área Privativa")),
+                    _txt(r.get("CONFIG_1")),
+                    _txt(r.get("CONFIG_2")),
+                    _txt(r.get("CONFIG_3")),
+                    (r.get("Permuta") == "Permuta"),
+                    _num(r.get("Preço")),
+                    _num(r.get("Preço M²")),
+                )
+    wb.close()
+
+    with conn.cursor() as cur:
+        cur.execute("TRUNCATE silver.d_estrutura")
+        for reg in registros.values():
+            cur.execute(
+                sql.SQL("INSERT INTO silver.d_estrutura "
+                        "(codigo_interno, codigo_cv, produto, bloco, unidade, id_preco, "
+                        "area_privativa, config_1, config_2, config_3, permuta, preco, preco_m2, _origem) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING"),
+                reg + (origem_txt,),
+            )
+    log.info("  silver.%-24s <- %4d linhas (%d abas Matriz_*)", "d_estrutura", len(registros), n_abas)
+    return len(registros)
+
+
+def carregar_metas_empreendimentos(conn, xlsx: Path) -> int:
+    """Carrega silver.d_metas_empreendimentos (metas/forecast mensais) da tabela
+    meta_2 (Meta.xlsx, aba base_meta) — task 6.4. Não vem da API CVDW: planejamento
+    manual da gestão (R5). Grão = codigo_cv x mês x status_meta (Start/Replan).
+    """
+    import openpyxl
+    from psycopg import sql
+
+    wb = openpyxl.load_workbook(xlsx, data_only=True)
+    ws = wb["base_meta"]
+    linhas = _tabela_openpyxl(ws, "meta_2")
+    wb.close()
+    origem_txt = f"SharePoint: {xlsx.name} (aba base_meta, tabela meta_2)"
+
+    def _int(v):
+        try:
+            return int(v) if v not in (None, "") else None
+        except (TypeError, ValueError):
+            return None
+
+    def _num(v):
+        try:
+            return float(v) if v not in (None, "") else None
+        except (TypeError, ValueError):
+            return None
+
+    def _data(v):
+        return v.date() if hasattr(v, "date") else v
+
+    registros = []
+    vistos = set()
+    for r in linhas:
+        cod_cv = _int(r.get("codigo_cv"))
+        data = _data(r.get("data"))
+        status = r.get("status_meta")
+        if cod_cv is None or data is None or not status:
+            continue
+        chave = (cod_cv, data, status)
+        if chave in vistos:
+            continue
+        vistos.add(chave)
+        registros.append((
+            cod_cv, data, status,
+            r.get("chave_gv"), _data(r.get("data_base")), _int(r.get("mes")),
+            r.get("empreendimento"), r.get("status_empreendimento"), r.get("regional"),
+            _num(r.get("meta_house")), _num(r.get("meta_imobiliaria")),
+            _num(r.get("meta_gv_house")), _num(r.get("meta_gv_imob")),
+            _int(r.get("meta_qtd")), _num(r.get("meta_vgv")),
+            _int(r.get("forecast_qtd")), _num(r.get("forecast_vgv")),
+            _num(r.get("meta digital rpo")), _num(r.get("meta digital regional")),
+            _num(r.get("meta digital")), _int(r.get("qtd apresentação")),
+            _num(r.get("vgv apresentação")),
+        ))
+
+    with conn.cursor() as cur:
+        cur.execute("TRUNCATE silver.d_metas_empreendimentos")
+        for reg in registros:
+            cur.execute(
+                sql.SQL("INSERT INTO silver.d_metas_empreendimentos "
+                        "(codigo_cv, data, status_meta, chave_gv, data_base, mes, empreendimento, "
+                        "status_empreendimento, regional, meta_house, meta_imobiliaria, meta_gv_house, "
+                        "meta_gv_imob, meta_qtd, meta_vgv, forecast_qtd, forecast_vgv, meta_digital_rpo, "
+                        "meta_digital_regional, meta_digital, qtd_apresentacao, vgv_apresentacao, _origem) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+                        "ON CONFLICT DO NOTHING"),
+                reg + (origem_txt,),
+            )
+    log.info("  silver.%-24s <- %4d linhas (de %d na tabela meta_2)",
+              "d_metas_empreendimentos", len(registros), len(linhas))
+    return len(registros)
+
+
+def carregar_viabilidade(conn, xlsx: Path) -> int:
+    """Carrega silver.d_viabilidade (parâmetros de margem por empreendimento, EAV) da
+    tabela tab_viabil_padrão (d_para empreendimentos.xlsx, aba viabil_padrão) — task
+    6.4. Resolve R4: no legado eram ~12 conjuntos de constantes coladas no DAX.
+    """
+    import openpyxl
+    from psycopg import sql
+
+    wb = openpyxl.load_workbook(xlsx, data_only=True)
+    ws = wb["viabil_padrão"]
+    linhas = _tabela_openpyxl(ws, "tab_viabil_padrão")
+    wb.close()
+    origem_txt = f"SharePoint: {xlsx.name} (aba viabil_padrão, tabela tab_viabil_padrão)"
+
+    registros = []
+    vistos = set()
+    for r in linhas:
+        cod_cv = r.get("cod_cv")
+        tipo = (r.get("Tipo") or "").strip()
+        if cod_cv is None or not tipo:
+            continue
+        chave = (int(cod_cv), tipo)
+        if chave in vistos:
+            continue
+        vistos.add(chave)
+        registros.append((int(cod_cv), tipo, r.get("Valor"), r.get("%")))
+
+    with conn.cursor() as cur:
+        cur.execute("TRUNCATE silver.d_viabilidade")
+        for reg in registros:
+            cur.execute(
+                sql.SQL("INSERT INTO silver.d_viabilidade (codigo_cv, tipo, valor, percentual, _origem) "
+                        "VALUES (%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING"),
+                reg + (origem_txt,),
+            )
+    log.info("  silver.%-24s <- %4d linhas (de %d na tabela)", "d_viabilidade", len(registros), len(linhas))
+    return len(registros)
+
+
+def carregar_distratos_2025(conn, xlsx: Path) -> int:
+    """Carrega silver.distratos_2025 (detalhe financeiro de distrato: multa, valor
+    pago, devolução, parcelas — não existe na API CVDW) da aba "Base Distratos" de
+    relatorio_distratos.xlsx. Sheet cru (sem Excel Table nomeada), header na linha 1
+    com quebra de linha em alguns nomes de coluna — normaliza antes de casar.
+    """
+    import openpyxl
+    from psycopg import sql
+
+    def _cab(v) -> str:
+        return " ".join(str(v or "").split())
+
+    def _num(v):
+        try:
+            return float(v) if v not in (None, "") else None
+        except (TypeError, ValueError):
+            return None
+
+    def _int(v):
+        try:
+            return int(v) if v not in (None, "") else None
+        except (TypeError, ValueError):
+            return None
+
+    def _data(v):
+        return v.date() if hasattr(v, "date") else v
+
+    def _txt(v):
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
+
+    wb = openpyxl.load_workbook(xlsx, data_only=True)
+    ws = wb["Base Distratos"]
+    linhas = list(ws.iter_rows(min_row=1, values_only=True))
+    wb.close()
+    origem_txt = f"SharePoint: {xlsx.name} (aba Base Distratos)"
+
+    hdr = {_cab(v): i for i, v in enumerate(linhas[0]) if v is not None}
+
+    def g(r, nome):
+        i = hdr.get(nome)
+        return r[i] if i is not None and i < len(r) else None
+
+    registros = []
+    for r in linhas[1:]:
+        if all(v is None for v in r):
+            continue
+        registros.append((
+            _int(g(r, "Contrato")),
+            _txt(g(r, "Filial")),
+            _txt(g(r, "Bloco")),
+            _txt(g(r, "Unidade")),
+            _txt(g(r, "Cliente")),
+            _data(g(r, "Data do Contrato")),
+            _data(g(r, "Data do Distrato")),
+            _num(g(r, "Valor de Venda")),
+            _num(g(r, "Valor do Contrato")),
+            _num(g(r, "Área Privativa")),
+            _num(g(r, "Valor Pago")),
+            _num(g(r, "Valor Pago Atualizado")),
+            _num(g(r, "Valor Multa")),
+            _int(g(r, "Fruição")),
+            _num(g(r, "Valor de Devolução")),
+            _txt(g(r, "Forma de Devolução")),
+            _int(g(r, "Nº de Parc.")),
+            _txt(g(r, "Status Contrato")),
+            _txt(g(r, "Tipo Cto.")),
+            _txt(g(r, "Trans. Fil.")),
+            _txt(g(r, "Motivo 1")),
+            _txt(g(r, "Motivo 2")),
+            _txt(g(r, "Gerente Responsavel")),
+        ))
+
+    with conn.cursor() as cur:
+        cur.execute("TRUNCATE silver.distratos_2025")
+        for reg in registros:
+            cur.execute(
+                sql.SQL("INSERT INTO silver.distratos_2025 "
+                        "(contrato, produto, bloco, unidade, cliente, data_contrato, data_distrato, "
+                        "valor_venda, valor_contrato, area_privativa, valor_pago, valor_pago_atualizado, "
+                        "valor_multa, fruicao, valor_devolucao, forma_devolucao, numero_parcelas, "
+                        "status_contrato, tipo_contrato, trans_fil, motivo_1, motivo_2, "
+                        "gerente_responsavel, _origem) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"),
+                reg + (origem_txt,),
+            )
+    log.info("  silver.%-24s <- %4d linhas (de %d na aba Base Distratos)",
+              "distratos_2025", len(registros), len(linhas) - 1)
+    return len(registros)
+
+
 def carregar_depara_produtos(conn, xlsm: Path) -> int:
     """Carrega o de-para de empreendimento da aba DE_PARA_PRODUTOS (Vendas Consolidadas.xlsm).
 
@@ -508,6 +793,18 @@ def main() -> int:
     ap.add_argument("--credito-manual", help="caminho de relatorios_precadastro.xlsx (recarrega "
                                           "precadastros_credito_manual: Aprovação de crédito/Encaminhado ao CCA). "
                                           "Default: PRECADASTRO_CREDITO_XLSX do .env")
+    ap.add_argument("--estrutura-precos", help="caminho de base_precos.xlsm (recarrega silver.d_estrutura, "
+                                          "matriz de preço/estoque por unidade — task 6.4). "
+                                          "Default: ESTRUTURA_PRECOS_XLSM do .env")
+    ap.add_argument("--metas-empreendimentos", help="caminho de Meta.xlsx (recarrega "
+                                          "silver.d_metas_empreendimentos — task 6.4). "
+                                          "Default: METAS_EMPREENDIMENTOS_XLSX do .env")
+    ap.add_argument("--viabilidade", help="caminho de d_para empreendimentos.xlsx (recarrega "
+                                          "silver.d_viabilidade, parâmetros de margem — task 6.4). "
+                                          "Default: VIABILIDADE_XLSX do .env")
+    ap.add_argument("--distratos-2025", help="caminho de relatorio_distratos.xlsx (recarrega "
+                                          "silver.distratos_2025, detalhe financeiro de distrato). "
+                                          "Default: DISTRATOS_2025_XLSX do .env")
     args = ap.parse_args()
 
     # Fonte autoritativa dos gerentes: arg explícito ou o xlsx sincronizado (via .env).
@@ -516,6 +813,10 @@ def main() -> int:
     leads_apoio_path = args.leads_apoio or os.getenv("DEPARA_LEADS_XLSM")
     etapa_precadastro_path = args.etapa_precadastro or os.getenv("ETAPA_PRECADASTRO_XLSM")
     credito_manual_path = args.credito_manual or os.getenv("PRECADASTRO_CREDITO_XLSX")
+    estrutura_precos_path = args.estrutura_precos or os.getenv("ESTRUTURA_PRECOS_XLSM")
+    metas_empreendimentos_path = args.metas_empreendimentos or os.getenv("METAS_EMPREENDIMENTOS_XLSX")
+    viabilidade_path = args.viabilidade or os.getenv("VIABILIDADE_XLSX")
+    distratos_2025_path = args.distratos_2025 or os.getenv("DISTRATOS_2025_XLSX")
 
     configurar_logging(False)
     if not MD_LEGADO.exists():
@@ -583,6 +884,34 @@ def main() -> int:
                 n_seeds += 1
             else:
                 log.warning("  credito-manual xlsx não encontrado (%s) — precadastros_credito_manual mantida como está.", cm)
+        if estrutura_precos_path:
+            ep2 = Path(estrutura_precos_path)
+            if ep2.exists():
+                total += carregar_estrutura_precos(conn, ep2)
+                n_seeds += 1
+            else:
+                log.warning("  estrutura-precos xlsm não encontrado (%s) — d_estrutura mantida como está.", ep2)
+        if metas_empreendimentos_path:
+            me = Path(metas_empreendimentos_path)
+            if me.exists():
+                total += carregar_metas_empreendimentos(conn, me)
+                n_seeds += 1
+            else:
+                log.warning("  metas-empreendimentos xlsx não encontrado (%s) — d_metas_empreendimentos mantida como está.", me)
+        if viabilidade_path:
+            vb = Path(viabilidade_path)
+            if vb.exists():
+                total += carregar_viabilidade(conn, vb)
+                n_seeds += 1
+            else:
+                log.warning("  viabilidade xlsx não encontrado (%s) — d_viabilidade mantida como está.", vb)
+        if distratos_2025_path:
+            d25 = Path(distratos_2025_path)
+            if d25.exists():
+                total += carregar_distratos_2025(conn, d25)
+                n_seeds += 1
+            else:
+                log.warning("  distratos-2025 xlsx não encontrado (%s) — distratos_2025 mantida como está.", d25)
         conn.commit()
     log.info("Concluído: %d linhas carregadas em %d seeds.", total, n_seeds)
     log.info("Pendentes (SharePoint): feriados, profissões, equipe_corretor (superada por dim_corretor).")

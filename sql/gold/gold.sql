@@ -525,6 +525,12 @@ FROM gold.fato_leads;
 -- recentemente pelo time de crédito); NULL é esperado pro resto, não é falha
 -- de match. Alimentam os donuts "Aprovação de Crédito"/"Encaminhado ao CCA".
 --
+-- RENDA: renda_cliente_principal (só o titular, NULL quando não preenchida) e
+-- renda_total (titular + compositores; o CVDW manda 0 em vez de NULL quando vazia
+-- — ~36% dos casos). Média/mediana em DAX precisam excluir o 0, senão puxam pra
+-- baixo. Há digitação livre sem validação no CVCRM: 55 registros acima de R$ 1 mi
+-- (vários no teto 99.999.999,99) — usar mediana, não média, em visual agregado.
+--
 -- CANAL/MÍDIA: o CVDW não retorna canal/mídia de pré-cadastro (só de lead). Como
 -- todo pré-cadastro nasce de um lead (id_lead), busca-se origem_chave em
 -- gold.fato_leads por esse ID (~96,5% casa; o resto é pré-cadastro sem id_lead ou
@@ -565,6 +571,8 @@ SELECT
     p.valor_fgts,
     p.valor_total,
     p.saldo_devedor,
+    p.renda_cliente_principal,
+    p.renda_total,
     p.eh_aprovado,
     p.eh_reprovado,
     p.eh_cancelado,
@@ -595,3 +603,147 @@ LEFT JOIN LATERAL (
     ORDER BY fr.data_cad DESC NULLS LAST
     LIMIT 1
 ) resv ON true;
+
+
+-- ===========================================================================
+-- PREÇO / ESTOQUE / METAS / VIABILIDADE (task 6.4 do roadmap) — tabelas que NÃO
+-- vêm da API CVDW: planejamento/input manual da gestão (risco R5 do
+-- REGRAS_NEGOCIO.md). Fonte: silver.d_estrutura / d_metas_empreendimentos /
+-- d_viabilidade (seeds carregadas por popular_seeds.py a partir de base_precos.xlsm,
+-- Meta.xlsx e d_para empreendimentos.xlsx). Alimentam os insights do BI de Preço
+-- (estoque/VSO/margem) e Empreendimento x Meta — ver powerbi/MEDIDAS_ESTOQUE_PRECO.dax.
+-- ===========================================================================
+
+-- Matriz de preço/estoque por unidade + status calculado contra a fato de reservas.
+-- ⚠️ Chave de join p/ status: a API CVDW não expõe o mesmo "Código interno da
+-- unidade" que o CSV legado tinha (só codigo_interno_empreendimento a nível de
+-- empreendimento) — o match usa (codigo_cv, bloco, unidade) normalizado.
+-- Achado na validação (task 6.4): em produto de torre única, silver.reservas.bloco
+-- vem preenchido com o PRÓPRIO NOME DO EMPREENDIMENTO (ex.: "PARC DAS ARTES
+-- RESIDENCIAL"), enquanto d_estrutura.bloco fica NULL pro mesmo caso — sem
+-- normalizar isso, o match zerava pra todo produto sem torre (confirmado: Parc
+-- das Artes dava 0 "Realizado" antes deste ajuste). Por isso o bloco só entra na
+-- chave quando é um valor de torre "de verdade" (≠ nome do empreendimento);
+-- comparação NULL-safe (IS NOT DISTINCT FROM) pra não perder produto sem bloco.
+DROP VIEW IF EXISTS gold.dim_estrutura CASCADE;
+CREATE VIEW gold.dim_estrutura AS
+WITH vendidas AS (
+    SELECT DISTINCT
+           r.codigo_interno_empreendimento,
+           CASE WHEN upper(btrim(r.bloco)) = upper(btrim(r.empreendimento))
+                THEN NULL ELSE upper(btrim(r.bloco)) END AS bloco_norm,
+           upper(btrim(r.unidade)) AS unidade_norm
+    FROM silver.reservas r
+    WHERE r.eh_venda_ou_distrato
+)
+SELECT
+    e.codigo_interno,
+    e.codigo_cv,
+    e.produto,
+    silver.conformar_empreendimento(e.produto) AS empreendimento_conformado,
+    e.bloco,
+    e.unidade,
+    e.area_privativa,
+    e.config_1, e.config_2, e.config_3,
+    e.permuta,
+    e.preco,
+    e.preco_m2,
+    CASE
+        WHEN e.permuta THEN 'Permuta'
+        WHEN v.codigo_interno_empreendimento IS NOT NULL THEN 'Realizado'
+        ELSE 'Estoque'
+    END AS status_unidade
+FROM silver.d_estrutura e
+LEFT JOIN vendidas v
+       ON v.codigo_interno_empreendimento = e.codigo_cv
+      AND v.bloco_norm IS NOT DISTINCT FROM nullif(upper(btrim(e.bloco)), '')
+      AND v.unidade_norm = upper(btrim(e.unidade));
+
+
+-- Metas/forecast mensais por empreendimento (Meta.xlsx). Grão = codigo_cv x mês x
+-- status_meta (Start/Replan) — mesmo grão do legado (KPI-31..33).
+DROP VIEW IF EXISTS gold.dim_metas_empreendimentos CASCADE;
+CREATE VIEW gold.dim_metas_empreendimentos AS
+SELECT
+    m.codigo_cv,
+    de.id_empreendimento,
+    coalesce(de.empreendimento_conformado, m.empreendimento) AS empreendimento,
+    m.data,
+    m.status_meta,
+    m.mes,
+    coalesce(m.regional, de.regional)                        AS regional,
+    m.status_empreendimento,
+    m.meta_qtd, m.meta_vgv,
+    m.forecast_qtd, m.forecast_vgv,
+    m.meta_house, m.meta_imobiliaria, m.meta_gv_house, m.meta_gv_imob,
+    m.meta_digital_rpo, m.meta_digital_regional, m.meta_digital,
+    m.qtd_apresentacao, m.vgv_apresentacao
+FROM silver.d_metas_empreendimentos m
+LEFT JOIN gold.dim_empreendimento de
+       ON de.codigo_interno_empreendimento = m.codigo_cv;
+
+
+-- Parâmetros de margem por empreendimento — pivot do EAV silver.d_viabilidade.
+-- Resolve R4: no legado eram ~12 conjuntos de constantes coladas no DAX (uma
+-- "Margem"/"MargemViab" por empreendimento); aqui viram 1 linha parametrizável,
+-- consumida por 1 única medida DAX (ver powerbi/MEDIDAS_ESTOQUE_PRECO.dax).
+DROP VIEW IF EXISTS gold.dim_viabilidade CASCADE;
+CREATE VIEW gold.dim_viabilidade AS
+SELECT
+    codigo_cv,
+    max(valor)      FILTER (WHERE tipo = 'Receita Bruta')                    AS receita_bruta,
+    max(valor)      FILTER (WHERE tipo = 'Deduções')                         AS deducoes_valor,
+    max(percentual) FILTER (WHERE tipo = 'Deduções')                         AS deducoes_pct,
+    max(valor)      FILTER (WHERE tipo = 'Receita Liquida')                  AS receita_liquida,
+    max(valor)      FILTER (WHERE tipo = 'Custos e Despesas')                AS custos_despesas,
+    max(valor)      FILTER (WHERE tipo = 'Terreno')                         AS terreno_valor,
+    max(percentual) FILTER (WHERE tipo = 'Terreno')                         AS terreno_pct,
+    max(valor)      FILTER (WHERE tipo = 'Construção')                       AS construcao_valor,
+    max(percentual) FILTER (WHERE tipo = 'Construção')                       AS construcao_pct,
+    max(valor)      FILTER (WHERE tipo = 'Despesas')                         AS despesas_valor,
+    max(percentual) FILTER (WHERE tipo = 'Despesas')                         AS despesas_pct
+FROM silver.d_viabilidade
+GROUP BY codigo_cv;
+
+
+-- distratos 2025 — detalhe financeiro (multa/pago/devolução/parcelas) que não vem
+-- da API CVDW; complementa gold.fato_reservas (que já cobre motivo/data/valor via
+-- cvdw.distratos, fonte viva — ver R2 do REGRAS_NEGOCIO.md). Share/House-Parcerias/
+-- Regional reaproveitados de silver.dpara_gerente_contexto (DP-01) em vez de
+-- reimplementar a lista de nomes hardcoded que o DAX legado tinha por classificação.
+-- ⚠️ Ainda NÃO relacionada a gold.fato_reservas: "Contrato" desta planilha não bate
+-- com nenhuma chave de reserva encontrada até agora (codigo_interno/numero_venda) —
+-- possível de investigar por (empreendimento, bloco, unidade, cliente) numa
+-- próxima passada, como foi feito em gold.dim_estrutura (R17).
+-- ⚠️ Validado na carga: 455/860 linhas com gerente_responsavel preenchido não casam
+-- em silver.dpara_gerente_contexto (43 linhas, só gestores atuais) — a planilha é
+-- histórico 2023-2025, com nomes de gerentes que já saíram. share/house_parcerias/
+-- regional ficam NULL nesses casos (esperado, não é falha de match).
+DROP VIEW IF EXISTS gold.dim_distratos_2025 CASCADE;
+CREATE VIEW gold.dim_distratos_2025 AS
+SELECT
+    d.contrato,
+    d.produto,
+    silver.conformar_empreendimento(d.produto) AS empreendimento_conformado,
+    d.bloco, d.unidade, d.cliente,
+    d.data_contrato, d.data_distrato,
+    (d.data_distrato - d.data_contrato) AS dias_ate_distrato,
+    CASE
+        WHEN d.data_distrato IS NULL OR d.data_contrato IS NULL   THEN NULL
+        WHEN d.data_distrato - d.data_contrato <= 7                THEN '01 - até 7 dias'
+        WHEN d.data_distrato - d.data_contrato <= 30                THEN '02 - 7 a 30 dias'
+        WHEN d.data_distrato - d.data_contrato <= 90                THEN '03 - 30 a 90 dias'
+        WHEN d.data_distrato - d.data_contrato <= 180               THEN '04 - 90 a 180 dias'
+        WHEN d.data_distrato - d.data_contrato <= 365               THEN '05 - 180 a 360 dias'
+        ELSE '06 - acima de 360 dias'
+    END AS range_dias_ate_distrato,
+    d.valor_venda, d.valor_contrato, d.area_privativa,
+    d.valor_pago, d.valor_pago_atualizado, d.valor_multa,
+    d.fruicao, d.valor_devolucao, d.forma_devolucao, d.numero_parcelas,
+    d.status_contrato, d.tipo_contrato, d.trans_fil, d.motivo_1, d.motivo_2,
+    d.gerente_responsavel,
+    ctx.share, ctx.house_parcerias, ctx.regional
+FROM silver.distratos_2025 d
+LEFT JOIN silver.dpara_gerente_contexto ctx
+       ON lower(btrim(ctx.gerente_responsavel) COLLATE "und-x-icu") =
+          lower(btrim(d.gerente_responsavel) COLLATE "und-x-icu");

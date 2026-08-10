@@ -97,11 +97,11 @@ Já há um esboço em [`MODELO_SEMANTICO.md`](MODELO_SEMANTICO.md). O legado con
 | `fato_reservas` | 1 reserva (`idreserva`) | `f_reservas` ← CSV → `cvdw.reservas` | Estado da reserva; `f_vendas`/`f_distratos` são views filtradas dela (ING-05) |
 | `fato_series` | 1 parcela | `f_series` ← CSV → `cvdw.reservas_condicoes`(?) | ⚠️ confirmar mapeamento (pergunta aberta do SKILL) |
 | `dim_empreendimento` | `codigo_cv` | `d_empreendimentos` (xlsx) → derivar de `unidades` | de-para de nome (ING-06) |
-| `dim_estrutura/unidade` | `Código Interno` | `d_estrutura` (base_precos.xlsm) → `cvdw.unidades` | preço/área/permuta por unidade |
+| `dim_estrutura/unidade` | `Código Interno` | `d_estrutura` (base_precos.xlsm) → `cvdw.unidades` | ✅ **`gold.dim_estrutura`** (task 6.4, ago/2026): preço/área/permuta/status_unidade (Estoque/Realizado/Permuta) por unidade. Fonte: `silver.d_estrutura` (seed, `popular_seeds.py --estrutura-precos`), 3.543 unidades das 13 abas `Matriz_*`. Status calculado via join `(codigo_cv, bloco, unidade)` contra `fato_reservas` — ⚠️ achado na carga: produto de torre única tem `reservas.bloco` = nome do empreendimento (não NULL como em `d_estrutura`); normalizado no join (ver comentário na view) |
 | `dim_corretor` | corretor | `f_equipes` → `cvdw.corretores` | categoria/nível |
 | `dim_imobiliaria` | imobiliária | → `cvdw.imobiliarias` | não materializada como dim na gold; nome fica em `fato_reservas`/`dim_corretor` |
-| `d_metas_empreendimentos` | mês×empreend. | xlsx `Meta.xlsx` | ⚠️ **sem origem na API** — fica como seed/input manual da gestão |
-| `d_viabilidade` | empreend. | xlsx | idem — input de viabilidade (margem) |
+| `d_metas_empreendimentos` | mês×empreend. | xlsx `Meta.xlsx` | ✅ **`gold.dim_metas_empreendimentos`** (task 6.4): 1.704 linhas (`meta_2`, aba base_meta), seed via `--metas-empreendimentos`. Continua **sem origem na API** (input manual da gestão) |
+| `d_viabilidade` | empreend. | xlsx | ✅ **`gold.dim_viabilidade`** (task 6.4): pivot EAV → 1 linha/`codigo_cv` (receita bruta, terreno/construção/deduções/despesas), seed via `--viabilidade`. Parametriza a medida de Margem — ver KPI-17 |
 | `d_calendario` | dia | gerada (DAX/M) | gerar na Gold |
 
 > ⚠️ **Metas, viabilidade e verba de marketing não existem na API CVDW** — são planejamento da
@@ -138,17 +138,19 @@ Padrão repetido por empreendimento (PA, TR, PSU, PCJ, ARB, PO, PR, F16, QBV, VM
 
 | ID | Medida (padrão `XX_`) | Lógica | Notas |
 |---|---|---|---|
-| KPI-11 | ⭐ **EstoqueVGV** | `SUM(Matriz[Preço])` para unidades **NOT IN** `VALUES(Vendas[Cód. unidade])` | unidade não vendida = estoque |
-| KPI-12 | **Estoque_Qtd** | `COUNT(Matriz[Cód.])` NOT IN vendas E `Permuta <> "Permuta"` | exclui permuta |
-| KPI-13 | ⭐ **ProjetadoVGV** | `[EstoqueVGV] + SUM(Vendas[Valor do contrato])` | VGV potencial total |
-| KPI-14 | **MetragemAVender** | `SUM(Matriz[Área Privativa])` estoque, sem permuta | — |
-| KPI-15 | **M²Médio / M²ARealizar** | `AVERAGE(Vendas[M² Praticado])`; `EstoqueVGV / MetragemAVender` | — |
-| KPI-16 | **VSO** | `DIVIDE(unidades realizadas, unidades totais)` | Velocidade de vendas (d_estrutura `status_unidade="Realizado"`) |
-| KPI-17 | ⭐ **Margem / MargemViab** | `(Projetado − custo − %ded − %desp) / (Projetado × fator)` | ⚠️ **constantes hard-coded por empreendimento** (custo de obra, % deduções). Extrair para `seed` de viabilidade |
+| KPI-11 | ⭐ ✅ **EstoqueVGV** | `SUM(Matriz[Preço])` para unidades **NOT IN** `VALUES(Vendas[Cód. unidade])` | unidade não vendida = estoque. Reimplementado em `powerbi/MEDIDAS_ESTOQUE_PRECO.dax` sobre `gold.dim_estrutura[status_unidade]` |
+| KPI-12 | ✅ **Estoque_Qtd** | `COUNT(Matriz[Cód.])` NOT IN vendas E `Permuta <> "Permuta"` | exclui permuta |
+| KPI-13 | ⭐ ✅ **ProjetadoVGV** | `[EstoqueVGV] + SUM(Vendas[Valor do contrato])` | VGV potencial total |
+| KPI-14 | ✅ **MetragemAVender** | `SUM(Matriz[Área Privativa])` estoque, sem permuta | — |
+| KPI-15 | ✅ **M²Médio / M²ARealizar** | `AVERAGE(Vendas[M² Praticado])`; `EstoqueVGV / MetragemAVender` | — |
+| KPI-16 | ✅ **VSO** | `DIVIDE(unidades realizadas, unidades totais)` | Velocidade de vendas (d_estrutura `status_unidade="Realizado"`) |
+| KPI-17 | ⭐ ✅ **Margem / MargemViab** | `(Projetado − custo − %ded − %desp) / (Projetado × fator)` | Parametrizado (ver nota abaixo) |
 
-> ⚠️ **Duplicação massiva:** o modelo "Preço" repete as MESMAS 8 medidas para ~12 empreendimentos
-> com constantes coladas no DAX. Na Gold isso vira **UMA** medida parametrizada por `dim_viabilidade`
-> (custo, %deduções, %despesas por `codigo_cv`). Grande simplificação + fim da divergência.
+> ✅ **Task 6.4 (ago/2026) resolveu a duplicação (R4):** o modelo "Preço" repetia as MESMAS 8
+> medidas para ~12 empreendimentos com constantes coladas no DAX. Na Gold virou **UMA** medida
+> parametrizada por `gold.dim_viabilidade` (custo de obra = `|terreno_valor + construcao_valor|`,
+> %deduções/%despesas por `codigo_cv`) — `powerbi/MEDIDAS_ESTOQUE_PRECO.dax`. Fórmula validada à
+> mão contra os números de Parc das Artes (`codigo_cv` 10093) no `_bi_ref/RESUMO_BIPreco.md`.
 
 ### 4.3 Distratos ⭐
 
@@ -156,7 +158,7 @@ Padrão repetido por empreendimento (PA, TR, PSU, PCJ, ARB, PO, PR, F16, QBV, VM
 |---|---|---|---|
 | KPI-18 | ⭐ **Taxa de Distrato** | `DIVIDE([Distratos], [Reservas Vendidas])` | KPI oficial |
 | KPI-19 | `eh_distrato` | `Situação = "Distrato"` (ou motivo preenchido) | flag na fato |
-| KPI-20 | ⚠️ múltiplas fontes de distrato | `f_distratos` (xlsx), `'distratos 2025'` (xlsx), `rel_distratos` (CSV) | **3 fontes** — convergir para `cvdw.distratos` |
+| KPI-20 | ⚠️ múltiplas fontes de distrato | `f_distratos` (xlsx), `'distratos 2025'` (xlsx), `rel_distratos` (CSV) | **3 fontes**. `cvdw.distratos`/`silver.distratos` (API, fonte viva) já cobre motivo/data/valor — bate ao centavo (R11 da reconciliação). `'distratos 2025'` importada como **detalhe financeiro complementar** (multa/pago/devolução/parcelas, que a API não tem) em `gold.dim_distratos_2025` (ago/2026); ainda não relacionada à fato por falta de chave comum — ver nota na view. `f_distratos`/`rel_distratos` seguem não importadas (redundantes com a API pro que já é coberto) |
 
 ### 4.4 Funil de Leads / Performance Digital
 
@@ -177,9 +179,9 @@ Padrão repetido por empreendimento (PA, TR, PSU, PCJ, ARB, PO, PR, F16, QBV, VM
 
 | ID | Medida | Lógica | Notas |
 |---|---|---|---|
-| KPI-31 | meta_start / meta_replan | `SUM(d_metas[meta_vgv])` por `status_meta` | input gestão |
-| KPI-32 | Diferenca_meta_* / % Atingimento | `VGV ÷ meta` | acumula YTD |
-| KPI-33 | Forecast (% Forecast, Dif Forecast) | `Realizado ÷ Meta VGV` | `VGV Vendas` xlsx |
+| KPI-31 | ✅ meta_start / meta_replan | `SUM(d_metas[meta_vgv])` por `status_meta` | input gestão. `gold.dim_metas_empreendimentos` (task 6.4) |
+| KPI-32 | ✅ Diferenca_meta_* / % Atingimento | `VGV ÷ meta` | acumula YTD — `powerbi/MEDIDAS_GOLD.dax` |
+| KPI-33 | ✅ Forecast (% Forecast, Dif Forecast) | `Realizado ÷ Meta VGV` | `VGV Vendas` xlsx — `powerbi/MEDIDAS_GOLD.dax` |
 
 ### 4.6 Comissões / Repasses / Receita
 
@@ -226,8 +228,8 @@ Para não poluir Silver/Gold. São pura apresentação:
 | R1 | ⚠️ "Venda" tem 2 definições (`{Vendida}` vs `{Vendida,Distrato}`) | KPI-07/08 | Definir autoritativa na reconciliação |
 | R2 | ⚠️ Distratos vêm de 3 fontes distintas | KPI-20 | Unificar em `cvdw.distratos` |
 | R3 | ⚠️ Canal/Mídia tem 3 versões de de-para | DP-02 | Convergir + datar vigência |
-| R4 | ⚠️ Margem/Viab com constantes hard-coded por empreend. | KPI-17 | Parametrizar via seed de viabilidade |
-| R5 | ⚠️ Metas/viabilidade/verba não existem na API | seção 3 | Manter como input controlado da gestão |
+| R4 | ✅ Margem/Viab com constantes hard-coded por empreend. | KPI-17 | Parametrizado via `gold.dim_viabilidade` (task 6.4, ago/2026) |
+| R5 | ✅ Metas/viabilidade/verba não existem na API | seção 3 | Metas e viabilidade importadas como seed (task 6.4); verba de marketing segue pendente |
 | R6 | ⚠️ Listas de exceção manuais (fluxo investidor, retira reservas) | DP-12 | Confirmar vigência com gestão |
 | R7 | ⚠️ dedup de venda por unidade pode ocultar revenda | ING-05 | Validar grão na Silver |
 | R8 | ⚠️ Ajustes pessoais hard-coded (Castro, Marcio) | ING-04, DP-09/10 | Mover para de-para versionada |
@@ -239,6 +241,7 @@ Para não poluir Silver/Gold. São pura apresentação:
 | R14 | ✅ **Ranking por GERENTE destravado** (slides 17-19): "Gerente Responsavel" **existe na API** como campo customizado em `campos_adicionais` (não em coluna própria). 68% das vendas preenchidas, 39 gerentes, casa com `dpara_gerente_contexto`. `silver.campo_adicional()` extrai; `silver.reservas.gerente_responsavel`; ranking por gerente montado no Power BI sobre a `fato_reservas` (House pela classificação oficial). **Validado:** Matheus Santamaria 6un/R$1,75Mi = slide 18 ("Liga das vendas", 6un/1,7Mi). NÃO precisou de de-para manual. |
 | R15 | ✅ Outros campos do BI legado em `campos_adicionais` **extraídos** p/ silver/gold: `cf_tipo_venda` (98%: Financiamento na Planta/Venda Direta/...), `cf_modalidade_financiamento` (97%: MCMV/PAFIL/SBPE), `cf_motivo_distrato`, `cf_classificacao_vendas_internas`. Ainda disponíveis sob demanda: "Data de Distrato", "Premiação Tá Fácil", "Reciprocidade", "IRPF Futuro" via `silver.campo_adicional()` | reservas | — |
 | R16 | ⚠️ Qualidade: alguns "Gerente Responsavel" trazem nome de EQUIPE ("Equipe Pitangueiras") ou "N/D" em vez de pessoa; 32% nulos. Nomes às vezes divergem do `dpara_gerente_contexto` (ex.: "Marcio Lima" 328 reservas, "Jose Castro*" 60 reservas — ~8% do total; ver DP-01) | ranking gerentes | Confirmar com a gestão e adicionar linha na aba "contexto" do depara_gerentes.xlsx |
+| R17 | ⚠️ `gold.dim_estrutura` não tem código de unidade 1:1 com a API (a CVDW não expõe o "Código interno da unidade" do CSV legado) — o status Estoque/Realizado casa por `(codigo_cv, bloco, unidade)` normalizado. Achado durante a carga (task 6.4): em produto de torre única `silver.reservas.bloco` vem com o NOME DO EMPREENDIMENTO em vez de vazio (`d_estrutura.bloco` fica NULL) — sem normalizar isso o match zerava (Parc das Artes deu 0 "Realizado"). Corrigido tratando bloco=nome-do-empreendimento como NULL dos dois lados antes do join | `gold.dim_estrutura` | Corrigido nesta task; se outro produto aparecer com taxa de match baixa, investigar variação de grafia de bloco/unidade (não há mais fallback por código) |
 
 ---
 

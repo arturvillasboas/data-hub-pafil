@@ -66,6 +66,14 @@ NÃO usar Neon/Supabase/VPS pessoal (PII/LGPD). dbt Core adiado até o schema es
   ⨝ distratos), `fato_leads`, `fato_precadastros` + dims (`calendario`, `empreendimento`,
   `unidade`, `corretor`). Agregados/rankings/esteira ficam por conta do Power BI. Conformação de
   nome de empreendimento via `silver.conformar_empreendimento()` (case-insensitive).
+  **Task 6.4** (ago/2026) somou `dim_estrutura` (preço/estoque por unidade), `dim_metas_empreendimentos`
+  (metas/forecast) e `dim_viabilidade` (parâmetros de margem) — as 3 tabelas do BI de Preço/
+  Empreendimento x Meta que não vêm da API (input manual da gestão), carregadas via
+  `popular_seeds.py` a partir de planilhas do SharePoint (`base_precos.xlsm`, `Meta.xlsx`,
+  `d_para empreendimentos.xlsx`). Medidas DAX de referência em `powerbi/MEDIDAS_ESTOQUE_PRECO.dax`.
+  Logo em seguida (mesmo dia) somou `dim_distratos_2025` — detalhe financeiro de distrato
+  (multa/pago/devolução/parcelas) de `relatorio_distratos.xlsx`, que a API também não tem;
+  ainda sem chave pra relacionar à `fato_reservas` (ver R2/nota na view).
 - **Orquestrador**: `aplicar_tudo.py` (silver→gold→seeds num comando).
 - **Power BI**: `powerbi/` (.pbids de conexão + `MEDIDAS_GOLD.dax` + guia). O `.pbix` em si
   ainda **não foi montado** (passo manual no Desktop).

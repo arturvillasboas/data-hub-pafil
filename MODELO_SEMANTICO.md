@@ -68,6 +68,16 @@ embutidos em `reservas` (`cliente`, `cidade`, `sexo`, `idade`, `estado_civil`,
 `renda`). Puxar o objeto `pessoas` inteiro (≈98 colunas, muito PII: CPF, RG, CNH)
 não compensa agora.
 
+**`dim_estrutura`, `dim_metas_empreendimentos`, `dim_viabilidade`** (task 6.4, ago/2026) —
+matriz de preço/estoque por unidade, metas/forecast mensais e parâmetros de margem por
+empreendimento. Nenhuma vem da API CVDW (planejamento/input manual da gestão — R5 do
+REGRAS_NEGOCIO.md); chegam via seed (`popular_seeds.py --estrutura-precos/--metas-empreendimentos/
+--viabilidade`) a partir de `base_precos.xlsm`, `Meta.xlsx` e `d_para empreendimentos.xlsx`.
+Relacionam-se a `dim_empreendimento` por `codigo_cv` = `codigo_interno_empreendimento`. Medidas
+em `powerbi/MEDIDAS_ESTOQUE_PRECO.dax` (Estoque/VSO/Margem) e `powerbi/MEDIDAS_GOLD.dax`
+(Meta/Forecast/% Atingimento). Detalhe de colunas e o achado de normalização de `bloco` (produto
+de torre única) em `REGRAS_NEGOCIO.md` seção 3 e R17.
+
 **`dim_calendario`** (cole no Desktop, *Nova tabela*):
 ```dax
 dim_calendario =

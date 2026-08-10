@@ -222,6 +222,109 @@ INSERT INTO silver.dpara_empreendimento_regional (codigo_interno_empreendimento,
     (14993,'SCA'),(15840,'RPO'),(20587,'RPO')
 ON CONFLICT (codigo_interno_empreendimento) DO NOTHING;
 
+-- ---------------------------------------------------------------------------------
+-- Task 6.4 (roadmap): tabelas de PREÇO/ESTOQUE, METAS e VIABILIDADE — não vêm da API
+-- CVDW (planejamento/input manual da gestão, risco R5 do REGRAS_NEGOCIO.md). Fonte:
+-- planilhas SharePoint/OneDrive (BI V.2/BI Matriz), carregadas por popular_seeds.py.
+-- ---------------------------------------------------------------------------------
+
+-- d_estrutura — matriz de preço/estoque por unidade (união das 12 abas Matriz_XX de
+-- base_precos.xlsm). PK = "Código Interno" da unidade na tabela de preço (ING-08: 1
+-- linha por unidade, dedup primeiro-vence). `permuta` já vem como boolean (ING-07).
+CREATE TABLE IF NOT EXISTS silver.d_estrutura (
+    codigo_interno   text PRIMARY KEY,
+    codigo_cv        int,
+    produto          text,
+    bloco            text,
+    unidade          text,
+    id_preco         text,
+    area_privativa   numeric,
+    config_1         text,
+    config_2         text,
+    config_3         text,
+    permuta          boolean,
+    preco            numeric,
+    preco_m2         numeric,
+    _origem          text DEFAULT 'SharePoint: BI Matriz/base_precos.xlsm (abas Matriz_*)'
+);
+
+-- d_metas_empreendimentos — metas/forecast mensais por empreendimento (Meta.xlsx,
+-- aba base_meta, tabela meta_2). Grão = codigo_cv x mês x status_meta (Start/Replan).
+CREATE TABLE IF NOT EXISTS silver.d_metas_empreendimentos (
+    codigo_cv              int,
+    data                    date,
+    status_meta             text,
+    chave_gv                text,
+    data_base                date,
+    mes                      int,
+    empreendimento           text,
+    status_empreendimento    text,
+    regional                 text,
+    meta_house               numeric,
+    meta_imobiliaria         numeric,
+    meta_gv_house            numeric,
+    meta_gv_imob             numeric,
+    meta_qtd                 int,
+    meta_vgv                 numeric,
+    forecast_qtd             int,
+    forecast_vgv             numeric,
+    meta_digital_rpo         numeric,
+    meta_digital_regional    numeric,
+    meta_digital             numeric,
+    qtd_apresentacao         int,
+    vgv_apresentacao         numeric,
+    _origem                  text DEFAULT 'SharePoint: BI Matriz/Meta.xlsx (aba base_meta, tabela meta_2)',
+    PRIMARY KEY (codigo_cv, data, status_meta)
+);
+
+-- d_viabilidade — parâmetros de margem por empreendimento, formato EAV (d_para
+-- empreendimentos.xlsx, aba viabil_padrão, tabela tab_viabil_padrão). Resolve R4: no
+-- legado eram ~12 conjuntos de constantes coladas em DAX; aqui viram dado consultável.
+CREATE TABLE IF NOT EXISTS silver.d_viabilidade (
+    codigo_cv  int,
+    tipo       text,
+    valor      numeric,
+    percentual numeric,
+    _origem    text DEFAULT 'SharePoint: BI Matriz/Empreendimentos/d_para empreendimentos.xlsx (aba viabil_padrão)',
+    PRIMARY KEY (codigo_cv, tipo)
+);
+
+-- distratos 2025 — detalhe financeiro de distrato (multa, valor pago, devolução,
+-- parcelas) que NÃO existe na API CVDW. Uma das 3 fontes de distrato do legado
+-- (risco R2 do REGRAS_NEGOCIO.md — cvdw.distratos/silver.distratos já é a fonte
+-- viva de motivo/data/valor; esta tabela soma o detalhe financeiro que falta lá).
+-- Fonte: relatorio_distratos.xlsx (aba "Base Distratos", sheet cru — sem Excel
+-- Table nomeada). "Contrato" NÃO é único no arquivo (894 linhas, 860 distintos,
+-- 34 nulos) — PK técnica, sem chave natural confiável.
+CREATE TABLE IF NOT EXISTS silver.distratos_2025 (
+    _id_tecnico           bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    contrato              int,
+    produto               text,   -- coluna "Filial" na planilha = nome do empreendimento
+    bloco                 text,
+    unidade               text,
+    cliente               text,
+    data_contrato         date,
+    data_distrato         date,
+    valor_venda           numeric,
+    valor_contrato        numeric,
+    area_privativa        numeric,
+    valor_pago            numeric,
+    valor_pago_atualizado numeric,
+    valor_multa           numeric,
+    fruicao               int,
+    valor_devolucao       numeric,
+    forma_devolucao       text,
+    numero_parcelas       int,
+    status_contrato       text,
+    tipo_contrato         text,
+    trans_fil             text,
+    motivo_1              text,
+    motivo_2              text,
+    gerente_responsavel   text,
+    _origem                text DEFAULT 'SharePoint: BI Matriz/relatorio_distratos.xlsx (aba Base Distratos)'
+);
+CREATE INDEX IF NOT EXISTS ix_distratos_2025_contrato ON silver.distratos_2025 (contrato);
+
 -- Situação da reserva → ordem do funil da esteira (1..13 pipeline aberto; 14..16 desfecho).
 CREATE TABLE IF NOT EXISTS silver.dpara_situacao_esteira (
     situacao         text PRIMARY KEY,

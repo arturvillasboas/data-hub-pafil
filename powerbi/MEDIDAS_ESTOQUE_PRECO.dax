@@ -1,0 +1,90 @@
+// =============================================================================
+// Medidas DAX — Estoque / Preço / VSO / Margem (task 6.4 do roadmap).
+//
+// Reimplementação parametrizada do modelo "Preço" legado (KPI-11..17 do
+// REGRAS_NEGOCIO.md, seção 4.2): no legado eram ~8 medidas REPETIDAS por
+// empreendimento (PA_, TR_, PSU_, PCJ_, ARB_, PO_, PR_, F16_, QBV_, VM_, PPN_,
+// VLPQ_ — 12 conjuntos) com constantes de margem coladas no DAX. Aqui é 1
+// conjunto só, parametrizado por gold.dim_estrutura (status da unidade) e
+// gold.dim_viabilidade (parâmetros de margem por codigo_cv) — filtra por
+// empreendimento com o slicer, não precisa duplicar medida (resolve R4).
+//
+// Tabelas (importadas do schema gold): dim_estrutura, dim_viabilidade,
+// dim_empreendimento — relacione dim_estrutura[codigo_cv] e
+// dim_viabilidade[codigo_cv] a dim_empreendimento[codigo_interno_empreendimento].
+// Colunas-chave de dim_estrutura: preco, preco_m2, area_privativa, status_unidade
+// ('Estoque'/'Realizado'/'Permuta'), codigo_cv.
+// Colunas-chave de dim_viabilidade (1 linha por codigo_cv): receita_bruta,
+// deducoes_pct, despesas_pct, terreno_valor, construcao_valor.
+//
+// ⚠️ Margem/MargemViab só fazem sentido com o relatório filtrado a UM
+// empreendimento por vez (slicer) — dim_viabilidade tem parâmetros por produto;
+// somar vários empreendimentos numa célula sem filtro dá um número sem sentido
+// (mistura margens de produtos diferentes). Mesma limitação do modelo legado
+// (cada medida XX_Margem já era implicitamente 1 empreendimento).
+//
+// ⚠️ Status da unidade (Estoque/Realizado) usa join (codigo_cv, bloco, unidade)
+// contra fato_reservas — a API CVDW não expõe o mesmo código de unidade que o
+// CSV legado tinha. Validar taxa de match antes de confiar cegamente no VSO.
+//
+// Cole numa tabela de medidas no Power BI. Meta VGV/Meta QTD/Forecast (Empreend.
+// x Meta) já estão em powerbi/MEDIDAS_GOLD.dax, sobre dim_metas_empreendimentos.
+// =============================================================================
+
+// ---- Estoque (KPI-11, 12, 14) ----
+EstoqueVGV =                                     // KPI-11
+CALCULATE ( SUM ( dim_estrutura[preco] ), dim_estrutura[status_unidade] = "Estoque" )
+
+Estoque Qtd =                                    // KPI-12
+CALCULATE ( COUNTROWS ( dim_estrutura ), dim_estrutura[status_unidade] = "Estoque" )
+
+MetragemAVender =                                // KPI-14
+CALCULATE ( SUM ( dim_estrutura[area_privativa] ), dim_estrutura[status_unidade] = "Estoque" )
+
+VGV Realizado =
+CALCULATE ( SUM ( dim_estrutura[preco] ), dim_estrutura[status_unidade] = "Realizado" )
+
+ProjetadoVGV = [EstoqueVGV] + [VGV Realizado]    // KPI-13
+
+// ---- Preço médio / velocidade de vendas (KPI-15, KPI-16) ----
+M² Médio Realizado =                             // KPI-15
+CALCULATE ( AVERAGE ( dim_estrutura[preco_m2] ), dim_estrutura[status_unidade] = "Realizado" )
+
+M²ARealizar = DIVIDE ( [EstoqueVGV], [MetragemAVender] )    // KPI-15
+
+VSO =                                            // KPI-16 — velocidade de vendas sobre oferta
+VAR _total     = COUNTROWS ( dim_estrutura )
+VAR _realizado = CALCULATE ( COUNTROWS ( dim_estrutura ), dim_estrutura[status_unidade] = "Realizado" )
+RETURN DIVIDE ( _realizado, _total )
+
+// ---- Margem (KPI-17) — parametrizada por dim_viabilidade -------------------
+// CustoObra = |Terreno + Construção| (fixo, não escala com o VGV realizado/
+// projetado); Deduções/Despesas escalam com a receita (impostos, comissão,
+// opex comercial). Fórmula validada batendo com PA_Margem/PA_MargemViab do
+// legado (_bi_ref/RESUMO_BIPreco.md) para Parc das Artes (codigo_cv 10093).
+Custo de Obra =
+CALCULATE ( SUMX ( dim_viabilidade, -( dim_viabilidade[terreno_valor] + dim_viabilidade[construcao_valor] ) ) )
+
+% Receita Líquida = CALCULATE ( SUMX ( dim_viabilidade, 1 + dim_viabilidade[deducoes_pct] ) )
+
+Margem =                                          // KPI-17, sobre o VGV projetado real
+VAR _vgv         = [ProjetadoVGV]
+VAR _custoObra   = [Custo de Obra]
+VAR _deducoesPct = CALCULATE ( SUMX ( dim_viabilidade, ABS ( dim_viabilidade[deducoes_pct] ) ) )
+VAR _despesasPct = CALCULATE ( SUMX ( dim_viabilidade, ABS ( dim_viabilidade[despesas_pct] ) ) )
+RETURN
+DIVIDE (
+    _vgv - _custoObra - _vgv * _deducoesPct - _vgv * _despesasPct,
+    _vgv * [% Receita Líquida]
+)
+
+MargemViab =                                      // KPI-17, sobre a Receita Bruta de viabilidade (fixa)
+VAR _vgv         = CALCULATE ( SUMX ( dim_viabilidade, dim_viabilidade[receita_bruta] ) )
+VAR _custoObra   = [Custo de Obra]
+VAR _deducoesPct = CALCULATE ( SUMX ( dim_viabilidade, ABS ( dim_viabilidade[deducoes_pct] ) ) )
+VAR _despesasPct = CALCULATE ( SUMX ( dim_viabilidade, ABS ( dim_viabilidade[despesas_pct] ) ) )
+RETURN
+DIVIDE (
+    _vgv - _custoObra - _vgv * _deducoesPct - _vgv * _despesasPct,
+    _vgv * [% Receita Líquida]
+)
