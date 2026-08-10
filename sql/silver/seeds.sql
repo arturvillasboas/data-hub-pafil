@@ -248,6 +248,31 @@ CREATE TABLE IF NOT EXISTS silver.d_estrutura (
     _origem          text DEFAULT 'SharePoint: BI Matriz/base_precos.xlsm (abas Matriz_*)'
 );
 
+-- Normaliza código de unidade pra casar fontes com formatação diferente (zero à
+-- esquerda, "L 30 - CASA Nº 281" vs "LOTE 31 CASA 485"): extrai só os números
+-- embutidos, remove zero à esquerda de cada um, junta com espaço. Achado na
+-- task 6.4 (match distratos_2025 x fato_reservas): sem isso "027" != "27" e
+-- "L 30 - CASA Nº 281" != "LOTE 31 CASA 485" mesmo sendo a mesma unidade.
+CREATE OR REPLACE FUNCTION silver.chave_unidade(x text) RETURNS text AS $$
+    SELECT nullif(array_to_string(
+        ARRAY(SELECT (t)::int::text
+              FROM unnest(regexp_split_to_array(btrim(coalesce(x, '')), '[^0-9]+')) AS t
+              WHERE t <> ''),
+        ' '
+    ), '');
+$$ LANGUAGE sql IMMUTABLE;
+
+-- Normaliza bloco: NULL quando o bloco vem preenchido com o próprio nome do
+-- empreendimento (produto de torre única — achado R17, ver gold.dim_estrutura),
+-- senão maiúsculo/trim com zero à esquerda do número final removido
+-- ("QUADRA 06" -> "QUADRA 6", pra casar com "Quadra 6" vindo de outra fonte).
+CREATE OR REPLACE FUNCTION silver.chave_bloco(bloco text, empreendimento text) RETURNS text AS $$
+    SELECT CASE
+        WHEN upper(btrim(bloco)) = upper(btrim(empreendimento)) THEN NULL
+        ELSE regexp_replace(upper(btrim(bloco)), '\s0*([0-9]+)$', ' \1')
+    END;
+$$ LANGUAGE sql IMMUTABLE;
+
 -- d_metas_empreendimentos — metas/forecast mensais por empreendimento (Meta.xlsx,
 -- aba base_meta, tabela meta_2). Grão = codigo_cv x mês x status_meta (Start/Replan).
 CREATE TABLE IF NOT EXISTS silver.d_metas_empreendimentos (

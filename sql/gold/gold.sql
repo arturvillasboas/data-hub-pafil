@@ -625,14 +625,20 @@ LEFT JOIN LATERAL (
 -- das Artes dava 0 "Realizado" antes deste ajuste). Por isso o bloco só entra na
 -- chave quando é um valor de torre "de verdade" (≠ nome do empreendimento);
 -- comparação NULL-safe (IS NOT DISTINCT FROM) pra não perder produto sem bloco.
+-- Chaves via silver.chave_bloco/chave_unidade (funções compartilhadas, mesma
+-- normalização usada em gold.dim_distratos_2025 — task 6.4/distratos 2025,
+-- ago/2026): trata bloco=nome-do-empreendimento como NULL nos dois lados E
+-- remove zero à esquerda do número da unidade ("027"->"27", "QUADRA 06"->
+-- "QUADRA 6"), pra casar com a grafia de d_estrutura sem depender de código
+-- de unidade (a API CVDW não expõe o mesmo "Código interno da unidade" do
+-- CSV legado — ver R17 do REGRAS_NEGOCIO.md).
 DROP VIEW IF EXISTS gold.dim_estrutura CASCADE;
 CREATE VIEW gold.dim_estrutura AS
 WITH vendidas AS (
     SELECT DISTINCT
            r.codigo_interno_empreendimento,
-           CASE WHEN upper(btrim(r.bloco)) = upper(btrim(r.empreendimento))
-                THEN NULL ELSE upper(btrim(r.bloco)) END AS bloco_norm,
-           upper(btrim(r.unidade)) AS unidade_norm
+           silver.chave_bloco(r.bloco, r.empreendimento) AS bloco_norm,
+           silver.chave_unidade(r.unidade) AS unidade_norm
     FROM silver.reservas r
     WHERE r.eh_venda_ou_distrato
 )
@@ -656,8 +662,8 @@ SELECT
 FROM silver.d_estrutura e
 LEFT JOIN vendidas v
        ON v.codigo_interno_empreendimento = e.codigo_cv
-      AND v.bloco_norm IS NOT DISTINCT FROM nullif(upper(btrim(e.bloco)), '')
-      AND v.unidade_norm = upper(btrim(e.unidade));
+      AND v.bloco_norm IS NOT DISTINCT FROM silver.chave_bloco(e.bloco, e.produto)
+      AND v.unidade_norm = silver.chave_unidade(e.unidade);
 
 
 -- Metas/forecast mensais por empreendimento (Meta.xlsx). Grão = codigo_cv x mês x
@@ -711,16 +717,60 @@ GROUP BY codigo_cv;
 -- cvdw.distratos, fonte viva — ver R2 do REGRAS_NEGOCIO.md). Share/House-Parcerias/
 -- Regional reaproveitados de silver.dpara_gerente_contexto (DP-01) em vez de
 -- reimplementar a lista de nomes hardcoded que o DAX legado tinha por classificação.
--- ⚠️ Ainda NÃO relacionada a gold.fato_reservas: "Contrato" desta planilha não bate
--- com nenhuma chave de reserva encontrada até agora (codigo_interno/numero_venda) —
--- possível de investigar por (empreendimento, bloco, unidade, cliente) numa
--- próxima passada, como foi feito em gold.dim_estrutura (R17).
--- ⚠️ Validado na carga: 455/860 linhas com gerente_responsavel preenchido não casam
--- em silver.dpara_gerente_contexto (43 linhas, só gestores atuais) — a planilha é
+--
+-- ✅ RELACIONADA a gold.fato_reservas (ago/2026, resolve o "ainda não relacionada"
+-- anterior): "Contrato" é ID do MEGA (financeiro), não bate com nada do CVCRM — o
+-- match usa (empreendimento conformado, chave_bloco, chave_unidade) contra
+-- silver.distratos ⨝ silver.reservas (mesmas funções de silver.chave_bloco/
+-- chave_unidade usadas em gold.dim_estrutura), desempatando pela reserva com
+-- data_situacao mais próxima de "Data do Distrato" quando bloco+unidade batem em
+-- mais de uma. Validado manualmente (860 linhas): 742 casaram (86%); as ~118 sem
+-- match são ~36 de empreendimentos que não existem no CVCRM (produtos antigos) e
+-- o resto variação de grafia de bloco/unidade não coberta pela normalização atual.
+-- motivo_1_resolvido/gerente_responsavel_resolvido preenchem a lacuna quando a
+-- planilha vem sem essas colunas (chegam de silver.reservas/silver.distratos, não
+-- exigem mais o preenchimento manual que foi feito uma vez via Excel).
+-- ⚠️ Qualidade: 455/860 linhas com gerente_responsavel preenchido não casam em
+-- silver.dpara_gerente_contexto (43 linhas, só gestores atuais) — a planilha é
 -- histórico 2023-2025, com nomes de gerentes que já saíram. share/house_parcerias/
 -- regional ficam NULL nesses casos (esperado, não é falha de match).
 DROP VIEW IF EXISTS gold.dim_distratos_2025 CASCADE;
 CREATE VIEW gold.dim_distratos_2025 AS
+WITH d25 AS (
+    SELECT
+        d._id_tecnico, d.contrato,
+        silver.conformar_empreendimento(d.produto) AS emp_conf,
+        silver.chave_bloco(d.bloco, d.produto)      AS bloco_chave,
+        silver.chave_unidade(d.unidade)             AS unidade_chave,
+        d.data_distrato
+    FROM silver.distratos_2025 d
+),
+dist AS (
+    SELECT
+        ds.id_reserva, ds.motivo_distrato, ds.data_situacao::date AS data_distrato_db,
+        r.gerente_responsavel,
+        silver.conformar_empreendimento(r.empreendimento) AS emp_conf,
+        silver.chave_bloco(r.bloco, r.empreendimento)      AS bloco_chave,
+        silver.chave_unidade(r.unidade)                    AS unidade_chave
+    FROM silver.distratos ds
+    JOIN silver.reservas r ON r.id_reserva = ds.id_reserva
+),
+match AS (
+    SELECT DISTINCT ON (d25._id_tecnico)
+        d25._id_tecnico,
+        dist.id_reserva,
+        dist.motivo_distrato       AS motivo_distrato_reserva,
+        dist.gerente_responsavel   AS gerente_responsavel_reserva,
+        abs(dist.data_distrato_db - d25.data_distrato) AS dif_dias_match
+    FROM d25
+    JOIN dist
+      ON dist.emp_conf = d25.emp_conf
+     AND dist.bloco_chave IS NOT DISTINCT FROM d25.bloco_chave
+     AND d25.unidade_chave IS NOT NULL
+     AND (dist.unidade_chave = d25.unidade_chave
+          OR d25.unidade_chave = ANY(string_to_array(dist.unidade_chave, ' ')))
+    ORDER BY d25._id_tecnico, abs(dist.data_distrato_db - d25.data_distrato) NULLS LAST
+)
 SELECT
     d.contrato,
     d.produto,
@@ -742,8 +792,13 @@ SELECT
     d.fruicao, d.valor_devolucao, d.forma_devolucao, d.numero_parcelas,
     d.status_contrato, d.tipo_contrato, d.trans_fil, d.motivo_1, d.motivo_2,
     d.gerente_responsavel,
-    ctx.share, ctx.house_parcerias, ctx.regional
+    ctx.share, ctx.house_parcerias, ctx.regional,
+    m.id_reserva,
+    m.dif_dias_match,
+    coalesce(d.motivo_1, m.motivo_distrato_reserva)             AS motivo_1_resolvido,
+    coalesce(d.gerente_responsavel, m.gerente_responsavel_reserva) AS gerente_responsavel_resolvido
 FROM silver.distratos_2025 d
 LEFT JOIN silver.dpara_gerente_contexto ctx
        ON lower(btrim(ctx.gerente_responsavel) COLLATE "und-x-icu") =
-          lower(btrim(d.gerente_responsavel) COLLATE "und-x-icu");
+          lower(btrim(d.gerente_responsavel) COLLATE "und-x-icu")
+LEFT JOIN match m ON m._id_tecnico = d._id_tecnico;
