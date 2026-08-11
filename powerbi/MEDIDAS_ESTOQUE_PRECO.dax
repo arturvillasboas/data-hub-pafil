@@ -72,6 +72,28 @@ CALCULATE ( SUM ( dim_ivv_padrao[pct_ivv] ), dim_ivv_padrao[eh_mes_atual] = TRUE
 
 Diferença IVV x Padrão = [VSO] - [% IVV Padrão]   // >0 = vendendo acima do ritmo padrão
 
+
+// ---- % Vendido ACUMULADO (barra clara do "IVV x Empreendimento") ------------
+// ⚠️ CORREÇÃO (ago/2026): a versão original (`m_percentual_vendido` = DIVIDE(
+// [Quantidade vendida], [Quantidade estrutura])) herdava o filtro de Ano da
+// página, então contava só as vendas do ANO CORRENTE contra o estoque total
+// HISTÓRICO do empreendimento — número artificialmente baixo e, pior, não
+// comparável com a curva de IVV ao lado, que é ACUMULADA desde o lançamento.
+// (Ex.: Arboretto aparecia 1,33% = 2 vendas de 2026 ÷ 150 unidades, mesmo tendo
+// 60 vendas somando todos os anos → o correto é 40%.)
+// REMOVEFILTERS no calendário/ano faz a contagem virar acumulada (desde sempre),
+// alinhando as duas barras. Use ESTA no lugar da m_percentual_vendido antiga.
+% Vendido Acumulado =
+VAR _vendidas =
+    CALCULATE (
+        COUNT ( fato_reservas[id_reserva] ),
+        fato_reservas[situacao] = "Vendida",
+        REMOVEFILTERS ( dim_calendario ),          -- tira o filtro de Ano da página
+        REMOVEFILTERS ( fato_reservas[ano_venda] ) -- idem, se o filtro for direto na fato
+    )
+VAR _estrutura = COUNT ( dim_estrutura[codigo_interno] )
+RETURN DIVIDE ( _vendidas, _estrutura, 0 )
+
 // ---- Margem (KPI-17) — parametrizada por dim_viabilidade -------------------
 // CustoObra = |Terreno + Construção| (fixo, não escala com o VGV realizado/
 // projetado); Deduções/Despesas escalam com a receita (impostos, comissão,

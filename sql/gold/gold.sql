@@ -725,15 +725,15 @@ GROUP BY codigo_cv;
 -- calculada no Power BI: a medida só filtra `eh_mes_atual = TRUE` pra pegar o
 -- ponto da curva referente a hoje (equivalente à MEDIDA m_ivv_padrao do legado).
 --
--- ⚠️ EXTRAPOLAÇÃO (pedido do dev, ago/2026): a curva só tem 36 meses (1..36); pra
--- empreendimento mais antigo que isso, `eh_mes_atual` ficava sempre falso e o
--- visual "IVV x Empreendimento" saía sem a 2ª barra pra ~8 produtos (achado numa
--- validação anterior — todos com VSO alto, coerente com já estarem fora da janela
--- de acompanhamento). Confirmado: as 25 curvas terminam TODAS em mês 36 = 100%
--- (mesmo template padrão pra todo empreendimento). Por isso, quando a idade real
--- passa de 36 meses, `eh_mes_atual` agora "trava" no mês 36 (100%, meta atingida)
--- em vez de ficar sem valor — `meses_desde_lancamento` continua mostrando a idade
--- REAL (sem clamp), só o flag de qual linha é "a de hoje" que usa o teto de 36.
+-- ⚠️ ALÉM DOS 36 MESES: a curva só tem 36 meses (1..36); pra empreendimento mais
+-- antigo que isso, `eh_mes_atual` ficava sempre falso e o visual saía sem a 2ª
+-- barra pra ~8 produtos. Como a barra escura representa a META ("quanto DEVERIA
+-- estar vendido"), e as 25 curvas terminam todas em mês 36 = 100%, o
+-- comportamento correto é travar no último mês da curva: passados 36 meses, a
+-- meta é 100% vendido. `meses_desde_lancamento` continua mostrando a idade REAL
+-- (sem clamp); só o flag de qual linha é "a de hoje" usa o teto (LEAST).
+-- (Houve uma tentativa intermediária de trocar isso por um "% Atingimento"
+-- VGV realizado ÷ meta — descartada: a barra é meta, não realizado.)
 DROP VIEW IF EXISTS gold.dim_ivv_padrao CASCADE;
 CREATE VIEW gold.dim_ivv_padrao AS
 WITH idade AS (
