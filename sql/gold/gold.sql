@@ -617,21 +617,21 @@ LEFT JOIN LATERAL (
 -- Matriz de preço/estoque por unidade + status calculado contra a fato de reservas.
 -- ⚠️ Chave de join p/ status: a API CVDW não expõe o mesmo "Código interno da
 -- unidade" que o CSV legado tinha (só codigo_interno_empreendimento a nível de
--- empreendimento) — o match usa (codigo_cv, bloco, unidade) normalizado.
--- Achado na validação (task 6.4): em produto de torre única, silver.reservas.bloco
--- vem preenchido com o PRÓPRIO NOME DO EMPREENDIMENTO (ex.: "PARC DAS ARTES
--- RESIDENCIAL"), enquanto d_estrutura.bloco fica NULL pro mesmo caso — sem
--- normalizar isso, o match zerava pra todo produto sem torre (confirmado: Parc
--- das Artes dava 0 "Realizado" antes deste ajuste). Por isso o bloco só entra na
--- chave quando é um valor de torre "de verdade" (≠ nome do empreendimento);
--- comparação NULL-safe (IS NOT DISTINCT FROM) pra não perder produto sem bloco.
--- Chaves via silver.chave_bloco/chave_unidade (funções compartilhadas, mesma
--- normalização usada em gold.dim_distratos_2025 — task 6.4/distratos 2025,
--- ago/2026): trata bloco=nome-do-empreendimento como NULL nos dois lados E
--- remove zero à esquerda do número da unidade ("027"->"27", "QUADRA 06"->
--- "QUADRA 6"), pra casar com a grafia de d_estrutura sem depender de código
--- de unidade (a API CVDW não expõe o mesmo "Código interno da unidade" do
--- CSV legado — ver R17 do REGRAS_NEGOCIO.md).
+-- empreendimento) — o match usa (codigo_cv, bloco, unidade) normalizado via
+-- silver.chave_bloco/chave_unidade (funções compartilhadas com
+-- gold.dim_distratos_2025). Achados de validação acumulados (task 6.4/ago-2026,
+-- ver R17 do REGRAS_NEGOCIO.md):
+--   1. bloco = nome do empreendimento (produto de torre única) — tratado como
+--      NULL nos dois lados por chave_bloco (por CONJUNTO de palavras, não string
+--      exata: achado "ARBORETTO RESIDENCIALE" x bloco "RESIDENCIALE ARBORETTO",
+--      mesmas palavras fora de ordem, tratamento ingênuo não pegava);
+--   2. padding de zero e sufixo extra no bloco ("QUADRA 04 - LOTE RESIDENCIAL"
+--      -> "QUADRA 4") — chave_bloco extrai só prefixo+1º número;
+--   3. developments em lote (LOTE/CASA) onde um lado tem só 1 número (ex.: só a
+--      casa) e o outro tem 2 (lote+casa) — fallback por token (ANY), mesmo
+--      truque de gold.dim_distratos_2025.
+-- Comparação de bloco é NULL-safe (IS NOT DISTINCT FROM) pra não perder produto
+-- sem bloco.
 DROP VIEW IF EXISTS gold.dim_estrutura CASCADE;
 CREATE VIEW gold.dim_estrutura AS
 WITH vendidas AS (
@@ -663,7 +663,9 @@ FROM silver.d_estrutura e
 LEFT JOIN vendidas v
        ON v.codigo_interno_empreendimento = e.codigo_cv
       AND v.bloco_norm IS NOT DISTINCT FROM silver.chave_bloco(e.bloco, e.produto)
-      AND v.unidade_norm = silver.chave_unidade(e.unidade);
+      AND (v.unidade_norm = silver.chave_unidade(e.unidade)
+           OR silver.chave_unidade(e.unidade) = ANY(string_to_array(v.unidade_norm, ' '))
+           OR v.unidade_norm = ANY(string_to_array(silver.chave_unidade(e.unidade), ' ')));
 
 
 -- Metas/forecast mensais por empreendimento (Meta.xlsx). Grão = codigo_cv x mês x
@@ -798,7 +800,8 @@ match AS (
      AND dist.bloco_chave IS NOT DISTINCT FROM d25.bloco_chave
      AND d25.unidade_chave IS NOT NULL
      AND (dist.unidade_chave = d25.unidade_chave
-          OR d25.unidade_chave = ANY(string_to_array(dist.unidade_chave, ' ')))
+          OR d25.unidade_chave = ANY(string_to_array(dist.unidade_chave, ' '))
+          OR dist.unidade_chave = ANY(string_to_array(d25.unidade_chave, ' ')))
     ORDER BY d25._id_tecnico, abs(dist.data_distrato_db - d25.data_distrato) NULLS LAST
 )
 SELECT

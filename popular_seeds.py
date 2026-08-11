@@ -150,6 +150,30 @@ def carregar_estrutura_precos(conn, xlsm: Path) -> int:
     wb = openpyxl.load_workbook(xlsm, data_only=True)
     origem_txt = f"SharePoint: {xlsm.name} (abas Matriz_*)"
 
+    # Tabelas "Matriz_*" com problema conhecido de origem — achado na validação
+    # do relatório "Vendas Geral" (ago/2026): a aba QBV2 tem cabeçalhos com erro
+    # de digitação ("Unidde"/"ID_Prço"/"Áre Privtiv"/"Permut" em vez de
+    # Unidade/ID_Preço/Área Privativa/Permuta) que zeravam a coluna Unidade pro
+    # produto inteiro (Quinta da Boa Vista, VSO saía 0%). A aba QBV (tabela com
+    # nome mangulado "Matriz_F162427" — artefato de copiar/colar do Excel) tem o
+    # MESMO produto/codigo_cv, mesma contagem de linhas, com os cabeçalhos certos
+    # — é a versão boa. Pular a quebrada evita que o dedup por Código Interno
+    # (primeiro-vence, ING-08) fique com a errada por causa da ordem das abas.
+    ABAS_TABELA_IGNORAR = {"Matriz_QBV"}
+
+    # Variação de nome de coluna entre abas do mesmo workbook (cada produto foi
+    # montado por cópia manual da matriz e divergiu um pouco) — normaliza pro
+    # nome canônico antes de extrair os campos.
+    ALIAS_COLUNA = {
+        "Unidde": "Unidade",
+        "ID_Prço": "ID_Preço",
+        "Áre Privtiv": "Área Privativa",
+        "Permut": "Permuta",
+        "Tipologi": "CONFIG_1",
+        "Tipologia": "CONFIG_1",
+        "CONFIG 1": "CONFIG_1",
+    }
+
     def _num(v):
         try:
             return float(v) if v is not None else None
@@ -166,10 +190,11 @@ def carregar_estrutura_precos(conn, xlsm: Path) -> int:
     n_abas = 0
     for ws in wb.worksheets:
         for nome_tabela in list(ws.tables):
-            if not nome_tabela.startswith("Matriz_"):
+            if not nome_tabela.startswith("Matriz_") or nome_tabela in ABAS_TABELA_IGNORAR:
                 continue
             n_abas += 1
-            for r in _tabela_openpyxl(ws, nome_tabela):
+            for r_bruto in _tabela_openpyxl(ws, nome_tabela):
+                r = {ALIAS_COLUNA.get(k, k): v for k, v in r_bruto.items()}
                 cod_interno = _txt(r.get("Código Interno"))
                 if not cod_interno or cod_interno in registros:
                     continue

@@ -262,14 +262,30 @@ CREATE OR REPLACE FUNCTION silver.chave_unidade(x text) RETURNS text AS $$
     ), '');
 $$ LANGUAGE sql IMMUTABLE;
 
--- Normaliza bloco: NULL quando o bloco vem preenchido com o próprio nome do
--- empreendimento (produto de torre única — achado R17, ver gold.dim_estrutura),
--- senão maiúsculo/trim com zero à esquerda do número final removido
--- ("QUADRA 06" -> "QUADRA 6", pra casar com "Quadra 6" vindo de outra fonte).
+-- Normaliza texto por CONJUNTO de palavras (ordem-independente, maiúsculo) —
+-- usado por silver.chave_bloco pra achar bloco que é o nome do empreendimento
+-- com as palavras fora de ordem (achado: reservas tinha empreendimento=
+-- "ARBORETTO RESIDENCIALE" e bloco="RESIDENCIALE ARBORETTO" pro mesmo produto;
+-- comparação de string exata não pega isso).
+CREATE OR REPLACE FUNCTION silver.chave_texto(x text) RETURNS text AS $$
+    SELECT array_to_string(
+        (SELECT array_agg(w ORDER BY w)
+           FROM unnest(regexp_split_to_array(upper(btrim(coalesce(x, ''))), '\s+')) AS w
+          WHERE w <> ''),
+        ' '
+    );
+$$ LANGUAGE sql IMMUTABLE;
+
+-- Normaliza bloco: NULL quando o bloco é (por conjunto de palavras, não string
+-- exata) o próprio nome do empreendimento — produto de torre única, achado R17
+-- em gold.dim_estrutura, incluindo a variante com palavras fora de ordem.
+-- Senão: extrai só PREFIXO + PRIMEIRO número (zero à esquerda removido),
+-- descartando qualquer sufixo depois ("QUADRA 04 - LOTE RESIDENCIAL" ->
+-- "QUADRA 4", pra casar com "Quadra 4" vindo de outra fonte sem o sufixo).
 CREATE OR REPLACE FUNCTION silver.chave_bloco(bloco text, empreendimento text) RETURNS text AS $$
     SELECT CASE
-        WHEN upper(btrim(bloco)) = upper(btrim(empreendimento)) THEN NULL
-        ELSE regexp_replace(upper(btrim(bloco)), '\s0*([0-9]+)$', ' \1')
+        WHEN silver.chave_texto(bloco) = silver.chave_texto(empreendimento) THEN NULL
+        ELSE regexp_replace(upper(btrim(bloco)), '^(\D*?)0*([0-9]+).*$', '\1\2')
     END;
 $$ LANGUAGE sql IMMUTABLE;
 
