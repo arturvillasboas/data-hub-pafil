@@ -62,6 +62,11 @@ RETURN DIVIDE ( _realizado, _total )
 // meses, comparada à curva de 36 meses) — não precisa de coluna calculada nem
 // de relacionamento com data de lançamento no Power BI, diferente do legado
 // (m_ivv_padrao = CALCULATE(SUM(d_ivv[%IVV]), d_ivv[validacao]="sim")).
+// Empreendimento mais antigo que 36 meses de lançamento "trava" no valor do
+// último mês da curva (100%, meta atingida) em vez de ficar sem valor — pedido
+// do dev (ago/2026), pra o visual mostrar as 2 barras em TODOS os empreendimentos.
+// dim_ivv_padrao[curva_extrapolada] marca quando isso acontece, se quiser
+// diferenciar visualmente (ex.: rótulo "meta atingida" nesses casos).
 % IVV Padrão =                                    // equivalente a m_ivv_padrao do legado
 CALCULATE ( SUM ( dim_ivv_padrao[pct_ivv] ), dim_ivv_padrao[eh_mes_atual] = TRUE () )
 

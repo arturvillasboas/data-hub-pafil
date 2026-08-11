@@ -724,8 +724,28 @@ GROUP BY codigo_cv;
 -- (recalcula a cada consulta), então não precisa de relacionamento nem de coluna
 -- calculada no Power BI: a medida só filtra `eh_mes_atual = TRUE` pra pegar o
 -- ponto da curva referente a hoje (equivalente à MEDIDA m_ivv_padrao do legado).
+--
+-- ⚠️ EXTRAPOLAÇÃO (pedido do dev, ago/2026): a curva só tem 36 meses (1..36); pra
+-- empreendimento mais antigo que isso, `eh_mes_atual` ficava sempre falso e o
+-- visual "IVV x Empreendimento" saía sem a 2ª barra pra ~8 produtos (achado numa
+-- validação anterior — todos com VSO alto, coerente com já estarem fora da janela
+-- de acompanhamento). Confirmado: as 25 curvas terminam TODAS em mês 36 = 100%
+-- (mesmo template padrão pra todo empreendimento). Por isso, quando a idade real
+-- passa de 36 meses, `eh_mes_atual` agora "trava" no mês 36 (100%, meta atingida)
+-- em vez de ficar sem valor — `meses_desde_lancamento` continua mostrando a idade
+-- REAL (sem clamp), só o flag de qual linha é "a de hoje" que usa o teto de 36.
 DROP VIEW IF EXISTS gold.dim_ivv_padrao CASCADE;
 CREATE VIEW gold.dim_ivv_padrao AS
+WITH idade AS (
+    SELECT
+        el.codigo_cv,
+        ( extract(year  FROM age(current_date, el.data_lancamento)) * 12
+        + extract(month FROM age(current_date, el.data_lancamento)) )::int AS meses_desde_lancamento
+    FROM silver.d_empreendimento_legado el
+),
+curva AS (
+    SELECT codigo_cv, max(mes) AS ultimo_mes_curva FROM silver.d_ivv GROUP BY codigo_cv
+)
 SELECT
     v.codigo_cv,
     v.empreendimento,
@@ -736,12 +756,13 @@ SELECT
     v.pct_ivv,
     el.data_lancamento,
     el.tipo_produto,
-    ( extract(year  FROM age(current_date, el.data_lancamento)) * 12
-    + extract(month FROM age(current_date, el.data_lancamento)) )::int AS meses_desde_lancamento,
-    v.mes = ( extract(year  FROM age(current_date, el.data_lancamento)) * 12
-            + extract(month FROM age(current_date, el.data_lancamento)) )::int AS eh_mes_atual
+    idade.meses_desde_lancamento,
+    (idade.meses_desde_lancamento > curva.ultimo_mes_curva) AS curva_extrapolada,
+    v.mes = LEAST(idade.meses_desde_lancamento, curva.ultimo_mes_curva) AS eh_mes_atual
 FROM silver.d_ivv v
-LEFT JOIN silver.d_empreendimento_legado el ON el.codigo_cv = v.codigo_cv;
+LEFT JOIN silver.d_empreendimento_legado el ON el.codigo_cv = v.codigo_cv
+LEFT JOIN idade ON idade.codigo_cv = v.codigo_cv
+LEFT JOIN curva ON curva.codigo_cv = v.codigo_cv;
 
 
 -- distratos 2025 — detalhe financeiro (multa/pago/devolução/parcelas) que não vem
