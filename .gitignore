@@ -30,6 +30,21 @@ _backups_fechamento/
 descoberta_schema.py
 gerar_ddl_bronze.py
 
+# === Material de divulgação (não referenciado por nenhuma doc do projeto) ===
+/dashboard_credito_anon.png
+/dashboard_credito_filtros_anon.png
+/dashboard_leads_filtros_anon.png
+/dashboard_leads_prospeccao_anon.png
+/diagrama_pipeline_linkedin.png
+
+# === Entregável pontual (Perfil Cliente Quinta dos Ventos) — fora do pipeline
+# === versionado; só o CSV de constantes é citado na documentação =========
+relatorios/*
+!relatorios/viabilidade_constantes_legado.csv
+
+# === Exports mensais de reconciliação (dado de um mês específico, não doc) ===
+reconciliacao/*.xlsx
+
 # === Claude Code ===
 .claude/
 
