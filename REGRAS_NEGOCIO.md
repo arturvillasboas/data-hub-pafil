@@ -1,283 +1,332 @@
-# Catálogo de Regras de Negócio — Pafil Data Platform
+# Catálogo de regras de negócio da Pafil Data Platform
 
-> **O que é:** inventário das regras de negócio corporativas extraídas dos **3 PBIX legados**
-> (engenharia reversa em [`../_bi_ref/`](../_bi_ref)). Cada regra registra: **origem**, **lógica**,
-> **dependências**, **camada-destino** na arquitetura medalhão e **notas de reimplementação**.
->
-> **Por que existe:** o charter define que toda medida DAX / transformação Power Query / relacionamento
-> é potencial regra de negócio que precisa ser mapeada, documentada e migrada com cuidado. Os 3 PBIX
-> **já divergem entre si** — este catálogo é o passo para estabelecer **um número autoritativo**.
->
-> **Como usar:** é a ponte para as duas frentes seguintes —
-> (a) **Silver/Gold** reimplementam cada regra marcada `🔜`;
-> (b) **reconciliação** confere os KPIs `⭐` contra os PBIX antigos.
->
-> **Fontes:** `_bi_ref/RESUMO_Empreendimentos.md` (modelo "Matriz" / BI Comercial),
-> `_bi_ref/RESUMO_BIPreco.md` (modelo "Preço"), `_bi_ref/M_Empreendimentos.md` (Power Query / de-paras).
+Este catálogo reúne o inventário das regras de negócio corporativas extraídas dos
+três relatórios PBIX legados (a engenharia reversa completa está em
+[`../_bi_ref/`](../_bi_ref)). Cada regra registra a origem, a lógica aplicada, as
+dependências, a camada de destino na arquitetura medalhão e notas sobre como ela foi
+ou será reimplementada.
+
+Este catálogo existe porque o charter do projeto define um princípio simples: toda
+medida DAX, toda transformação de Power Query e todo relacionamento é uma regra de
+negócio em potencial, que precisa ser mapeada, documentada e migrada com cuidado. Os
+três PBIX legados já divergem entre si, e este catálogo é o primeiro passo para
+estabelecer um número autoritativo único.
+
+Ele serve de ponte para duas frentes de trabalho: as camadas silver e gold
+reimplementam cada regra marcada como "a implementar", e o processo de reconciliação
+confere os KPIs marcados como autoritativos contra os números dos PBIX antigos.
+
+As fontes usadas para montar este catálogo foram `_bi_ref/RESUMO_Empreendimentos.md`
+(o modelo "Matriz", do BI Comercial), `_bi_ref/RESUMO_BIPreco.md` (o modelo "Preço")
+e `_bi_ref/M_Empreendimentos.md` (Power Query e de-paras).
 
 ## Legenda
 
-| Símbolo | Significado |
-|---|---|
-| ⭐ | **KPI autoritativo** — candidato a reconciliação número-a-número vs. PBIX |
-| 🔜 | Regra a reimplementar em Silver/Gold |
-| 🎨 | **Não é regra de negócio** — formatação/UI (ícones ▲▼, cores, HTML). Descartar na migração |
-| ⚠️ | Risco / armadilha / divergência conhecida |
+Ao longo deste catálogo, cada regra recebe uma ou mais marcações entre parênteses,
+com o seguinte significado:
 
-## Mapa origem → destino (visão de 1 página)
+| Marcação | Significado |
+|---|---|
+| (KPI) | Indicador autoritativo: candidato a reconciliação número a número contra o PBIX legado |
+| (a implementar) | Regra ainda pendente de reimplementação em Silver ou Gold |
+| (descartar) | Não é regra de negócio, é formatação ou interface (ícones, cores, HTML). Não migra para a nova pipeline |
+| (atenção) | Risco, armadilha ou divergência conhecida, que exige cuidado |
+| (concluído) | Regra já reimplementada e validada |
+| (crítico) | Problema sério, ainda sem solução |
+
+## Mapa de origem para destino (visão de uma página)
 
 ```
 LEGADO (PBIX)                          NOVA PIPELINE (medalhão)
 ─────────────────────────────         ──────────────────────────────────
-CSV SharePoint relatorios_*.csv  ──►   BRONZE  (cvdw.* via API — já pronto)
+CSV SharePoint relatorios_*.csv  ──►   BRONZE  (cvdw.* via API, já pronto)
 Power Query (limpeza, filtros)   ──►   SILVER  (tipagem, dedup, conformação)
 de-paras embutidas (.xlsx/JSON)  ──►   SILVER  (tabelas lookup / seed)
 Modelo + relacionamentos         ──►   GOLD    (star schema: fatos + dimensões)
 Medidas DAX (VGV, distrato...)   ──►   GOLD    (views/medidas oficiais)
-Ícones/cores/HTML em DAX         ──►   (descartado — apresentação)
+Ícones/cores/HTML em DAX         ──►   (descartado: é apresentação)
 ```
 
-> ⚠️ **Achado estrutural:** no legado, **tudo nasce de CSV/Excel manuais no SharePoint**
-> (`pafilconstrutora.sharepoint.com/.../BI - Comercial`), não da API. A pipeline nova substitui
-> a origem (Bronze via CVDW), então **as regras de limpeza do Power Query existem para consertar
-> defeitos do export manual** — várias podem desaparecer quando a origem é a API estruturada
-> (ver seção 1). Isso é parte do valor da migração.
+**Um achado estrutural importante:** no sistema legado, tudo nasce de CSVs e
+planilhas Excel mantidos manualmente no SharePoint
+(`pafilconstrutora.sharepoint.com/.../BI - Comercial`), não da API. A pipeline nova
+substitui essa origem pela camada bronze, alimentada pela API CVDW. Isso significa
+que boa parte das regras de limpeza do Power Query existia só para consertar
+defeitos do export manual, e várias delas podem simplesmente deixar de ser
+necessárias agora que a origem é uma API estruturada (veja a seção 1). Esse ganho,
+sozinho, já é parte do valor da migração.
 
 ---
 
-## 1. Regras de ingestão e limpeza (Power Query → Silver)
+## 1. Regras de ingestão e limpeza (Power Query para Silver)
 
-Vêm das partições M de `f_reservas`, `f_vendas`, `f_distratos`, `d_estrutura`.
-São consertos do CSV manual. Avaliar quais ainda fazem sentido com origem = API.
+Estas regras vêm das partições M (Power Query) de `f_reservas`, `f_vendas`,
+`f_distratos` e `d_estrutura`, e existem para consertar problemas do CSV exportado
+manualmente. Vale avaliar, uma a uma, quais delas ainda fazem sentido agora que a
+origem passou a ser a API.
 
 | ID | Regra | Origem (legado) | Lógica | Destino | Notas |
 |---|---|---|---|---|---|
-| ING-01 | ⚠️ Descartar linhas-lixo do CSV | `f_reservas` M | Remove linhas onde `Reserva` contém `"JÁ ANEXEI"`, `"Financiamento: R$ ..."`, `"Sistema Antigo/Atual"`, `"Subsídio: R$ ..."`, ou `Aprovada = "Localização"` | 🔜 Silver (ou some) | Artefatos de quebra de linha no export manual. **Com a API provavelmente não existem** — validar e só então decidir se mantém o filtro defensivo |
-| ING-02 | Reserva válida começa com dígito | `f_reservas` M | Mantém só linhas onde `Reserva` começa com `1`–`9` | 🔜 Silver | Idem — defensivo contra CSV malformado |
-| ING-03 | Extrair `Reserva` entre aspas | `f_reservas` M | `Text.BetweenDelimiters(_, '"','"', FromEnd)` | 🔜 Silver | Específico do CSV; na API `idreserva` já vem limpo |
-| ING-04 | ⭐ "Ajuste Castro" | `f_reservas` M | Se `Corretor = "JOSÉ ROBERTO DE CASTRO JUNIOR"` então `Responsável imobiliária` = o próprio nome dele (senão mantém) | 🔜 **Silver** | **Regra de negócio real** (não defeito de CSV). Esse corretor responde pela própria imobiliária. Reimplementar como CASE no Silver |
-| ING-05 | ⭐ `f_vendas` = reservas vendidas dedup | `f_vendas` M | `f_reservas` filtrado a `Situação = "Vendida"`, remove nulos de `Código interno da unidade`, **dedup por unidade** (1 venda por unidade) | 🔜 Silver/Gold | Define o grão de "venda". ⚠️ dedup por unidade pode esconder revendas |
-| ING-06 | Normalizar nomes de empreendimento | `d_estrutura` M | ~7 `ReplaceValue`: `Tríade`→`Triade Fiúsa Home Resort`, `Primaveras`→`Parc Das Primaveras`, `Arboretto`→`Arboretto Residenciale`, etc. | 🔜 Silver (de-para) | Conformação de nome de produto. Virar tabela de-para `silver.dpara_empreendimento` |
-| ING-07 | `Permuta?` derivada | `d_estrutura` M | `if Permuta = "Permuta" then "Sim" else "Não"` | 🔜 Silver | Flag booleana de permuta |
-| ING-08 | Dedup matriz por Código Interno | `d_estrutura` M | `Table.Distinct(..., {"Código Interno"})` | 🔜 Silver | 1 linha por unidade na dimensão de estrutura/preço |
-| ING-09 | ⭐ Normalizar NOME DE PESSOA (corretor/gerente/supervisor) | novo (21/jul/2026) | `silver.nome_proprio()` = Title Case pt-BR com conectivo (de/da/do/das/dos/e) minúsculo, trim e espaço colapsado; `silver.chave_nome()` = minúscula + sem acento (translate, sem depender da extensão `unaccent`) | ✅ Silver (funções) | O nome é digitado à mão nos DOIS lados (headcount do backoffice e CVCRM) e é a **única chave comum** entre eles. Par exibição/chave: `nome_proprio` mostra, `chave_nome` junta. Aplicado em `gold.dim_corretor_headcount`, `gold.fato_leads` ("Corretor Trat" + `corretor_chave`) e `gold.fato_precadastros` (`corretor_tratado` + `corretor_chave`). Antes: 14/17 ativos casavam por sorte de digitação; agora 17/17. `initcap` puro NÃO serve (devolve "De Paula E Silva" e, em locale C, quebra acento sem COLLATE ICU) |
+| ING-01 | Descartar linhas-lixo do CSV (atenção) | `f_reservas` M | Remove linhas onde `Reserva` contém `"JÁ ANEXEI"`, `"Financiamento: R$ ..."`, `"Sistema Antigo/Atual"`, `"Subsídio: R$ ..."`, ou `Aprovada = "Localização"` | Silver, ou pode deixar de existir (a implementar) | Artefatos de quebra de linha do export manual. Com a API, provavelmente não existem mais: vale validar antes de decidir se o filtro defensivo continua sendo necessário |
+| ING-02 | Reserva válida começa com dígito | `f_reservas` M | Mantém só linhas onde `Reserva` começa com `1` a `9` | Silver (a implementar) | Igual ao anterior: filtro defensivo contra CSV malformado |
+| ING-03 | Extrair `Reserva` entre aspas | `f_reservas` M | `Text.BetweenDelimiters(_, '"','"', FromEnd)` | Silver (a implementar) | Específico do CSV. Na API, `idreserva` já vem limpo |
+| ING-04 | "Ajuste Castro" (regra de negócio real, não limpeza de CSV) | `f_reservas` M | Se `Corretor = "JOSÉ ROBERTO DE CASTRO JUNIOR"` então `Responsável imobiliária` recebe o próprio nome dele (senão mantém o valor original) | Silver (a implementar) | Regra de negócio real, não um defeito de CSV: esse corretor responde pela própria imobiliária. Deve ser reimplementada como um CASE dentro da silver |
+| ING-05 | `f_vendas` é a deduplicação de reservas vendidas (regra de negócio importante) | `f_vendas` M | `f_reservas` filtrado por `Situação = "Vendida"`, removendo nulos de `Código interno da unidade`, com deduplicação por unidade (1 venda por unidade) | Silver/Gold (a implementar) | Define o grão de "venda". Atenção: a deduplicação por unidade pode esconder casos de revenda |
+| ING-06 | Normalizar nomes de empreendimento | `d_estrutura` M | Cerca de 7 substituições de valor: `Tríade` vira `Triade Fiúsa Home Resort`, `Primaveras` vira `Parc Das Primaveras`, `Arboretto` vira `Arboretto Residenciale`, entre outras | Silver, como de-para (a implementar) | Conformação de nome de produto. Deve virar a tabela de-para `silver.dpara_empreendimento` |
+| ING-07 | `Permuta?` derivada | `d_estrutura` M | `if Permuta = "Permuta" then "Sim" else "Não"` | Silver (a implementar) | Flag booleana de permuta |
+| ING-08 | Deduplicar a matriz por Código Interno | `d_estrutura` M | `Table.Distinct(..., {"Código Interno"})` | Silver (a implementar) | Garante uma linha por unidade na dimensão de estrutura e preço |
+| ING-09 | Normalizar nome de pessoa: corretor, gerente ou supervisor (regra de negócio importante) | novo, criado em 21 de julho de 2026 | `silver.nome_proprio()` aplica Title Case em português, com os conectivos (de, da, do, das, dos, e) em minúsculo, além de remover espaços nas pontas e colapsar espaços duplos; `silver.chave_nome()` deixa o nome em minúsculas e sem acento, usando `translate` em vez de depender da extensão `unaccent` | Silver, como funções (concluído) | O nome é digitado à mão nos dois lados, tanto no headcount do backoffice quanto no CVCRM, e é a única chave em comum entre eles. O par funciona assim: `nome_proprio` é a forma de exibição, e `chave_nome` é a chave usada no cruzamento. Aplicado em `gold.dim_corretor_headcount`, em `gold.fato_leads` (colunas "Corretor Trat" e `corretor_chave`) e em `gold.fato_precadastros` (`corretor_tratado` e `corretor_chave`). Antes dessa normalização, apenas 14 dos 17 corretores ativos casavam corretamente, por sorte de digitação; agora são 17 de 17. A função `initcap` pura do Postgres não serve para isso: ela devolve "De Paula E Silva", capitalizando conectivos que deveriam ficar minúsculos, e no locale C quebra a acentuação sem a extensão COLLATE ICU |
 
 ---
 
-## 2. De-paras / tabelas de conformação (Power Query → Silver seeds)
+## 2. De-paras e tabelas de conformação (Power Query para seeds da Silver)
 
-Cada uma é uma **regra de classificação**. No legado vivem como `.xlsx` no SharePoint ou JSON embutido.
-Na Silver viram tabelas lookup (seed) versionadas — **tirar do SharePoint é ganho de governança**.
+Cada de-para é uma regra de classificação. No sistema legado, vivem como arquivo
+`.xlsx` no SharePoint ou como JSON embutido no modelo. Na silver, viram tabelas de
+consulta (seeds) versionadas, e tirar essa lógica do SharePoint já é, por si só, um
+ganho de governança.
 
 | ID | De-para | Mapeia | Origem | Destino | Notas |
 |---|---|---|---|---|---|
-| DP-01 | `dpara_gerente_contexto` | `Gerente Responsável` (texto cru do CVCRM, campos_adicionais) → `Gerente Apelido`, `Share`, `House/Parcerias`, `Regional` | xlsx SharePoint (aba "contexto") | ✅ Silver seed | Usado SÓ p/ resolver a classificação da RESERVA (não existe ID p/ isso no CRM). Gap conhecido: ~388 reservas (`Marcio Lima`, `Jose Castro*`) sem linha — pendente confirmação da gestão. Ver histórico da investigação (ID `bronze.leads.idgestor` descartado como fonte de equipe — mistura SDR/robô) em [[depara-gerentes-reestruturacao-v2]]. |
-| DP-13 | `dpara_imobiliaria_house` | `Imobiliária` (escritório) → `Share`, `House/Parcerias`, `Regional` | xlsx SharePoint (depara_gerentes.xlsx, aba "imobiliaria") | ✅ Silver seed | **É por aqui que LEADS e PRÉ-CADASTROS ganham a classificação** que a reserva já tem via DP-01: essas fatos não têm "Gerente Responsavel", mas o headcount (DP-12) diz o ESCRITÓRIO do corretor, e o escritório determina Share/House/Regional. Exposto em `gold.dim_corretor_headcount`; as fatos herdam pelo relacionamento `corretor_chave`. A junção usa a coluna `Imobiliaria` do headcount, **não** a `House` de lá (2 linhas com "EP - RP" arrastado — Carlos Roberto é SCA e João Victor é URA; decisão do dev 21/jul/2026). Era hard-code em `seeds.sql`; virou aba do xlsx porque classificação comercial não pode morar escondida no SQL. Grafia nova de imobiliária = linha nova na aba (o HC escreve "NEGOCIO" singular, o CVDW "NEGOCIOS"). |
-| DP-12 | `dpara_corretor_headcount` | `Nome` (corretor) → `Gerente`, `Supervisor`, `Imobiliaria`, `House` | xlsx Backoffice (HeadCount/Base Corretores Pafil, aba "Base Pafil", só Ativos) | ✅ Silver seed | **Fonte autoritativa da EQUIPE do corretor** (21/jul/2026, passo atrás): "o que vem do CVDW como equipes é falho" (dev) — nem `bronze.leads.idgestor` (mistura SDR/robô) nem a derivação via reserva mais recente são confiáveis. A planilha manual do backoffice é. `gold.dim_corretor.equipe` agora prioriza `Supervisor` daqui; a derivação antiga via reserva vira fallback só p/ corretor fora do headcount (Parcerias). Cobre só o quadro próprio da Pafil (House RP/SC/UB), ~17 ativos hoje. |
-| DP-02 | `dpara_canal/midia_*` (out24/nov24/dc) | `CONCAT canal/mídia` → `Canal`, `Mídia` | xlsx + JSON | 🔜 Silver seed | ⚠️ **3 versões coexistem** (out24, nov24, D.C) — convergir numa só e datar a vigência |
-| DP-03 | `dpara_ativo_receptivo` | `Canal` → `Lead`/`Prospect` (`atv/recept`) | JSON embutido | 🔜 Silver seed | Classifica origem ativa vs receptiva |
-| DP-04 | `dpara_qualificacao_lead` | `Situação` → `Qualificado?` | JSON embutido | 🔜 Silver seed | Base do MQL |
-| DP-05 | `dpara_etapa_precadastro` | `Etapa WKF` → `Etapa precadastro BI` / `BI Detalhada` | xlsx SharePoint | 🔜 Silver seed | Base do funil de crédito (Montagem→Crédito Aprovado) |
-| DP-06 | `dpara_equipe_corretor` | `Corretor` → `Categoria` | xlsx SharePoint | 🔜 Silver seed | — |
-| DP-07 | `de_para profissões` | `Profissão original` → `Micro`/`Macro` | xlsx SharePoint | 🔜 Silver seed | Perfil de cliente |
-| DP-08 | `dpara_ordem_etapa` | `Etapa` (situação) → `Ordem` | JSON embutido | 🔜 Silver seed | Ordenação do funil de situação da reserva |
-| DP-09 | `dpara_diretoria` / `d_equipes` | `Corretor` → `Gerente`, `Imobiliária` (+ append) | JSON + xlsx | ✅ `dpara_corretor_gerente` (override) + derivação automática (gerente da reserva mais recente, em `gold.dim_corretor`) | ⚠️ legado tinha ajustes manuais hard-coded — replicar via seed se necessário |
-| DP-10 | `d_imobiliarias` | `Imobiliária` → `Gestor` | xlsx SharePoint | 🔜 Silver seed | ⚠️ filtra SAO CARLOS/UBERABA e renomeia gestores ("(Imob)") |
-| DP-11 | `dpara_feriados_2025` | `Data` → `Feriado` | xlsx SharePoint | 🔜 Silver seed | Calendário útil (tempo de resposta SDR/corretor) |
-| DP-12 | `fluxo_investidor` / `retira_reservas` | listas fixas de `Reserva` | JSON embutido | 🔜 Silver seed | ⚠️ listas manuais de exceção — confirmar se ainda valem |
+| DP-01 | `dpara_gerente_contexto` | `Gerente Responsável` (texto cru do CVCRM, dentro de campos_adicionais) para `Gerente Apelido`, `Share`, `House/Parcerias` e `Regional` | xlsx no SharePoint (aba "contexto") | Silver, como seed (concluído) | Usado apenas para resolver a classificação da reserva, já que não existe um ID para isso no CRM. Há uma lacuna conhecida de aproximadamente 388 reservas (associadas a "Marcio Lima" e "Jose Castro*") sem linha correspondente, pendente de confirmação com a gestão. O histórico dessa investigação, incluindo por que o campo `bronze.leads.idgestor` foi descartado como fonte de equipe (ele mistura SDR e robô de atendimento), está registrado na memória do projeto sob `depara-gerentes-reestruturacao-v2` |
+| DP-13 | `dpara_imobiliaria_house` | `Imobiliária` (o escritório) para `Share`, `House/Parcerias` e `Regional` | mesma planilha do SharePoint acima, aba "imobiliaria" | Silver, como seed (concluído) | É por aqui que leads e pré-cadastros ganham a mesma classificação que a reserva já tem via DP-01: esses fatos não têm um campo "Gerente Responsável", mas o headcount (DP-12) informa o escritório do corretor, e é o escritório que determina Share, House/Parcerias e Regional. Essa informação fica exposta em `gold.dim_corretor_headcount`, e as tabelas fato herdam o dado pelo relacionamento com `corretor_chave`. A junção usa a coluna `Imobiliaria` do headcount, não a coluna `House` de lá (há duas linhas com "EP - RP" arrastado por engano: Carlos Roberto pertence a SCA e João Victor pertence a URA, correção decidida pelo desenvolvedor em 21 de julho de 2026). Antes, essa lógica era um valor fixo dentro de `seeds.sql`; virou uma aba de planilha porque uma classificação comercial não pode morar escondida dentro do SQL. Quando surge uma grafia nova de imobiliária, o procedimento é adicionar uma linha nova na aba (o headcount escreve "NEGOCIO" no singular, enquanto o CVDW usa "NEGOCIOS") |
+| DP-12 | `dpara_corretor_headcount` | `Nome` do corretor para `Gerente`, `Supervisor`, `Imobiliaria` e `House` | xlsx do backoffice (HeadCount/Base Corretores Pafil, aba "Base Pafil", só ativos) | Silver, como seed (concluído) | Fonte autoritativa da equipe do corretor, decisão tomada em 21 de julho de 2026: segundo o desenvolvedor, "o que vem do CVDW como equipes é falho". Nem o campo `bronze.leads.idgestor` (que mistura SDR e robô) nem a derivação pela reserva mais recente são confiáveis; a planilha manual do backoffice é. Hoje, `gold.dim_corretor.equipe` prioriza o campo `Supervisor` vindo daqui, e a derivação antiga pela reserva mais recente vira um recurso de reserva, usado só para corretores que ficam de fora do headcount (o caso das Parcerias). Essa fonte cobre apenas o quadro próprio da Pafil (House RP, SC e UB), cerca de 17 corretores ativos hoje |
+| DP-02 | `dpara_canal_midia` (versões out24, nov24, dc) | concatenação de canal e mídia para `Canal` e `Mídia` | xlsx e JSON | Silver, como seed (a implementar) | Atenção: três versões coexistem (out/24, nov/24 e D.C). É preciso convergir numa só e registrar a data de vigência de cada uma |
+| DP-03 | `dpara_ativo_receptivo` | `Canal` para `Lead`/`Prospect` (ativo ou receptivo) | JSON embutido | Silver, como seed (a implementar) | Classifica origem ativa contra receptiva |
+| DP-04 | `dpara_qualificacao_lead` | `Situação` para `Qualificado?` | JSON embutido | Silver, como seed (a implementar) | Base do MQL |
+| DP-05 | `dpara_etapa_precadastro` | `Etapa WKF` para `Etapa precadastro BI` e `BI Detalhada` | xlsx no SharePoint | Silver, como seed (a implementar) | Base do funil de crédito (de Montagem até Crédito Aprovado) |
+| DP-06 | `dpara_equipe_corretor` | `Corretor` para `Categoria` | xlsx no SharePoint | Silver, como seed (a implementar) | Sem observações adicionais |
+| DP-07 | de-para de profissões | `Profissão original` para `Micro` e `Macro` | xlsx no SharePoint | Silver, como seed (a implementar) | Usado no perfil de cliente |
+| DP-08 | `dpara_ordem_etapa` | `Etapa` (situação) para `Ordem` | JSON embutido | Silver, como seed (a implementar) | Ordenação do funil por situação da reserva |
+| DP-09 | `dpara_diretoria` e `d_equipes` | `Corretor` para `Gerente` e `Imobiliária` (mais linhas adicionadas) | JSON e xlsx | `dpara_corretor_gerente` como override, complementado por uma derivação automática (o gerente da reserva mais recente), implementada em `gold.dim_corretor` (concluído) | Atenção: o sistema legado tinha ajustes manuais fixos no código. Replicar via seed, se for necessário |
+| DP-10 | `d_imobiliarias` | `Imobiliária` para `Gestor` | xlsx no SharePoint | Silver, como seed (a implementar) | Atenção: filtra São Carlos e Uberaba, e renomeia gestores adicionando o sufixo "(Imob)" |
+| DP-11 | `dpara_feriados_2025` | `Data` para `Feriado` | xlsx no SharePoint | Silver, como seed (a implementar) | Calendário útil, usado no tempo de resposta de SDR e corretor |
+| DP-14 | `fluxo_investidor` e `retira_reservas` | listas fixas de números de `Reserva` | JSON embutido | Silver, como seed (a implementar) | Atenção: são listas manuais de exceção. É preciso confirmar se ainda valem |
 
 ---
 
-## 3. Dimensões e fatos (modelo → Gold star schema)
+## 3. Dimensões e fatos (do modelo legado para o star schema da Gold)
 
-Já há um esboço em [`MODELO_SEMANTICO.md`](MODELO_SEMANTICO.md). O legado confirma o grão:
+Já existe um esboço do desenho em [`MODELO_SEMANTICO.md`](MODELO_SEMANTICO.md). O
+sistema legado confirma o grão de cada entidade:
 
-| Entidade | Grão | Origem legado → Bronze nova | Notas |
+| Entidade | Grão | Origem legado até a Bronze nova | Notas |
 |---|---|---|---|
-| `fato_reservas` | 1 reserva (`idreserva`) | `f_reservas` ← CSV → `cvdw.reservas` | Estado da reserva; `f_vendas`/`f_distratos` são views filtradas dela (ING-05) |
-| `fato_series` | 1 parcela | `f_series` ← CSV → `cvdw.reservas_condicoes`(?) | ⚠️ confirmar mapeamento (pergunta aberta do SKILL) |
-| `dim_empreendimento` | `codigo_cv` | `d_empreendimentos` (xlsx) → derivar de `unidades` | de-para de nome (ING-06) |
-| `dim_estrutura/unidade` | `Código Interno` | `d_estrutura` (base_precos.xlsm) → `cvdw.unidades` | ✅ **`gold.dim_estrutura`** (task 6.4, ago/2026): preço/área/permuta/status_unidade (Estoque/Realizado/Permuta) por unidade. Fonte: `silver.d_estrutura` (seed, `popular_seeds.py --estrutura-precos`), 3.543 unidades das 13 abas `Matriz_*`. Status calculado via join `(codigo_cv, bloco, unidade)` contra `fato_reservas` — ⚠️ achado na carga: produto de torre única tem `reservas.bloco` = nome do empreendimento (não NULL como em `d_estrutura`); normalizado no join (ver comentário na view) |
-| `dim_corretor` | corretor | `f_equipes` → `cvdw.corretores` | categoria/nível |
-| `dim_imobiliaria` | imobiliária | → `cvdw.imobiliarias` | não materializada como dim na gold; nome fica em `fato_reservas`/`dim_corretor` |
-| `d_metas_empreendimentos` | mês×empreend. | xlsx `Meta.xlsx` | ✅ **`gold.dim_metas_empreendimentos`** (task 6.4): 1.704 linhas (`meta_2`, aba base_meta), seed via `--metas-empreendimentos`. Continua **sem origem na API** (input manual da gestão) |
-| `d_viabilidade` | empreend. | xlsx | ✅ **`gold.dim_viabilidade`** (task 6.4): pivot EAV → 1 linha/`codigo_cv` (receita bruta, terreno/construção/deduções/despesas), seed via `--viabilidade`. Parametriza a medida de Margem — ver KPI-17 |
-| `d_ivv` | empreend. x mês (1..36) | xlsx (mesmo `d_para empreendimentos.xlsx`, aba IVV_padrão) | ✅ **`gold.dim_ivv_padrao`** (ago/2026): curva PADRÃO de IVV acumulado desde o lançamento, despivotada de `base_cv4` (formato largo, colunas "1".."36"). Achado durante uma auditoria do visual "IVV x Empreendimento" do BI legado: não estava catalogada aqui, embora referenciada nas medidas de `RESUMO_Empreendimentos.md` (`m_ivv_padrao`) — corrigido. Depende de `d_empreendimento_legado` (Data Lançamento) pra achar o "mês atual" da curva |
-| `d_empreendimento_legado` | empreend. | xlsx (mesmo arquivo, aba d_para empreendimentos, tabela base_cv) | ✅ **`silver.d_empreendimento_legado`**: Data Lançamento + Tipo Produto (Lançamento/Lançado/Remanescente) por `codigo_cv` — único uso hoje é alimentar `gold.dim_ivv_padrao[meses_desde_lancamento]` |
-| `d_calendario` | dia | gerada (DAX/M) | gerar na Gold |
+| `fato_reservas` | 1 reserva (`idreserva`) | `f_reservas`, que vinha de CSV, virou `cvdw.reservas` | É o estado da reserva; `f_vendas` e `f_distratos` eram views filtradas a partir dela (veja ING-05) |
+| `fato_series` | 1 parcela | `f_series`, que vinha de CSV, provavelmente vira `cvdw.reservas_condicoes` | Atenção: mapeamento ainda por confirmar (pergunta em aberto registrada em `SKILL.md`) |
+| `dim_empreendimento` | `codigo_cv` | `d_empreendimentos` (xlsx), agora derivada de `unidades` | Usa o de-para de nome descrito em ING-06 |
+| `dim_estrutura`/unidade | `Código Interno` | `d_estrutura` (base_precos.xlsm), agora `cvdw.unidades` | Concluído: `gold.dim_estrutura` (task 6.4, agosto de 2026) traz preço, área, permuta e status da unidade (Estoque, Realizado ou Permuta), uma linha por unidade. A fonte é `silver.d_estrutura`, carregada por seed através de `popular_seeds.py --estrutura-precos`, cobrindo 3.543 unidades vindas das 13 abas `Matriz_*`. O status é calculado por um join usando `(codigo_cv, bloco, unidade)` contra `fato_reservas`. Atenção a um achado da carga: em produto de torre única, `reservas.bloco` vem preenchido com o nome do empreendimento, em vez de vazio como em `d_estrutura`; isso foi normalizado dentro do próprio join (veja o comentário na view) |
+| `dim_corretor` | corretor | `f_equipes`, agora `cvdw.corretores` | Traz categoria e nível |
+| `dim_imobiliaria` | imobiliária | vira `cvdw.imobiliarias` | Não é materializada como dimensão própria na gold; o nome fica embutido em `fato_reservas` e em `dim_corretor` |
+| `d_metas_empreendimentos` | mês por empreendimento | xlsx `Meta.xlsx` | Concluído: `gold.dim_metas_empreendimentos` (task 6.4) tem 1.704 linhas, vindas da tabela `meta_2` na aba base_meta, carregadas por seed através de `--metas-empreendimentos`. Continua sem origem na API: é input manual da gestão |
+| `d_viabilidade` | empreendimento | xlsx | Concluído: `gold.dim_viabilidade` (task 6.4) transforma um pivot no formato EAV em uma linha por `codigo_cv`, trazendo receita bruta, terreno, construção, deduções e despesas. Carregada por seed através de `--viabilidade`. Parametriza a medida de Margem, veja o KPI-17 |
+| `d_ivv` | empreendimento por mês, de 1 a 36 | xlsx (o mesmo `d_para empreendimentos.xlsx`, aba IVV_padrão) | Concluído: `gold.dim_ivv_padrao` (agosto de 2026) traz a curva padrão de IVV acumulado desde o lançamento, despivotada a partir de `base_cv4` (que originalmente vinha em formato largo, com uma coluna para cada mês de "1" a "36"). Essa dimensão foi identificada durante uma auditoria do visual "IVV x Empreendimento" do BI legado: não estava catalogada aqui, apesar de já ser referenciada nas medidas de `RESUMO_Empreendimentos.md` (a medida `m_ivv_padrao`); a lacuna foi corrigida. Ela depende de `d_empreendimento_legado` (a Data de Lançamento) para calcular qual é o "mês atual" dentro da curva |
+| `d_empreendimento_legado` | empreendimento | xlsx (o mesmo arquivo, aba d_para empreendimentos, tabela base_cv) | Concluído: `silver.d_empreendimento_legado` traz a Data de Lançamento e o Tipo de Produto (Lançamento, Lançado ou Remanescente) por `codigo_cv`. Hoje, seu único uso é alimentar a coluna `gold.dim_ivv_padrao[meses_desde_lancamento]` |
+| `d_calendario` | dia | gerada dentro do próprio Power BI (DAX ou Power Query) | Deve ser gerada diretamente na gold |
 
-> ⚠️ **Metas, viabilidade e verba de marketing não existem na API CVDW** — são planejamento da
-> gestão. Permanecem como tabelas de input (seed/Excel controlado) alimentando a Gold.
+**Atenção:** metas, viabilidade e verba de marketing não existem na API do CVDW,
+porque são planejamento da gestão. Continuam como tabelas de input, carregadas por
+seed a partir de planilhas Excel controladas, alimentando diretamente a camada gold.
 
 ---
 
-## 4. KPIs autoritativos (medidas DAX → Gold)
+## 4. KPIs autoritativos (das medidas DAX para a Gold)
 
-As medidas-núcleo, em ordem de prioridade para reconciliação. DAX condensado; ver `RESUMO_*.md` para o original.
+Estas são as medidas-núcleo do projeto, listadas em ordem de prioridade para
+reconciliação. O DAX aqui está condensado; para a versão original completa, veja os
+arquivos `RESUMO_*.md`.
 
-### 4.1 Vendas / VGV ⭐
+### 4.1 Vendas e VGV (KPI)
 
 | ID | Medida | Lógica (condensada) | Dependências | Notas |
 |---|---|---|---|---|
-| KPI-01 | ⭐ **VGV Bruto** | `SUM(f_reservas[Valor do contrato])` | fato_reservas | Base de quase tudo |
-| KPI-02 | ⭐ **VGV Distrato** | `SUM(distratos[Valor do Contrato])` | f_distratos | ⚠️ usa tabela `'distratos 2025'` (xlsx separado), não a fato — convergir |
-| KPI-03 | ⭐ **VGV Líquido** | `[VGV Bruto] − [VGV Distrato]` | KPI-01,02 | Número de vendas líquidas |
-| KPI-04 | ⭐ **QTD Bruto** | `DISTINCTCOUNT(f_reservas[Reserva])` | fato_reservas | — |
-| KPI-05 | ⭐ **QTD Distratos** | `DISTINCTCOUNT(distratos[Contrato])` | distratos | — |
-| KPI-06 | ⭐ **QTD Líquido** | `[QTD Bruto] − [QTD Distratos]` | KPI-04,05 | — |
-| KPI-07 | **Somente Vendas** | `COUNTROWS(f_reservas)` com `Situação = "Vendida"` | — | ⚠️ vs "Qtd Vendas 2" que inclui `{"Vendida","Distrato"}` — **duas definições de "venda" coexistem** |
-| KPI-08 | **Qtd Vendas 2** | `COUNTROWS` com `Situação IN {"Vendida","Distrato"}` | — | "Venda" = vendida OU já distratada (foi venda um dia) |
-| KPI-09 | **Ticket Médio / preco_medio** | `DIVIDE(SUM[Valor contrato], SUM[M² da unidade])` | — | preço médio por m² praticado |
-| KPI-10 | Média Vendas 6M | média de `[Qtd Vendas 2]` nos últimos 6 meses fechados | d_calendario | EOMONTH |
+| KPI-01 | VGV Bruto (KPI) | `SUM(f_reservas[Valor do contrato])` | fato_reservas | Base de quase tudo |
+| KPI-02 | VGV Distrato (KPI) | `SUM(distratos[Valor do Contrato])` | f_distratos | Atenção: usa a tabela `'distratos 2025'`, um xlsx separado, em vez da fato. Precisa convergir |
+| KPI-03 | VGV Líquido (KPI) | `[VGV Bruto] - [VGV Distrato]` | KPI-01, KPI-02 | Número de vendas líquidas |
+| KPI-04 | QTD Bruto (KPI) | `DISTINCTCOUNT(f_reservas[Reserva])` | fato_reservas | Sem observações adicionais |
+| KPI-05 | QTD Distratos (KPI) | `DISTINCTCOUNT(distratos[Contrato])` | distratos | Sem observações adicionais |
+| KPI-06 | QTD Líquido (KPI) | `[QTD Bruto] - [QTD Distratos]` | KPI-04, KPI-05 | Sem observações adicionais |
+| KPI-07 | Somente Vendas | `COUNTROWS(f_reservas)` com `Situação = "Vendida"` | nenhuma | Atenção: comparado com "Qtd Vendas 2" (KPI-08), que inclui tanto Vendida quanto Distrato. Duas definições de "venda" coexistem no legado |
+| KPI-08 | Qtd Vendas 2 | `COUNTROWS` com `Situação` em `{"Vendida","Distrato"}` | nenhuma | "Venda" aqui significa vendida ou já distratada, ou seja, foi venda algum dia |
+| KPI-09 | Ticket Médio / preco_medio | `DIVIDE(SUM[Valor contrato], SUM[M² da unidade])` | nenhuma | Preço médio por m² praticado |
+| KPI-10 | Média Vendas 6M | média de `[Qtd Vendas 2]` nos últimos 6 meses fechados | d_calendario | Usa a função EOMONTH |
 
-> ⚠️ **Divergência-chave a resolver na reconciliação:** o que conta como "venda"?
-> `{"Vendida"}` (KPI-07) vs `{"Vendida","Distrato"}` (KPI-08). Os PBIX usam as duas em contextos
-> diferentes. Definir a regra **autoritativa** é entregável da migração.
+**Atenção, esta é a divergência-chave a resolver na reconciliação:** o que conta
+como "venda"? Apenas `Vendida` (KPI-07) ou `Vendida` e `Distrato` juntos (KPI-08)?
+Os PBIX legados usam as duas definições, dependendo do contexto. Definir qual delas
+é a regra autoritativa é um entregável desta migração, não uma decisão técnica.
 
-### 4.2 Estoque / Preço / VSO (modelo "Preço" + Matriz) ⭐
+### 4.2 Estoque, preço e VSO (modelo "Preço" e "Matriz") (KPI)
 
-Padrão repetido por empreendimento (PA, TR, PSU, PCJ, ARB, PO, PR, F16, QBV, VM, PPN, VLPQ):
+É um padrão repetido por empreendimento: PA, TR, PSU, PCJ, ARB, PO, PR, F16, QBV,
+VM, PPN e VLPQ.
 
 | ID | Medida (padrão `XX_`) | Lógica | Notas |
 |---|---|---|---|
-| KPI-11 | ⭐ ✅ **EstoqueVGV** | `SUM(Matriz[Preço])` para unidades **NOT IN** `VALUES(Vendas[Cód. unidade])` | unidade não vendida = estoque. Reimplementado em `powerbi/MEDIDAS_ESTOQUE_PRECO.dax` sobre `gold.dim_estrutura[status_unidade]` |
-| KPI-12 | ✅ **Estoque_Qtd** | `COUNT(Matriz[Cód.])` NOT IN vendas E `Permuta <> "Permuta"` | exclui permuta |
-| KPI-13 | ⭐ ✅ **ProjetadoVGV** | `[EstoqueVGV] + SUM(Vendas[Valor do contrato])` | VGV potencial total |
-| KPI-14 | ✅ **MetragemAVender** | `SUM(Matriz[Área Privativa])` estoque, sem permuta | — |
-| KPI-15 | ✅ **M²Médio / M²ARealizar** | `AVERAGE(Vendas[M² Praticado])`; `EstoqueVGV / MetragemAVender` | — |
-| KPI-16 | ✅ **VSO** | `DIVIDE(unidades realizadas, unidades totais)` | Velocidade de vendas (d_estrutura `status_unidade="Realizado"`) |
-| KPI-17 | ⭐ ✅ **Margem / MargemViab** | `(Projetado − custo − %ded − %desp) / (Projetado × fator)` | Parametrizado (ver nota abaixo) |
-| KPI-17b | ✅ **IVV Padrão** (`m_ivv_padrao`) | `SUM(d_ivv[%IVV])` filtrado no mês da curva (1..36) correspondente à idade do produto hoje | Curva de meta/benchmark de velocidade de vendas por empreendimento — visual "IVV x Empreendimento". Barra 2 (maior) do visual. Comparar contra `VSO` (KPI-16, realizado) — ver `gold.dim_ivv_padrao`/`Diferença IVV x Padrão` |
-| KPI-17c | ✅ **% Vendido (ano)** (`m_percentual_vendido`) | `DIVIDE(COUNT(fato_reservas[id_reserva]) WHERE situacao="Vendida" AND ano_venda=ano corrente, COUNT(dim_estrutura[codigo_interno]))` | Barra 1 (menor) do visual "IVV x Empreendimento". ⚠️ **Métrica diferente de VSO**: usa `situação="Vendida"` **estrita** (exclui Distrato) filtrada pelo **ano corrente**, contra o total histórico da matriz de preço — é "taxa de venda do ano sobre o estoque todo já ofertado", não "% já vendido alguma vez" (isso é o VSO). Relaciona `dim_estrutura` a `fato_reservas` por `codigo_cv = codigo_interno_empreendimento` (via `dim_empreendimento`) — **não** por nome conformado (achado: `silver.conformar_empreendimento()` não cobre todas as grafias curtas da planilha de preço — Tríade/Primaveras/Parc das Artes davam 0% se agrupado por nome). Validado: 12/13 empreendimentos batem exato com o relatório "Vendas Geral", 1 difere por 1 unidade (drift normal de atualização) |
+| KPI-11 | EstoqueVGV (KPI, concluído) | `SUM(Matriz[Preço])` para unidades que não estão em `VALUES(Vendas[Cód. unidade])` | Unidade não vendida conta como estoque. Reimplementado em `powerbi/MEDIDAS_ESTOQUE_PRECO.dax`, sobre `gold.dim_estrutura[status_unidade]` |
+| KPI-12 | Estoque_Qtd (concluído) | `COUNT(Matriz[Cód.])`, fora da lista de vendas e com `Permuta <> "Permuta"` | Exclui permuta |
+| KPI-13 | ProjetadoVGV (KPI, concluído) | `[EstoqueVGV] + SUM(Vendas[Valor do contrato])` | VGV potencial total |
+| KPI-14 | MetragemAVender (concluído) | `SUM(Matriz[Área Privativa])` do estoque, sem permuta | Sem observações adicionais |
+| KPI-15 | M²Médio / M²ARealizar (concluído) | `AVERAGE(Vendas[M² Praticado])`; `EstoqueVGV / MetragemAVender` | Sem observações adicionais |
+| KPI-16 | VSO (concluído) | `DIVIDE(unidades realizadas, unidades totais)` | Velocidade de vendas, usando `d_estrutura[status_unidade="Realizado"]` |
+| KPI-17 | Margem e MargemViab (KPI, concluído) | `(Projetado - custo - %ded - %desp) / (Projetado × fator)` | Já parametrizado (veja a nota logo abaixo) |
+| KPI-17b | IVV Padrão, medida `m_ivv_padrao` (concluído) | `SUM(d_ivv[%IVV])`, filtrado no mês da curva (1 a 36) correspondente à idade do produto hoje | Curva de meta e benchmark de velocidade de vendas por empreendimento, usada no visual "IVV x Empreendimento". É a barra maior (a segunda) desse visual. Compare com o VSO (KPI-16, o realizado); veja `gold.dim_ivv_padrao` e a medida `Diferença IVV x Padrão` |
+| KPI-17c | % Vendido no ano, medida `m_percentual_vendido` (concluído) | `DIVIDE(COUNT(fato_reservas[id_reserva])` onde `situacao="Vendida"` e `ano_venda` é o ano corrente, `COUNT(dim_estrutura[codigo_interno]))` | É a barra menor (a primeira) do visual "IVV x Empreendimento". Atenção: essa métrica é diferente do VSO. Ela usa a situação "Vendida" de forma estrita, excluindo Distrato, filtrada pelo ano corrente, contra o total histórico da matriz de preço. Ou seja, é a "taxa de venda do ano sobre todo o estoque já ofertado", e não o "percentual já vendido alguma vez" (que é o que o VSO mede). A métrica relaciona `dim_estrutura` a `fato_reservas` pelo par `codigo_cv` e `codigo_interno_empreendimento` (via `dim_empreendimento`), não pelo nome conformado: um achado do processo foi que `silver.conformar_empreendimento()` não cobre todas as grafias curtas usadas na planilha de preço (Tríade, Primaveras e Parc das Artes davam 0% se o agrupamento fosse por nome). Essa métrica foi validada: 12 dos 13 empreendimentos batem exatamente com o relatório "Vendas Geral", e o único que diverge fica a 1 unidade de diferença, um drift normal de atualização entre os sistemas |
 
-> ✅ **Task 6.4 (ago/2026) resolveu a duplicação (R4):** o modelo "Preço" repetia as MESMAS 8
-> medidas para ~12 empreendimentos com constantes coladas no DAX. Na Gold virou **UMA** medida
-> parametrizada por `gold.dim_viabilidade` (custo de obra = `|terreno_valor + construcao_valor|`,
-> %deduções/%despesas por `codigo_cv`) — `powerbi/MEDIDAS_ESTOQUE_PRECO.dax`. Fórmula validada à
-> mão contra os números de Parc das Artes (`codigo_cv` 10093) no `_bi_ref/RESUMO_BIPreco.md`.
+**Concluído: a task 6.4 (agosto de 2026) resolveu a duplicação registrada na regra
+R4.** O modelo "Preço" repetia as mesmas 8 medidas para cerca de 12 empreendimentos,
+cada uma com constantes coladas diretamente no código DAX. Na gold, isso virou uma
+única medida, parametrizada por `gold.dim_viabilidade` (o custo de obra é o valor
+absoluto de terreno mais construção, e os percentuais de dedução e despesa variam
+por `codigo_cv`), implementada em `powerbi/MEDIDAS_ESTOQUE_PRECO.dax`. A fórmula foi
+validada manualmente contra os números de Parc das Artes (`codigo_cv` 10093),
+registrados em `_bi_ref/RESUMO_BIPreco.md`.
 
-### 4.3 Distratos ⭐
+### 4.3 Distratos (KPI)
 
 | ID | Medida | Lógica | Notas |
 |---|---|---|---|
-| KPI-18 | ⭐ **Taxa de Distrato** | `DIVIDE([Distratos], [Reservas Vendidas])` | KPI oficial |
-| KPI-19 | `eh_distrato` | `Situação = "Distrato"` (ou motivo preenchido) | flag na fato |
-| KPI-20 | ✅ múltiplas fontes de distrato | `f_distratos` (xlsx), `'distratos 2025'` (xlsx), `rel_distratos` (CSV) | **3 fontes**. `cvdw.distratos`/`silver.distratos` (API, fonte viva) já cobre motivo/data/valor — bate ao centavo (R11 da reconciliação). `'distratos 2025'` importada como **detalhe financeiro complementar** (multa/pago/devolução/parcelas, que a API não tem) em `gold.dim_distratos_2025` (ago/2026); **relacionada à fato** via `silver.chave_bloco`/`chave_unidade` (86% de match — ver R17). `f_distratos`/`rel_distratos` seguem não importadas (redundantes com a API pro que já é coberto) |
+| KPI-18 | Taxa de Distrato (KPI) | `DIVIDE([Distratos], [Reservas Vendidas])` | Este é o KPI oficial |
+| KPI-19 | `eh_distrato` | `Situação = "Distrato"` (ou motivo preenchido) | Flag calculada na fato |
+| KPI-20 | Múltiplas fontes de distrato (concluído) | `f_distratos` (xlsx), `'distratos 2025'` (xlsx), `rel_distratos` (CSV) | São três fontes ao todo. `cvdw.distratos` e `silver.distratos`, vindas da API, já são a fonte viva e cobrem motivo, data e valor, batendo ao centavo (veja R11 na reconciliação). A planilha `'distratos 2025'` foi importada como um detalhe financeiro complementar (multa, valor pago, devolução, parcelas), informação que a API não oferece, dentro de `gold.dim_distratos_2025` (agosto de 2026), e está relacionada à fato através de `silver.chave_bloco` e `chave_unidade`, com 86% de taxa de match (veja R17). As fontes `f_distratos` e `rel_distratos` continuam não importadas, por serem redundantes com o que a API já cobre |
 
-### 4.4 Funil de Leads / Performance Digital
+### 4.4 Funil de leads e performance digital
 
 | ID | Medida | Lógica | Dependências |
 |---|---|---|---|
 | KPI-21 | Qtd Prospect | `DISTINCTCOUNT(f_leads[Id])` | f_leads |
-| KPI-22 | Qtd Leads | distinct Id com `canal 2.0 = "Lead"` | DP-02 |
-| KPI-23 | Qtd Lead Quali (MQL) | `canal 2.0="Lead"` E `MQL 2="SIM"` | DP-04 |
-| KPI-24 | Tx_Qualif_Leads | `MQL.../Lead...` | DP-04 |
-| KPI-25 | Qtd Pastas | `COUNTROWS(f_precadastros)` exceto `{"Montagem","Cancelada"}` | DP-05 |
-| KPI-26 | Qtd Crédito Aprovado | etapa IN `{"Crédito Aprovado","Com Reserva","Ajustes"}` | DP-05 |
-| KPI-27 | Conversões (lead→pasta→venda) | série de `DIVIDE` entre os acima | KPI-21..26 |
-| KPI-28 | Tempos médios (SDR/corretor/quali) | `AVERAGEX(... × 60)` formatado HH:MM:SS | DP-11 (feriados) |
-| KPI-29 | CAC / ROI / CPL | `verba / vendas`, `(VGV Lead − verba)/verba` | verba (xlsx) |
-| KPI-30 | % Vendas Digitais (House) | vendas com `canal vendas consolidadas="Lead"` ÷ total | DP-01, DP-02 |
+| KPI-22 | Qtd Leads | contagem distinta de Id com `canal 2.0 = "Lead"` | DP-02 |
+| KPI-23 | Qtd Lead Quali (MQL) | `canal 2.0="Lead"` e `MQL 2="SIM"` | DP-04 |
+| KPI-24 | Tx_Qualif_Leads | MQL dividido por Lead | DP-04 |
+| KPI-25 | Qtd Pastas | `COUNTROWS(f_precadastros)`, exceto `{"Montagem","Cancelada"}` | DP-05 |
+| KPI-26 | Qtd Crédito Aprovado | etapa em `{"Crédito Aprovado","Com Reserva","Ajustes"}` | DP-05 |
+| KPI-27 | Conversões (lead para pasta para venda) | série de `DIVIDE` entre os KPIs acima | KPI-21 a KPI-26 |
+| KPI-28 | Tempos médios (SDR, corretor, qualificação) | `AVERAGEX(... × 60)`, formatado como HH:MM:SS | DP-11 (feriados) |
+| KPI-29 | CAC, ROI, CPL | `verba / vendas`, `(VGV Lead - verba) / verba` | verba (xlsx) |
+| KPI-30 | % Vendas Digitais (House) | vendas com `canal vendas consolidadas="Lead"` dividido pelo total | DP-01, DP-02 |
 
-### 4.5 Metas / Forecast
-
-| ID | Medida | Lógica | Notas |
-|---|---|---|---|
-| KPI-31 | ✅ meta_start / meta_replan | `SUM(d_metas[meta_vgv])` por `status_meta` | input gestão. `gold.dim_metas_empreendimentos` (task 6.4) |
-| KPI-32 | ✅ Diferenca_meta_* / % Atingimento | `VGV ÷ meta` | acumula YTD — `powerbi/MEDIDAS_GOLD.dax` |
-| KPI-33 | ✅ Forecast (% Forecast, Dif Forecast) | `Realizado ÷ Meta VGV` | `VGV Vendas` xlsx — `powerbi/MEDIDAS_GOLD.dax` |
-
-### 4.6 Comissões / Repasses / Receita
+### 4.5 Metas e forecast
 
 | ID | Medida | Lógica | Notas |
 |---|---|---|---|
-| KPI-34 | Valor Custas | `SUMX(f_reservas, [Valor contrato] × 0.029)` | ⚠️ 2,9% hard-coded |
-| KPI-35 | Total comissão/prêmio | colunas da fato (`Comissão corretor/imob...`) | já vêm no CSV/API |
-| KPI-36 | Valor Liq. Finan. / Recebimento Obra / À Receber | `repasses`: `financiado − terreno`, `× obra acumulada` | tabela `repasses` (API: contratos/repasses?) |
+| KPI-31 | meta_start / meta_replan (concluído) | `SUM(d_metas[meta_vgv])` por `status_meta` | Input da gestão. Implementado em `gold.dim_metas_empreendimentos` (task 6.4) |
+| KPI-32 | Diferenca_meta_* / % Atingimento (concluído) | `VGV ÷ meta` | Acumula no ano (YTD); veja `powerbi/MEDIDAS_GOLD.dax` |
+| KPI-33 | Forecast (% Forecast, Dif Forecast) (concluído) | `Realizado ÷ Meta VGV` | Usa o xlsx `VGV Vendas`; veja `powerbi/MEDIDAS_GOLD.dax` |
+
+### 4.6 Comissões, repasses e receita
+
+| ID | Medida | Lógica | Notas |
+|---|---|---|---|
+| KPI-34 | Valor Custas | `SUMX(f_reservas, [Valor contrato] × 0.029)` | Atenção: percentual de 2,9% fixo no código |
+| KPI-35 | Total comissão e prêmio | vem de colunas já prontas na fato (Comissão corretor, Comissão imobiliária, entre outras) | Já vêm assim no CSV e na API |
+| KPI-36 | Valor Líq. Finan. / Recebimento Obra / A Receber | tabela `repasses`: financiado menos terreno, multiplicado pela obra acumulada | Vem da tabela `repasses` (possivelmente `contratos/repasses` na API) |
 | KPI-37 | Valor Aprovado Sem Duplicados | `SUMX(DISTINCT(Id), MAX(Valor Aprovado))` | f_precadastros |
 
 ---
 
-## 5. Simulador de preço / Pró-Soluto (modelo "Matriz", aba simulador)
+## 5. Simulador de preço e Pró-Soluto (modelo "Matriz", aba simulador)
 
-Regras de **política comercial** (limites de parcelamento), valiosas mas fora do core de reporting:
+São regras de política comercial (limites de parcelamento). Têm valor, mas ficam
+fora do núcleo de reporting:
 
 | ID | Regra | Lógica | Notas |
 |---|---|---|---|
-| SIM-01 | ⭐ Limite de Pró-Soluto por produto | `SWITCH(Produto, "Fiusa 016",15, "Villa Manacás",10, ...)` % | **política comercial hard-coded** — virar seed `dpara_limite_prosoluto` |
-| SIM-02 | Alerta Pró-Soluto | `🟢 dentro` se `%ProSoluto ≤ limite` | depende SIM-01 |
-| SIM-03 | Parcela / Valor Entrada / Valor Ato | aritmética de financiamento | usa `f_precadastros[Valor Aprovado]` |
-| SIM-04 | VGV/QTD Possível | conta unidades "dentro do limite" × preço | — |
+| SIM-01 | Limite de Pró-Soluto por produto (regra importante) | `SWITCH(Produto, "Fiusa 016",15, "Villa Manacás",10, ...)`, em percentual | Hoje é uma política comercial fixa no código; deveria virar uma seed, `dpara_limite_prosoluto` |
+| SIM-02 | Alerta Pró-Soluto | sinal verde (dentro do limite) quando `%ProSoluto` é menor ou igual ao limite | Depende de SIM-01 |
+| SIM-03 | Parcela, Valor Entrada, Valor Ato | aritmética de financiamento | Usa `f_precadastros[Valor Aprovado]` |
+| SIM-04 | VGV/QTD Possível | conta unidades "dentro do limite" multiplicadas pelo preço | Sem observações adicionais |
 
 ---
 
-## 6. Itens a DESCARTAR na migração (🎨 não são regra de negócio)
+## 6. Itens a descartar na migração (não são regra de negócio)
 
-Para não poluir Silver/Gold. São pura apresentação:
+Para não poluir a silver e a gold com pura apresentação, os itens abaixo ficam de
+fora:
 
-- **Ícones:** `*_Icone` (▲▼ via `UNICHAR(9650/9660)`) — Meta Lead, Venda Digital, Qualificação, Vendas House...
-- **Cores:** `*_Cor` / `*_Variacao_Cor` (`"Green"/"Yellow"/"Red"` por faixa) — semáforos.
-- **Cards/HTML:** `Cards Fiusa 016`, `Tabela Fiusa 016 ...`, `KPI Sparkline`, `Tabs Período`, `Métrica Card ...` — HTML/SVG embutido em DAX para visuais customizados.
-- **LocalDateTable_*:** ~50 tabelas de data auto-geradas pelo Power BI — substituídas por 1 `dim_calendario`.
+- **Ícones:** campos `*_Icone` (as setas ▲ e ▼, geradas por `UNICHAR(9650/9660)`),
+  usados em Meta Lead, Venda Digital, Qualificação, Vendas House, entre outros.
+- **Cores:** campos `*_Cor` e `*_Variacao_Cor`, que retornam "Green", "Yellow" ou
+  "Red" conforme a faixa de valor, funcionando como semáforos.
+- **Cards e HTML:** medidas como `Cards Fiusa 016`, `Tabela Fiusa 016 ...`,
+  `KPI Sparkline`, `Tabs Período` e `Métrica Card ...`, que embutem HTML ou SVG
+  dentro do próprio DAX para montar visuais customizados.
+- **LocalDateTable_*:** cerca de 50 tabelas de data geradas automaticamente pelo
+  Power BI, substituídas por uma única `dim_calendario`.
 
-> Regra: **lógica de cor/ícone/HTML fica no Power BI (camada de visual), nunca na Gold.**
-> A Gold entrega o número; o relatório decide a cor.
+**A regra geral é esta: lógica de cor, ícone ou HTML fica sempre no Power BI, na
+camada de visual, nunca na gold.** A gold entrega o número; quem decide a cor é o
+relatório.
 
 ---
 
 ## 7. Riscos e divergências conhecidas (consolidado)
 
-| # | Risco | Onde | Ação |
+| # | Risco | Onde aparece | Ação |
 |---|---|---|---|
-| R1 | ⚠️ "Venda" tem 2 definições (`{Vendida}` vs `{Vendida,Distrato}`) | KPI-07/08 | Definir autoritativa na reconciliação |
-| R2 | ⚠️ Distratos vêm de 3 fontes distintas | KPI-20 | Unificar em `cvdw.distratos` |
-| R3 | ⚠️ Canal/Mídia tem 3 versões de de-para | DP-02 | Convergir + datar vigência |
-| R4 | ⚠️ Margem/Viab com constantes hard-coded por empreend. | KPI-17 | Parametrizado via `gold.dim_viabilidade` (task 6.4, ago/2026), **mas a origem está vazia p/ 11 dos 13 produtos — ver R20** |
-| R5 | ✅ Metas/viabilidade/verba não existem na API | seção 3 | Metas e viabilidade importadas como seed (task 6.4); verba de marketing segue pendente |
-| R6 | ⚠️ Listas de exceção manuais (fluxo investidor, retira reservas) | DP-12 | Confirmar vigência com gestão |
-| R7 | ⚠️ dedup de venda por unidade pode ocultar revenda | ING-05 | Validar grão na Silver |
-| R8 | ⚠️ Ajustes pessoais hard-coded (Castro, Marcio) | ING-04, DP-09/10 | Mover para de-para versionada |
-| R9 | ⚠️ "Vendas Consolidadas" tem status MANUAIS sem correspondência na API (`Validada`, `Venda distratada`, `Repassada`, `Envio Mega`, `Validação Comercial`) | planilha legada | Virar de-para `dpara_status_venda` (situacao CRM → status operacional) OU input operacional; NÃO vêm do CRM |
-| R10 | 🔴 Fechamento manual **defasa**: 420/1892 propostas que a planilha conta como venda viva já são **Distrato** no CRM | reconciliação vendas | Ganho da pipeline (número sempre atual). Documentar p/ gestão |
-| R11 | ✅ `valor_contrato` (API) = "VGV (Praticado)" (planilha) ao centavo em **1869/1892** (98,8%) | reconciliação vendas | Valida KPI-01. **Investigado** as 23 divergências: 1 buraco de dado no CRM (proposta 337, `valor_contrato=0` mas financ+subsídio+FGTS=~207k); 7 usaram `vgv_tabela` (preço de tabela) no legado; 15 ajustes/arredondamentos manuais (vários ~R$ 9,5k de desconto) que não batem com nenhuma coluna do CRM. **`valor_contrato` é o número autoritativo.** |
-| R12 | ✅ DE_PARA_PRODUTOS extraída → `dpara_empreendimento` (25 linhas) + `silver.conformar_empreendimento()` case-insensitive na gold | DP-06/ING-06 | Resolve "FIUSA 016" vs "Fiusa 016" etc. Aba também traz `EP` (espaço de negócios) |
-| R13 | ✅ **House = escritório próprio Pafil** (imobiliária `ESPACO DE NEGOCIOS PAFIL <regional>`); **House RP = RIBEIRAO PRETO/RPO**. Ranking é **só House** e **exclui** corretor de coordenação ("Regiane..."). | apresentação (ranking) | Confirmado: reproduz o pódio de maio/2026 ao centavo (Alessandra/Rafael/Wallace). Seeds `dpara_imobiliaria_house` + `dpara_corretor_fora_ranking`; House/regional vêm da classificação oficial no Power BI, onde o ranking por corretor é montado sobre a `fato_reservas` (a exclusão da coordenação é filtro pela seed). `dpara_gerentes` recarregado do `depara_gerentes.xlsx` (43 linhas, House/Parcerias×Regional) |
-| R14 | ✅ **Ranking por GERENTE destravado** (slides 17-19): "Gerente Responsavel" **existe na API** como campo customizado em `campos_adicionais` (não em coluna própria). 68% das vendas preenchidas, 39 gerentes, casa com `dpara_gerente_contexto`. `silver.campo_adicional()` extrai; `silver.reservas.gerente_responsavel`; ranking por gerente montado no Power BI sobre a `fato_reservas` (House pela classificação oficial). **Validado:** Matheus Santamaria 6un/R$1,75Mi = slide 18 ("Liga das vendas", 6un/1,7Mi). NÃO precisou de de-para manual. |
-| R15 | ✅ Outros campos do BI legado em `campos_adicionais` **extraídos** p/ silver/gold: `cf_tipo_venda` (98%: Financiamento na Planta/Venda Direta/...), `cf_modalidade_financiamento` (97%: MCMV/PAFIL/SBPE), `cf_motivo_distrato`, `cf_classificacao_vendas_internas`. Ainda disponíveis sob demanda: "Data de Distrato", "Premiação Tá Fácil", "Reciprocidade", "IRPF Futuro" via `silver.campo_adicional()` | reservas | — |
-| R16 | ⚠️ Qualidade: alguns "Gerente Responsavel" trazem nome de EQUIPE ("Equipe Pitangueiras") ou "N/D" em vez de pessoa; 32% nulos. Nomes às vezes divergem do `dpara_gerente_contexto` (ex.: "Marcio Lima" 328 reservas, "Jose Castro*" 60 reservas — ~8% do total; ver DP-01) | ranking gerentes | Confirmar com a gestão e adicionar linha na aba "contexto" do depara_gerentes.xlsx |
-| R18 | ⚠️ `gold.dim_metas_empreendimentos` tem entradas "placeholder" de projetos futuros/planejados que ainda NÃO existem no CVCRM (`codigo_cv` pequeno e sequencial: 1,2,7,8,9,10,11,99 — Parc Gramado, Dualle, Trivion Home Resort, Condomínio Comercial Parc Sul etc., vs. os códigos reais de 4-5 dígitos tipo 8883/15840/20587). `SUM(meta_vgv)` sem relacionar/filtrar por `dim_empreendimento` infla o total (validado: Meta Start 2026 dá R$ 493M incluindo os placeholders vs. **R$ 199M** só com empreendimentos reais — bate com o card "Meta Start" do relatório "Vendas Geral"; mesma coisa pro Forecast, 470M vs. **190M**) | `gold.dim_metas_empreendimentos` | Sempre relacionar/filtrar por `dim_empreendimento` (join por `codigo_cv = codigo_interno_empreendimento`) antes de somar meta/forecast pra refletir só empreendimentos ativos no CVCRM |
-| R19 | ✅ `base_precos.xlsm` tinha qualidade de dado inconsistente entre abas (cada produto foi montado por cópia manual da matriz-modelo e divergiu): (1) aba QBV2 (Quinta da Boa Vista) tinha cabeçalhos com erro de digitação ("Unidde"/"ID_Prço"/"Áre Privtiv"/"Permut") que zeravam a coluna Unidade pro produto inteiro — **corrigido** via alias de coluna no loader + preferindo a tabela duplicada boa da aba QBV ("Matriz_F162427", nome mangulado por copiar/colar do Excel, mas cabeçalho correto); (2) aba VPQ (Villas do Parque - Casas e Lotes Mistos) tinha `Bloco`/`Unidade` = literalmente o texto `"#N/A"` — causa raiz: PROCV contra uma tabela auxiliar (`Estrutura___Villas_do_Parque`) alimentada por Power Query de um **CSV local desatualizado** (`Estrutura/Villas do Pq. - Casas.csv`), com "Código Interno" de uma geração antiga do CVCRM sem NENHUMA sobreposição com os códigos atuais da Matriz (zero em comum em 812 linhas). **Corrigido pelo dev direto na planilha** (10/ago/2026): trocou o PROCV por um ÍNDICE/CORRESP contra outro intervalo válido da própria aba, sem precisar reexportar o CSV. Validado: "Villas do Pq. Casa" VSO 0%→72,8%; "Villas do Pq. Lote" ficou baixo (3,66%) mas é **dado real** — só 6 reservas no CVCRM pra 164 lotes, produto pouco vendido ainda, não é bug | `silver.d_estrutura`, `popular_seeds.py` | Resolvido — nenhuma ação pendente |
-| R20 | ✅ **RESOLVIDO em 12/ago/2026** (preenchido via Excel COM, backup em `_backups_fechamento/`): 8 produtos que tinham as linhas vazias + 10 linhas NOVAS para Villa Manacás (que não tinha nenhuma). `MargemViab` da gold agora bate com o legado à 8ª casa em 7 produtos (Tríade, Primaveras, Quinta da Boa Vista, Parc Sul, Villas do Pq. Casas, Arboretto, Parc Cidade Jardim) e a 6 casas em Parc das Artes. Ressalvas do que foi escrito: (a) o DAX só guardava o custo de obra TOTAL, então a linha "Terreno" ficou EM BRANCO de propósito e o valor inteiro está em "Construção" — a soma, que é o que a margem usa, fica certa (`gold.dim_viabilidade.custo_obra` já resolve o NULL); (b) Villas do Pq. **Casas** recebeu a viabilidade do produto INTEIRO, porque o legado tratava Casas + Lotes como um só; (c) constantes de vintage desconhecido, recuperadas de fórmula — **validar contra o estudo vigente**. Seguem sem viabilidade: Parc Paineira e Residencial Quinta dos Ventos. Também corrigido no pivot `gold.dim_viabilidade`: o rótulo do parâmetro varia entre produtos ("Receitas Brutas"/"Receitas Líquidas" em Parc das Orquídeas x "Receita Bruta"/"Receita Liquida" nos demais) e o match por string exata zerava o produto inteiro — parecia planilha em branco, mas o dado estava lá | `silver.d_viabilidade`, KPI-17 | Validar as constantes com quem tem o estudo de viabilidade |
-| R20-hist | 🔴 (contexto original) **Viabilidade em branco na origem**: `tab_viabil_padrão` (aba `viabil_padrão` de `d_para empreendimentos.xlsx`) tem as 10 linhas de parâmetro para os 13 empreendimentos, mas as células de `Valor` e `%` estão **vazias em 11 deles** — só Parc das Artes (10093) e Parc das Orquídeas (13998) preenchidos (conferido lendo o arquivo com e sem `data_only`: são células em branco, não fórmula sem cache). Efeito: `Margem` retorna 100% e `MargemViab` retorna vazio pros outros 11 — o número mais visível do BI de Preço. Os valores EXISTEM: estavam hard-coded nas 12 medidas DAX do legado e foram recuperados/decompostos em `relatorios/viabilidade_constantes_legado.csv` (identidade usada: denominador = 1 − deduções, resto do subtraído = despesas; conferido reproduzindo cada `XX_MargemViab` ao 8º decimal). Achados de qualidade: **Parc Paineira usa constantes idênticas às de Parc das Orquídeas** (copiar/colar não corrigido — a margem publicada dele provavelmente nunca foi a dele); Primaveras usava 0,079 na `Margem` e 0,0788814711655896 na `MargemViab` (o DAX divergia de si mesmo); em Parc das Orquídeas o custo de obra da planilha (−30.669.428) difere do DAX (−31.200.727) em ~R$ 531 mil (dois estudos diferentes) | `silver.d_viabilidade`, KPI-17 | Gestão/backoffice preencher `tab_viabil_padrão` a partir do CSV recuperado, **validando contra o estudo de viabilidade vigente** — as constantes do DAX são de vintage desconhecido |
-| R21 | ✅ **Contornado em 12/ago/2026** pela troca de matriz de preço (R22): o erro só existe no `base_precos.xlsm`; a matriz do legado tem a área certa e `M²ARealizar` do produto saiu de 5,11 para 5.247,61. **O erro continua na planilha** — volta se alguém rodar `--estrutura-fonte bi_matriz`. Contexto: **Villa Manacás com área privativa 1000x**: na `base_precos.xlsm` a coluna `Área Privativa` do produto vem 48.790 onde deveria ser 48,79 m² (e `Preço M²` sai 5,25 em vez de ~5.247). Área total 9.156.800 m² na gold x 9.156,80 no legado. O `Preço` unitário está correto, então VGV/estoque/margem não são afetados — mas **todo KPI por m² do produto sai 1000x errado** (`M²ARealizar` = 5,11). Mesma família de problema do R19 (cada aba do `base_precos.xlsm` foi montada por cópia manual e divergiu) | `silver.d_estrutura` | Corrigir na planilha de origem; não tratar no pipeline (mascararia o erro para quem usa a planilha) |
-| R22 | ⚠️ **Duas matrizes de preço coexistem na empresa**: o BI de Preço legado lê `Preço/Apoio/Apoio - BI de Preço.xlsm` + `Preço/Vendas/<Produto> - Resumo.xlsm`; a pipeline lê `BI V.2/BI Matriz/base_precos.xlsm`. Descrevem as MESMAS unidades (área privativa total bate ao centavo em 9 de 11 produtos) mas com **preços de tabela diferentes** — ex.: Arboretto, mesmas 90 unidades fora de venda, R$ 70,05 mi (legado) x R$ 67,13 mi (gold). Enquanto as duas existirem, os dois relatórios discordam por construção. **DECIDIDO em 12/ago/2026 (dev): usar a do LEGADO**, pra o relatório novo bater com os números que a gestão já conhece — `popular_seeds.py --estrutura-fonte legado\|bi_matriz` alterna, default no `.env` (`ESTRUTURA_PRECOS_FONTE`). O loader absorve as diferenças de layout (colunas `Prumada`/`Frente Fundo`/`Final` -> `config_1/2/3`, `Torre` -> `bloco`, e o `codigo_cv` que o legado não tem resolvido pelo nome conformado do produto — exigiu 3 apelidos novos na `dpara_empreendimento`: "Primaveras" -> Parc das Primaveras, "Tríade"/"Triade" -> Tríade Fiúsa). **A troca melhorou 3 coisas** (área do Villa Manacás correta — R21; Quinta da Boa Vista batendo exatamente com o legado; Parc Paineira passou a existir, 144 unidades) e **piorou 1**: os 164 lotes de Villas do Pq. Lotes Mistos ficam SEM PREÇO (o arquivo do legado nunca os precificou; o `base_precos` tinha R$ 23,9 mi de estoque ali) | `silver.d_estrutura` | Resolver o preço dos lotes de Villas do Pq. na planilha do legado, OU fazer o loader complementar com o `base_precos.xlsm` só onde falta preço |
-| R23 | ✅ Erro de digitação no **valor** das colunas de posição (`CONFIG_1/2/3`) da matriz de preço — mesma família do R19, cada aba foi montada por cópia manual: `LOTE MISTO (GURIT E COMERCIL)` (faltam letras), `OTE MISTO` (falta o L), `Muro lateral` vs `Muro Lateral` (caixa), `154  e 155 (PCD)` (espaço duplo). Não é cosmético: na matriz do BI de Preço **cada grafia vira uma COLUNA separada** com 1-2 unidades, empurrando as colunas boas para fora da tela (Quinta da Boa Vista tinha 4 rótulos para 3 tipologias reais). **Corrigido no loader** (`ALIAS_VALOR_CONFIG` + colapso de espaços no `_txt`, 13/ago/2026): 33 → 31 valores distintos de `config_1`. NÃO incluído de propósito: `config_3 = "Lateral"` (1 unidade em Villas do Pq. Lotes Mistos) — provavelmente "Muro Lateral" abreviado, mas "Lateral" também é valor legítimo de `config_2` (face, em Parc das Artes), então juntar sem confirmar seria inventar dado | `popular_seeds.py`, `silver.d_estrutura` | Confirmar o "Lateral" solto com o backoffice; idealmente corrigir na planilha de origem (o de-para é rede de proteção, não conserto) |
-| R17 | ✅ `gold.dim_estrutura`/`gold.dim_distratos_2025` não têm código de unidade 1:1 com a API (a CVDW não expõe o "Código interno da unidade" do CSV legado, nem o "Contrato" de `distratos_2025` — que é ID do MEGA, sistema financeiro, não do CVCRM) — o match casa por `(empreendimento conformado, bloco, unidade)` normalizado via `silver.chave_bloco()`/`silver.chave_unidade()` (funções compartilhadas, `seeds.sql`). Achados ao longo da task 6.4/distratos 2025 (ago/2026): (1) em produto de torre única, `bloco` vem com o NOME DO EMPREENDIMENTO em vez de vazio numa fonte e NULL na outra — tratado como NULL dos dois lados; (2) números de bloco/unidade têm padding diferente entre fontes ("QUADRA 06" vs "Quadra 6", "027" vs "27") — `chave_unidade`/`chave_bloco` extraem e strippam zero à esquerda; (3) developments em lote (Villas do Parque, Quinta dos Ventos, Quinta da Boa Vista) têm convenção "LOTE/CASA" divergente ("L 30 - CASA Nº 281" vs "LOTE 31 CASA 485") — resolvido comparando por token numérico (fallback bidirecional `ANY`), não string inteira; (4) bloco pode ter as MESMAS palavras do empreendimento só que fora de ordem ("ARBORETTO RESIDENCIALE" x bloco "RESIDENCIALE ARBORETTO") — `chave_bloco` compara por conjunto de palavras, não string exata; (5) bloco pode vir com sufixo extra ("QUADRA 04 - LOTE RESIDENCIAL") — `chave_bloco` extrai só prefixo+1º número, descarta o resto. Validado manualmente (`_bi_ref`/relatório "Vendas Geral"): as 13 unidades da Tríade que "sumiam" do estoque eram legítimas (`unidade` = "133 - TERRENISTA" — repasse por permuta ao terrenista, `situacao='Vendida'` no CVCRM; extração numérica corrigiu, não é bug). Em `dim_distratos_2025`, desempate por reserva com `data_situacao` mais próxima de "Data do Distrato" quando bloco+unidade batem em mais de uma. **Taxas de match**: `dim_estrutura` — Arboretto 0%→42%, Quinta da Boa Vista 0%→80,8% (após R19), Tríade 99,75% (confirmado correto, não regressão); só "Villas do Pq." (Casas/Lotes) seguem 0%, bloqueado por R19 (dado quebrado na origem, não é falha de join); `dim_distratos_2025` 748/866 (86%) — resto é empreendimento fora do CVCRM ou grafia não coberta | `gold.dim_estrutura`, `gold.dim_distratos_2025` | Se outro produto aparecer com taxa de match baixa, investigar variação de grafia específica antes de assumir falha de join |
+| R1 | Atenção: "venda" tem duas definições diferentes ({Vendida} e {Vendida, Distrato}) | KPI-07/08 | Definir qual é a autoritativa durante a reconciliação |
+| R2 | Atenção: distratos vêm de três fontes distintas | KPI-20 | Unificar em `cvdw.distratos` |
+| R3 | Atenção: Canal e Mídia têm três versões de de-para | DP-02 | Convergir numa só e registrar a data de vigência |
+| R4 | Atenção: Margem e Viabilidade tinham constantes fixas no código, por empreendimento | KPI-17 | Já parametrizado através de `gold.dim_viabilidade` (task 6.4, agosto de 2026), mas a origem está vazia para 11 dos 13 produtos: veja R20 |
+| R5 | Concluído: metas, viabilidade e verba não existem na API | seção 3 | Metas e viabilidade já importadas como seed (task 6.4); a verba de marketing segue pendente |
+| R6 | Atenção: listas de exceção manuais (fluxo investidor, retira reservas) | DP-14 | Confirmar vigência com a gestão |
+| R7 | Atenção: a deduplicação de venda por unidade pode ocultar uma revenda | ING-05 | Validar o grão na silver |
+| R8 | Atenção: ajustes pessoais fixos no código (Castro, Marcio) | ING-04, DP-09/10 | Mover para uma de-para versionada |
+| R9 | Atenção: "Vendas Consolidadas" tem status manuais sem correspondência na API (`Validada`, `Venda distratada`, `Repassada`, `Envio Mega`, `Validação Comercial`) | planilha legada | Deveria virar um de-para `dpara_status_venda` (de situação do CRM para status operacional) ou permanecer como input operacional; de qualquer forma, esses status não vêm do CRM |
+| R10 | Crítico: o fechamento manual atrasa. 420 das 1.892 propostas que a planilha conta como venda viva já são Distrato no CRM | reconciliação de vendas | Esse é justamente o ganho da pipeline nova: um número sempre atual. Documentar isso para a gestão |
+| R11 | Concluído: `valor_contrato` (API) é igual a "VGV (Praticado)" (planilha) ao centavo em 1.869 das 1.892 propostas (98,8%) | reconciliação de vendas | Valida o KPI-01. As 23 divergências foram investigadas: uma é um buraco de dado no CRM (a proposta 337 tem `valor_contrato=0`, mas a soma de financiamento, subsídio e FGTS chega a aproximadamente R$ 207 mil); sete casos usaram `vgv_tabela` (o preço de tabela) no legado; e quinze são ajustes ou arredondamentos manuais (vários com cerca de R$ 9,5 mil de desconto) que não batem com nenhuma coluna disponível no CRM. Conclusão: `valor_contrato` é o número autoritativo |
+| R12 | Concluído: DE_PARA_PRODUTOS extraída para `dpara_empreendimento` (25 linhas), com `silver.conformar_empreendimento()` ignorando maiúsculas e minúsculas na gold | DP-06/ING-06 | Resolve casos como "FIUSA 016" contra "Fiusa 016". A aba também traz o campo `EP` (espaço de negócios) |
+| R13 | Concluído: House é o escritório próprio da Pafil (a imobiliária `ESPACO DE NEGOCIOS PAFIL <regional>`); House RP corresponde a Ribeirão Preto/RPO. O ranking considera só House, e exclui o corretor de coordenação ("Regiane...") | apresentação (ranking) | Confirmado: reproduz o pódio de maio de 2026 ao centavo (Alessandra, Rafael, Wallace). Usa as seeds `dpara_imobiliaria_house` e `dpara_corretor_fora_ranking`. House e regional vêm da classificação oficial no Power BI, onde o ranking por corretor é montado em cima de `fato_reservas` (a exclusão da coordenação é um filtro aplicado pela seed). O `dpara_gerentes` foi recarregado a partir de `depara_gerentes.xlsx` (43 linhas, cruzando House/Parcerias com Regional) |
+| R14 | Concluído: o ranking por gerente, que estava travado (referência aos slides 17 a 19 da apresentação), foi destravado. O campo "Gerente Responsável" existe na API, mas como um campo customizado dentro de `campos_adicionais`, não como uma coluna própria | apresentação (ranking) | Está preenchido em 68% das vendas, cobre 39 gerentes, e casa com `dpara_gerente_contexto`. A função `silver.campo_adicional()` extrai esse valor para `silver.reservas.gerente_responsavel`, e o ranking por gerente é montado no Power BI em cima de `fato_reservas` (com House vindo da classificação oficial). Validado: Matheus Santamaria aparece com 6 unidades e R$ 1,75 milhão, batendo com o slide 18 ("Liga das vendas", 6 unidades e R$ 1,7 milhão). Não foi necessário nenhum de-para manual para isso |
+| R15 | Concluído: outros campos do BI legado, guardados dentro de `campos_adicionais`, também foram extraídos para a silver e a gold | reservas | `cf_tipo_venda` (98% preenchido, com valores como Financiamento na Planta ou Venda Direta), `cf_modalidade_financiamento` (97% preenchido, com valores como MCMV, PAFIL ou SBPE), `cf_motivo_distrato` e `cf_classificacao_vendas_internas`. Outros campos continuam disponíveis sob demanda, como "Data de Distrato", "Premiação Tá Fácil", "Reciprocidade" e "IRPF Futuro", através da função `silver.campo_adicional()` |
+| R16 | Atenção, um problema de qualidade de dado: alguns valores de "Gerente Responsável" trazem o nome de uma equipe ("Equipe Pitangueiras") ou "N/D", em vez do nome de uma pessoa; 32% dos casos ficam nulos | ranking de gerentes | Às vezes o nome diverge do que está em `dpara_gerente_contexto` (por exemplo, "Marcio Lima" aparece em 328 reservas e "Jose Castro*" em 60, juntos cerca de 8% do total; veja DP-01). Confirmar com a gestão e adicionar a linha correspondente na aba "contexto" de `depara_gerentes.xlsx` |
+| R18 | Atenção: `gold.dim_metas_empreendimentos` tem entradas "placeholder", de projetos futuros ou apenas planejados que ainda não existem no CVCRM. Elas se identificam por um `codigo_cv` pequeno e sequencial (1, 2, 7, 8, 9, 10, 11, 99, correspondendo a Parc Gramado, Dualle, Trivion Home Resort, Condomínio Comercial Parc Sul, entre outros), bem diferente dos códigos reais, que têm 4 ou 5 dígitos, como 8883, 15840 ou 20587 | `gold.dim_metas_empreendimentos` | Somar `meta_vgv` sem relacionar ou filtrar por `dim_empreendimento` infla o total: foi validado que a Meta Start de 2026 dá R$ 493 milhões incluindo os placeholders, contra R$ 199 milhões considerando só empreendimentos reais, o que bate com o card "Meta Start" do relatório "Vendas Geral" (o mesmo vale para o Forecast: R$ 470 milhões contra R$ 190 milhões). Sempre relacionar ou filtrar por `dim_empreendimento` (join por `codigo_cv = codigo_interno_empreendimento`) antes de somar meta ou forecast, para refletir só os empreendimentos ativos no CVCRM |
+| R19 | Concluído: `base_precos.xlsm` tinha qualidade de dado inconsistente entre as abas, porque cada produto foi montado por cópia manual da matriz-modelo, e cada cópia divergiu um pouco da original | `silver.d_estrutura`, `popular_seeds.py` | Dois problemas foram identificados e corrigidos. Primeiro, a aba QBV2 (Quinta da Boa Vista) tinha cabeçalhos com erro de digitação ("Unidde", "ID_Prço", "Áre Privtiv", "Permut"), o que zerava a coluna Unidade para o produto inteiro; a correção foi feita com um alias de coluna no loader, além de passar a preferir a tabela duplicada correta da própria aba QBV, chamada "Matriz_F162427" (um nome bagunçado por causa de um copiar e colar do Excel, mas com o cabeçalho certo). Segundo, a aba VPQ (Villas do Parque, Casas e Lotes Mistos) tinha as colunas `Bloco` e `Unidade` preenchidas literalmente com o texto "#N/A"; a causa raiz era um PROCV apontando para uma tabela auxiliar (`Estrutura___Villas_do_Parque`) alimentada por Power Query a partir de um CSV local desatualizado (`Estrutura/Villas do Pq. - Casas.csv`), que trazia um "Código Interno" de uma geração antiga do CVCRM, sem nenhuma sobreposição com os códigos atuais da matriz (zero em comum entre 812 linhas). Isso foi corrigido pelo desenvolvedor diretamente na planilha, em 10 de agosto de 2026: o PROCV foi trocado por um ÍNDICE/CORRESP apontando para outro intervalo válido dentro da própria aba, sem precisar reexportar o CSV. O resultado foi validado: o VSO de "Villas do Pq. Casa" saltou de 0% para 72,8%; o de "Villas do Pq. Lote" ficou baixo, em 3,66%, mas isso é dado real, não bug, já que existem apenas 6 reservas no CVCRM para 164 lotes, um produto ainda pouco vendido. Resolvido, nenhuma ação pendente |
+| R20 | Concluído, resolvido em 12 de agosto de 2026 (preenchido via automação do Excel, com backup guardado em `_backups_fechamento/`): foram preenchidos 8 produtos que tinham linhas vazias, mais 10 linhas novas para Villa Manacás, que antes não tinha nenhuma | `silver.d_viabilidade`, KPI-17 | Hoje, `MargemViab` na gold bate com o legado até a 8ª casa decimal em 7 produtos (Tríade, Primaveras, Quinta da Boa Vista, Parc Sul, Villas do Pq. Casas, Arboretto e Parc Cidade Jardim), e até a 6ª casa em Parc das Artes. Três ressalvas sobre esse preenchimento: primeiro, o DAX legado só guardava o custo de obra total, então a linha "Terreno" ficou em branco de propósito, com o valor inteiro concentrado em "Construção" (a soma dos dois, que é o que a margem realmente usa, fica correta; `gold.dim_viabilidade.custo_obra` já resolve esse NULL). Segundo, Villas do Pq. Casas recebeu a viabilidade do produto inteiro, porque o legado tratava Casas e Lotes como um produto só. Terceiro, as constantes recuperadas são de uma versão desconhecida no tempo, e precisam ser validadas contra o estudo de viabilidade vigente. Dois produtos continuam sem viabilidade: Parc Paineira e Residencial Quinta dos Ventos. Também foi corrigido, no pivot `gold.dim_viabilidade`, um problema em que o rótulo do parâmetro varia entre produtos ("Receitas Brutas"/"Receitas Líquidas" em Parc das Orquídeas, contra "Receita Bruta"/"Receita Liquida" nos demais), e o match por string exata zerava o produto inteiro: parecia que a planilha estava em branco, mas o dado estava lá, só que sob um rótulo diferente. Falta validar as constantes com quem tem o estudo de viabilidade |
+| R20-hist | Crítico, este é o contexto original do problema (já resolvido, veja R20 acima) | `silver.d_viabilidade`, KPI-17 | A tabela `tab_viabil_padrão`, na aba `viabil_padrão` de `d_para empreendimentos.xlsx`, tinha as 10 linhas de parâmetro para os 13 empreendimentos, mas as células de Valor e % estavam vazias em 11 deles. Só Parc das Artes (código 10093) e Parc das Orquídeas (código 13998) vinham preenchidos (isso foi conferido lendo o arquivo com e sem a opção `data_only`, confirmando que eram células realmente em branco, não uma fórmula sem cache). O efeito prático era que a medida `Margem` retornava 100% e `MargemViab` retornava vazio para os outros 11 produtos, justamente o número mais visível do BI de Preço. Mas os valores existiam: estavam fixos nas 12 medidas DAX do sistema legado, e foram recuperados e decompostos no arquivo `relatorios/viabilidade_constantes_legado.csv` (usando a identidade: o denominador é 1 menos as deduções, e o restante do valor subtraído são as despesas; a recuperação foi conferida reproduzindo cada `XX_MargemViab` até a 8ª casa decimal). Essa investigação revelou outros problemas de qualidade: Parc Paineira usa constantes idênticas às de Parc das Orquídeas, sinal de um copiar e colar nunca corrigido; Primaveras usava 0,079 na medida `Margem` mas 0,0788814711655896 na `MargemViab`, ou seja, o próprio DAX legado divergia de si mesmo; e em Parc das Orquídeas o custo de obra da planilha (R$ -30.669.428) difere do valor usado no DAX (R$ -31.200.727) em cerca de R$ 531 mil, sinal de dois estudos diferentes sendo usados ao mesmo tempo. A gestão ou o backoffice precisam preencher `tab_viabil_padrão` a partir do CSV recuperado, sempre validando contra o estudo de viabilidade vigente, já que as constantes recuperadas do DAX são de uma época desconhecida |
+| R21 | Concluído: contornado em 12 de agosto de 2026, pela troca da matriz de preço descrita em R22 | `silver.d_estrutura` | O erro existe só no `base_precos.xlsm`; a matriz do legado tem a área correta, e o indicador `M²ARealizar` do produto saiu de 5,11 para 5.247,61. O erro continua existindo na planilha, e volta a aparecer se alguém rodar `--estrutura-fonte bi_matriz`. O contexto: em Villa Manacás, a área privativa vinha 1000 vezes maior do que deveria. Na `base_precos.xlsm`, a coluna `Área Privativa` do produto trazia 48.790 onde deveria ser 48,79 m², e o `Preço M²` calculado saía 5,25 em vez de aproximadamente 5.247. A área total ficava em 9.156.800 m² na gold, contra 9.156,80 no legado. Como o `Preço` unitário em si estava correto, o VGV, o estoque e a margem não eram afetados, mas todo KPI calculado por metro quadrado do produto saía 1000 vezes errado (`M²ARealizar` chegava a 5,11). É o mesmo tipo de problema descrito em R19. Corrigir na planilha de origem, não tratar dentro do pipeline, porque isso mascararia o erro para quem ainda usa a planilha diretamente |
+| R22 | Atenção: duas matrizes de preço coexistem na empresa | `silver.d_estrutura` | O BI de Preço legado lê os arquivos `Preço/Apoio/Apoio - BI de Preço.xlsm` e `Preço/Vendas/<Produto> - Resumo.xlsm`, enquanto a pipeline lia `BI V.2/BI Matriz/base_precos.xlsm`. As duas descrevem as mesmas unidades (a área privativa total bate ao centavo em 9 dos 11 produtos), mas com preços de tabela diferentes: em Arboretto, considerando as mesmas 90 unidades fora de venda, o legado soma R$ 70,05 milhões contra R$ 67,13 milhões na gold. Enquanto as duas planilhas existirem, os dois relatórios vão discordar por construção, não por erro. Foi decidido em 12 de agosto de 2026, pelo desenvolvedor, usar a matriz do legado como padrão, para que o relatório novo bata com os números que a gestão já conhece. O comando `popular_seeds.py --estrutura-fonte legado` ou `bi_matriz` alterna entre as duas, com o padrão definido na variável `ESTRUTURA_PRECOS_FONTE` do `.env`. O loader absorve as diferenças de layout entre as duas fontes: as colunas `Prumada`, `Frente Fundo` e `Final` viram `config_1`, `config_2` e `config_3`; a coluna `Torre` vira `bloco`; e o `codigo_cv`, que o legado não tem, é resolvido pelo nome conformado do produto, o que exigiu adicionar três apelidos novos em `dpara_empreendimento` ("Primaveras" para Parc das Primaveras, e "Tríade"/"Triade" para Tríade Fiúsa). Essa troca de fonte melhorou três coisas: corrigiu a área de Villa Manacás (veja R21), fez Quinta da Boa Vista bater exatamente com o legado, e trouxe Parc Paineira de volta à existência, com 144 unidades. Por outro lado, piorou uma coisa: os 164 lotes de Villas do Pq. Lotes Mistos ficaram sem preço, porque o arquivo do legado nunca os precificou (o `base_precos` antigo tinha ali R$ 23,9 milhões de estoque). Resolver o preço desses lotes diretamente na planilha do legado, ou fazer o loader complementar com o `base_precos.xlsm` apenas onde o preço estiver faltando |
+| R23 | Concluído: erros de digitação no valor das colunas de posição (`CONFIG_1`, `CONFIG_2`, `CONFIG_3`) da matriz de preço, da mesma família do problema descrito em R19 | `popular_seeds.py`, `silver.d_estrutura` | Exemplos encontrados: "LOTE MISTO (GURIT E COMERCIL)" com letras faltando, "OTE MISTO" sem o L inicial, "Muro lateral" contra "Muro Lateral" (diferença de caixa) e "154  e 155 (PCD)" com espaço duplo. Isso não é só cosmético: na matriz do BI de Preço, cada grafia diferente vira uma coluna separada, com apenas 1 ou 2 unidades cada, empurrando as colunas corretas para fora da tela visível (Quinta da Boa Vista chegou a ter 4 rótulos para apenas 3 tipologias reais). Foi corrigido diretamente no loader, através de um dicionário `ALIAS_VALOR_CONFIG` combinado com o colapso de espaços duplicados no campo `_txt`, em 13 de agosto de 2026, reduzindo de 33 para 31 valores distintos de `config_1`. Um caso foi deixado de fora de propósito: `config_3 = "Lateral"` (1 unidade em Villas do Pq. Lotes Mistos), que provavelmente é uma abreviação de "Muro Lateral", mas como "Lateral" também é um valor legítimo de `config_2` (indicando a face do lote, em Parc das Artes), juntar os dois sem confirmação seria inventar um dado que não temos certeza. Confirmar esse "Lateral" solto com o backoffice; o ideal é corrigir na planilha de origem, já que o de-para no código deve funcionar como uma rede de proteção, não como o conserto definitivo |
+| R17 | Concluído: `gold.dim_estrutura` e `gold.dim_distratos_2025` não têm um código de unidade que bata 1 para 1 com a API | `gold.dim_estrutura`, `gold.dim_distratos_2025` | A CVDW não expõe o "Código interno da unidade" que existia no CSV legado, nem o "Contrato" de `distratos_2025`, que na verdade é um ID do MEGA, o sistema financeiro, e não do CVCRM. Por isso, o cruzamento é feito pelo conjunto (empreendimento conformado, bloco, unidade), normalizado pelas funções `silver.chave_bloco()` e `silver.chave_unidade()`, compartilhadas em `seeds.sql`. Ao longo da task 6.4 e do trabalho com distratos de 2025 (agosto de 2026), cinco achados moldaram essa normalização: em produtos de torre única, o campo `bloco` vem preenchido com o nome do próprio empreendimento em vez de vazio em uma fonte, e como NULL na outra, tratado como NULL nos dois lados; os números de bloco e unidade têm padding diferente entre as fontes ("QUADRA 06" contra "Quadra 6", "027" contra "27"), resolvido extraindo o número e removendo os zeros à esquerda; empreendimentos vendidos em lote (Villas do Parque, Quinta dos Ventos, Quinta da Boa Vista) usam uma convenção de "LOTE/CASA" divergente entre as fontes, resolvida comparando por token numérico com um fallback bidirecional; o campo bloco às vezes tem as mesmas palavras do nome do empreendimento fora de ordem, resolvido comparando por conjunto de palavras; e o campo bloco pode vir com um sufixo extra, resolvido extraindo só o prefixo mais o primeiro número. Uma validação manual, feita contra o relatório "Vendas Geral", confirmou que as 13 unidades da Tríade que pareciam "sumir" do estoque eram legítimas: o campo `unidade` trazia "133 - TERRENISTA", um repasse por permuta ao terrenista, e a extração numérica corrigiu esse caso, que não era um bug. Em `dim_distratos_2025`, quando bloco e unidade batem em mais de uma reserva, o desempate usa a reserva cujo `data_situacao` fica mais próximo da "Data do Distrato". As taxas de match alcançadas: em `dim_estrutura`, Arboretto foi de 0% para 42%, Quinta da Boa Vista foi de 0% para 80,8% (depois da correção do R19), e Tríade manteve 99,75% (confirmado que já estava correto); só "Villas do Pq." (Casas e Lotes) continuam em 0%, bloqueados pelo R19, porque o dado já vem quebrado na origem. Em `dim_distratos_2025`, a taxa é de 748 em 866, ou 86%; o restante são casos de empreendimento fora do CVCRM ou de grafia ainda não coberta. Se outro produto aparecer com taxa de match baixa, investigar a variação de grafia específica antes de assumir falha de join |
 
 ---
 
 ## 8. Próximos passos a partir deste catálogo
 
-1. ✅ **Silver** (`sql/silver/`): ING-04 virou seed `dpara_responsavel_imobiliaria`; ING-01..03 não
-   portadas (eram lixo de CSV); 6 views de conformação. DP-* como seeds (`seeds.sql`).
-2. ✅ **Gold** (`sql/gold/`): star schema (fatos + dims) sobre a silver; KPI-01..06/09/18 viram medidas DAX no Power BI (`powerbi/MEDIDAS_GOLD.dax`).
-3. ✅ **Reconciliação** (`reconciliar_distratos.py`): distratos maio/2026 **bate ao centavo**
-   (54 vs 54; VGV R$ 12.888.599,11 idêntico). Relatório em `reconciliacao/`.
-4. ✅ **Seeds populados** (`popular_seeds.py`): DP-02/03/04/08 + DP-01(gerentes) decodificados do
-   JSON embutido do legado (343 linhas). Pendentes (planilha SharePoint): feriados, profissões,
-   etapa_precadastro, equipe_corretor.
+1. Concluído, Silver (`sql/silver/`): a regra ING-04 virou a seed
+   `dpara_responsavel_imobiliaria`; as regras ING-01 a ING-03 não foram portadas,
+   por serem lixo de CSV; existem 6 views de conformação. As regras DP-* viraram
+   seeds, em `seeds.sql`.
+2. Concluído, Gold (`sql/gold/`): o star schema (fatos e dimensões) foi montado
+   sobre a silver; os indicadores KPI-01 a KPI-06, KPI-09 e KPI-18 viraram medidas
+   DAX no Power BI, em `powerbi/MEDIDAS_GOLD.dax`.
+3. Concluído, Reconciliação (`reconciliar_distratos.py`): os distratos de maio de
+   2026 batem ao centavo (54 contra 54, VGV de R$ 12.888.599,11 idêntico nos dois
+   lados). O relatório completo está em `reconciliacao/`.
+4. Concluído, Seeds populados (`popular_seeds.py`): as regras DP-02, DP-03, DP-04 e
+   DP-08, além de DP-01 (gerentes), foram decodificadas a partir do JSON embutido
+   no sistema legado, totalizando 343 linhas. Ainda pendentes, dependendo de
+   planilha do SharePoint: feriados, profissões, etapa do pré-cadastro e equipe do
+   corretor.
+5. Concluído, Reconciliação de vendas (`reconciliar_vendas.py`): comparada com a
+   planilha `Vendas Consolidadas.xlsm`, o VGV bate ao centavo em 98,8% das
+   propostas em comum (veja R11). Esse trabalho revelou tanto o atraso do
+   fechamento manual (R10) quanto a camada de status manuais sem correspondência
+   na API (R9). O relatório completo está em
+   `reconciliacao/RECONCILIACAO_VENDAS.md`.
 
-5. ✅ **Reconciliação de vendas** (`reconciliar_vendas.py`): vs. planilha `Vendas Consolidadas.xlsm`.
-   VGV bate ao centavo em 98,8% das propostas do overlap (R11); revelou o drift do fechamento
-   manual (R10) e a camada de status manual (R9). Relatório em `reconciliacao/RECONCILIACAO_VENDAS.md`.
+### O que ainda está em aberto
 
-### Ainda em aberto
-- **Rodar no bronze COMPLETO (VPS)** — o bronze local é parcial (1.302 propostas do legado faltam);
-  a reconciliação de totais só fecha com a carga cheia.
-- **Investigar as 23 divergências de VGV** (R11) — padrão de ~R$ 9,5k sugere sinal/desconto sistemático.
-- **Validar com a gestão** R1 (def. de "venda"), R3 (canal/mídia), R6 (exceções), R9/R10 (status manual/defasagem).
-- **Power BI** consumir a camada `gold` (substituir o direto-API da Fase 0).
+- Rodar a ingestão contra o bronze completo, na instância EC2 de produção: o bronze
+  local hoje é parcial, com 1.302 propostas do legado ainda faltando, e a
+  reconciliação de totais só fecha de verdade depois da carga cheia.
+- Investigar as 23 divergências de VGV apontadas em R11: o padrão de aproximadamente
+  R$ 9,5 mil sugere um desconto ou ajuste sistemático, ainda não identificado.
+- Validar com a gestão as regras R1 (a definição de "venda"), R3 (canal e mídia), R6
+  (as listas de exceção) e R9/R10 (os status manuais e o atraso do fechamento).
+- Fazer o Power BI consumir a camada gold, substituindo a conexão direta com a API
+  usada na Fase 0.
 
-> Cobertura desta versão: modelo "Matriz" (~150 medidas, 40+ tabelas) e modelo "Preço" (12 empreend.).
-> Medidas de UI (🎨) catalogadas como descarte. Próxima revisão: detalhar DAX completo dos KPIs ⭐
-> escolhidos para reconciliação.
+A cobertura desta versão do catálogo inclui o modelo "Matriz" (cerca de 150
+medidas, mais de 40 tabelas) e o modelo "Preço" (12 empreendimentos). As medidas de
+interface, marcadas para descarte, já foram catalogadas. A próxima revisão deve
+detalhar o DAX completo dos KPIs escolhidos para reconciliação.

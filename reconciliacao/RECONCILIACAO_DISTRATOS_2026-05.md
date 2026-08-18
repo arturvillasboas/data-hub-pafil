@@ -1,19 +1,26 @@
-# Reconciliação de Distratos — 2026-05
+# Reconciliação de distratos: maio de 2026
 
-> ⚠️ Contém valores reais de VGV/distratos da empresa. Repositório é **privado** —
-> não redistribuir fora dele (ver `SKILL.md` seção 7).
+**Atenção:** este documento contém valores reais de VGV e distratos da empresa. O
+repositório é privado; não redistribua esse conteúdo fora dele (veja a seção 7 de
+`SKILL.md`).
 
-Pipeline nova (API → silver.distratos) vs. CSV legado (rel_distratos, fechamento mensal).
+Esta comparação coloca lado a lado a pipeline nova (dados vindos da API, através
+de `silver.distratos`) e o CSV legado (`rel_distratos`, o fechamento mensal
+tradicional).
 
 ## Totais
 
-| Métrica | Legado (CSV) | Pipeline (API) | Δ |
+| Métrica | Legado (CSV) | Pipeline (API) | Diferença |
 |---|--:|--:|--:|
-| Qtd distratos | 54 | 54 | +0 |
-| VGV distratos | R$ 12.888.599,11 | R$ 12.888.599,11 | R$ 0,00 |
+| Quantidade de distratos | 54 | 54 | +0 |
+| VGV dos distratos | R$ 12.888.599,11 | R$ 12.888.599,11 | R$ 0,00 |
 
 ## Achados
 
-✅ **Bate número-a-número** — mesmas reservas, mesmos valores.
+Concluído: os números batem exatamente, reserva por reserva, valor por valor.
 
-> Divergência é **achado**, não falha: o CSV é um snapshot do fechamento; a pipeline é estado atual (distratos novos entram). Reservas só-no-legado merecem investigação.
+Vale registrar uma ressalva: uma eventual divergência aqui seria um achado, não
+necessariamente uma falha. O CSV é um retrato do fechamento em um instante fixo,
+enquanto a pipeline reflete o estado atual dos dados, então distratos novos podem
+entrar na pipeline depois do fechamento. Reservas que aparecessem só no legado
+mereceriam investigação, mas isso não aconteceu neste mês.

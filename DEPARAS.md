@@ -1,81 +1,90 @@
-# De-paras — inventário e como atualizar
+# De-paras: inventário e como atualizar
 
-> Um "de-para" é uma tabela de mapeamento que o CVDW/CRM não fornece (ex.: qual
-> escritório é "House", qual gerente responde por qual corretor, qual canal de
-> mídia agrupa qual UTM). Vêm de planilhas mantidas manualmente pelo backoffice
-> comercial, não da API. Este doc explica **onde cada um vive, como é carregado e
-> com que frequência precisa ser atualizado**. Para a regra de negócio por trás de
-> cada de-para (a lógica que ele resolve), ver `REGRAS_NEGOCIO.md` (seções `DP-*`).
-> Para a fronteira arquitetural (por que isso continua manual mesmo depois da
-> migração para a VPS), ver `ARCHITECTURE.md` seção 4.
+Um "de-para" é uma tabela de mapeamento que o CVDW (a API do CRM) não fornece. Por
+exemplo: qual escritório pertence a qual House, qual gerente responde por qual
+corretor, ou qual canal de mídia agrupa quais parâmetros de UTM. Essas informações
+vêm de planilhas mantidas manualmente pelo backoffice comercial, não da API.
 
-## Fonte única da verdade
+Este documento explica onde cada de-para vive, como ele é carregado no banco e com
+que frequência precisa ser atualizado. Para entender a regra de negócio por trás de
+cada de-para, ou seja, a lógica que ele resolve, veja as seções `DP-*` de
+`REGRAS_NEGOCIO.md`. Para entender por que esse processo continua manual mesmo
+depois da migração do banco para a instância EC2 de produção, veja a seção 4 de
+`ARCHITECTURE.md`.
 
-`config/deparas.yml` é o **registro vivo** de todos os de-paras: nome, tabela
-silver correspondente, tipo, caminho da planilha fonte (relativo a
-`base_sharepoint`) e descrição. É consumido por `montar_estrutura_depara.py`, que
-materializa a estrutura versionada em `<DEPARA_DIR>/depara_<nome>/` (pasta lida
-pelo Power BI "BI V3 CVDW"). **Ao criar ou mudar um de-para, edite o `.yml`
-primeiro** — este documento é um resumo de leitura, não a fonte.
+## A fonte única da verdade
 
-## Tipos de de-para (campo `tipo` no yml)
+O arquivo `config/deparas.yml` é o registro vivo de todos os de-paras: nome, tabela
+correspondente na silver, tipo, caminho da planilha de origem (relativo a
+`base_sharepoint`) e uma descrição. Ele é lido por `montar_estrutura_depara.py`, que
+materializa a estrutura versionada dentro de `<DEPARA_DIR>/depara_<nome>/`, a pasta
+que o Power BI "BI V3 CVDW" também lê.
 
-| Tipo | O que é | Exemplo |
+Isso significa que, ao criar ou alterar um de-para, o primeiro passo é sempre editar
+o `.yml`. Este documento aqui é um resumo de leitura, pensado para consulta rápida,
+não a fonte de verdade em si.
+
+## Os tipos de de-para (campo `tipo` no yml)
+
+| Tipo | O que significa | Exemplo |
 |---|---|---|
-| `arquivo` | Copia um `.xlsx`/`.xlsm` já pronto do SharePoint | `dpara_gerente_contexto` |
-| `silver` | Materializa uma tabela `silver.*` para Excel (de-para já embutido no pipeline, sem planilha fonte externa) | `dpara_ordem_etapa` |
-| `gerado` | Produzido por um script do próprio projeto | `de_para_classificacao.xlsx` (via `gerar_depara_classificacao.py`) |
-| `pendente` | Documenta um buraco — ainda sem fonte local carregada | `dpara_profissoes`, `dpara_feriados` |
+| `arquivo` | Copia um arquivo `.xlsx` ou `.xlsm` já pronto, vindo do SharePoint | `dpara_gerente_contexto` |
+| `silver` | Materializa uma tabela `silver.*` para Excel. A regra já está embutida no pipeline, sem depender de uma planilha externa | `dpara_ordem_etapa` |
+| `gerado` | É produzido por um script do próprio projeto | `de_para_classificacao.xlsx`, gerado por `gerar_depara_classificacao.py` |
+| `pendente` | Documenta uma lacuna conhecida: ainda não existe uma fonte local carregada para esse de-para | `dpara_profissoes`, `dpara_feriados` |
 
-## Como recarregar
+## Como recarregar cada de-para
 
-Todos os loaders vivem em `popular_seeds.py`, cada um como uma flag independente
-(rode só o que mudou; sem flag, o de-para correspondente **não** é tocado):
+Todos os carregadores (loaders) vivem dentro de `popular_seeds.py`, cada um
+acionado por uma flag independente. É seguro rodar só a flag do que mudou: sem a
+flag correspondente, aquele de-para específico não é tocado.
 
-| Flag | Carrega |
+| Flag | O que carrega |
 |---|---|
-| `--gerentes <xlsx>` | `dpara_gerente_contexto` + `dpara_imobiliaria_house` (mesma planilha, abas diferentes) |
-| `--headcount-corretores <xlsx>` | `dpara_corretor_headcount` (fonte autoritativa de equipe/gerente do corretor) |
-| `--leads-apoio <xlsm>` | `dpara_canal_midia`, `dpara_canal_midia_dc`, `dpara_ativo_receptivo`, `dpara_qualificacao_lead` (4 abas da mesma planilha "Base de Leads") |
+| `--gerentes <xlsx>` | `dpara_gerente_contexto` e `dpara_imobiliaria_house` (vêm da mesma planilha, em abas diferentes) |
+| `--headcount-corretores <xlsx>` | `dpara_corretor_headcount`, a fonte autoritativa de equipe e gerente de cada corretor |
+| `--leads-apoio <xlsm>` | `dpara_canal_midia`, `dpara_canal_midia_dc`, `dpara_ativo_receptivo` e `dpara_qualificacao_lead`, as quatro vindas de abas diferentes da planilha "Base de Leads" |
 | `--etapa-precadastro <xlsm>` | `dpara_etapa_precadastro` |
-| `--credito-manual <xlsx>` | extra manual de crédito (fora da API) |
-| `--xlsm <Vendas Consolidadas.xlsm>` | `dpara_empreendimento` (aba DE_PARA_PRODUTOS) |
+| `--credito-manual <xlsx>` | o complemento manual de crédito, informação que não existe na API |
+| `--xlsm <Vendas Consolidadas.xlsm>` | `dpara_empreendimento`, a partir da aba DE_PARA_PRODUTOS |
 
-Os caminhos default de cada flag vêm do `.env` (`DEPARA_GERENTES_XLSX`,
-`HEADCOUNT_CORRETORES_XLSX`, `DEPARA_LEADS_XLSM`, etc. — ver `.env.example`).
-Rodar `python aplicar_tudo.py` aplica silver→gold→seeds numa tacada só, mas os
-loaders de planilha só disparam se as flags forem passadas explicitamente.
+O caminho padrão de cada flag vem do `.env` (variáveis como `DEPARA_GERENTES_XLSX` e
+`HEADCOUNT_CORRETORES_XLSX`; a lista completa está comentada em `.env.example`).
+Rodar `python aplicar_tudo.py` aplica silver, gold e seeds em uma única execução, mas
+os carregadores de planilha só disparam quando a flag correspondente é passada
+explicitamente na linha de comando.
 
 ## Inventário completo
 
-| De-para | Tabela `silver.*` | Tipo | Fonte | Recarga |
+| De-para | Tabela em `silver.*` | Tipo | Fonte | Como recarregar |
 |---|---|---|---|---|
 | Gerentes (contexto da reserva) | `dpara_gerente_contexto` | arquivo | `Gerentes/depara_gerentes.xlsx` | `--gerentes` |
-| Imobiliária → House/Regional | `dpara_imobiliaria_house` | arquivo | mesma planilha acima, aba "imobiliaria" | `--gerentes` |
+| Imobiliária para House/Regional | `dpara_imobiliaria_house` | arquivo | mesma planilha acima, aba "imobiliaria" | `--gerentes` |
 | Equipe do corretor (headcount) | `dpara_corretor_headcount` | arquivo | `HeadCount/Base Corretores Pafil.xlsx` | `--headcount-corretores` |
-| Empreendimento → regional/viabilidade/IVV | `dpara_empreendimento_regional` | arquivo | `Empreendimentos/d_para empreendimentos.xlsx` | manual (sem loader ainda) |
-| Metas mensais | — | arquivo | `Meta.xlsx` | integrado direto no Power BI (não no Postgres) |
-| Estrutura de preços | — | arquivo | `base_precos.xlsm` | — |
-| Headcount por equipe/mês | — | arquivo | `depara headcount.xlsx` | — |
-| Equipe do corretor (legado, pré-cadastro) | `dpara_equipe_corretor` | arquivo | `Crédito/depara equipe corretor.xlsx` | **sem loader de propósito** — superado por `corretor_headcount` como fonte autoritativa (21/jul/2026) |
-| Canal/mídia (até out/24) | `dpara_canal_midia` | arquivo | `Base de Leads.xlsm`, aba Apoio | `--leads-apoio` |
-| Canal/mídia D.C (chave UTM, pós out/24) | `dpara_canal_midia_dc` | arquivo | mesma planilha, outra aba | `--leads-apoio` |
-| Classificação oficial por proposta | — | gerado | `de_para_classificacao.xlsx` (via `gerar_depara_classificacao.py`) | rodar o gerador |
-| Produto → nome conformado + EP | `dpara_empreendimento` | silver | aba DE_PARA_PRODUTOS da Vendas Consolidadas | `--xlsm` |
-| Ativo/Receptivo/Diretoria | `dpara_ativo_receptivo` | arquivo | `Base de Leads.xlsm`, aba Apoio | `--leads-apoio` |
+| Empreendimento para regional, viabilidade e IVV | `dpara_empreendimento_regional` | arquivo | `Empreendimentos/d_para empreendimentos.xlsx` | manual, ainda sem loader |
+| Metas mensais | (nenhuma tabela ainda) | arquivo | `Meta.xlsx` | integrado direto no Power BI, não passa pelo Postgres |
+| Estrutura de preços | (nenhuma tabela ainda) | arquivo | `base_precos.xlsm` | não se aplica |
+| Headcount por equipe e mês | (nenhuma tabela ainda) | arquivo | `depara headcount.xlsx` | não se aplica |
+| Equipe do corretor (versão legada, do pré-cadastro) | `dpara_equipe_corretor` | arquivo | `Crédito/depara equipe corretor.xlsx` | sem loader de propósito: foi superada por `corretor_headcount` como fonte autoritativa em 21 de julho de 2026 |
+| Canal e mídia (válido até outubro de 2024) | `dpara_canal_midia` | arquivo | `Base de Leads.xlsm`, aba Apoio | `--leads-apoio` |
+| Canal e mídia D.C (chave por UTM, válido a partir de outubro de 2024) | `dpara_canal_midia_dc` | arquivo | mesma planilha, outra aba | `--leads-apoio` |
+| Classificação oficial por proposta | (nenhuma tabela ainda) | gerado | `de_para_classificacao.xlsx`, via `gerar_depara_classificacao.py` | rodar o gerador |
+| Produto para nome conformado e EP | `dpara_empreendimento` | silver | aba DE_PARA_PRODUTOS da Vendas Consolidadas | `--xlsm` |
+| Ativo, Receptivo ou Diretoria | `dpara_ativo_receptivo` | arquivo | `Base de Leads.xlsm`, aba Apoio | `--leads-apoio` |
 | Qualificação do lead (MQL) | `dpara_qualificacao_lead` | arquivo | `Base de Leads.xlsm`, aba Apoio | `--leads-apoio` |
-| Etapa/situação → ordem do funil | `dpara_ordem_etapa` | silver | — (regra embutida) | — |
-| Situação da reserva → esteira | `dpara_situacao_esteira` | silver | — (regra embutida) | — |
-| Corretores fora do ranking (coordenação) | `dpara_corretor_fora_ranking` | silver | — (regra embutida) | — |
-| Responsável → imobiliária | `dpara_responsavel_imobiliaria` | silver | — (regra embutida) | — |
+| Etapa ou situação para ordem do funil | `dpara_ordem_etapa` | silver | regra embutida no código, sem planilha | não se aplica |
+| Situação da reserva para esteira | `dpara_situacao_esteira` | silver | regra embutida no código, sem planilha | não se aplica |
+| Corretores fora do ranking (coordenação) | `dpara_corretor_fora_ranking` | silver | regra embutida no código, sem planilha | não se aplica |
+| Responsável para imobiliária | `dpara_responsavel_imobiliaria` | silver | regra embutida no código, sem planilha | não se aplica |
 | Etapa do pré-cadastro (funil de crédito) | `dpara_etapa_precadastro` | arquivo | `Crédito/Base - Crédito.xlsm`, aba Apoio | `--etapa-precadastro` |
-| Profissões (perfil de cliente) | `dpara_profissoes` | **pendente** | ainda sem fonte local | — |
-| Feriados (SLA em dias úteis) | `dpara_feriados` | **pendente** | ainda sem fonte local | — |
+| Profissões (perfil de cliente) | `dpara_profissoes` | pendente | ainda sem fonte local | não se aplica |
+| Feriados (usados no cálculo de SLA em dias úteis) | `dpara_feriados` | pendente | ainda sem fonte local | não se aplica |
 
-## "Dono" de cada planilha fonte
+## De quem é cada planilha de origem
 
-Todas as planilhas fonte vivem no SharePoint **COMERCIAL** (`BI - Comercial` /
-`Relatórios Comercial`), mantidas pelo backoffice comercial. Quem precisar de
-acesso deve pedir ao time comercial/backoffice — o `.env` local aponta para a
-cópia sincronizada via OneDrive na máquina de quem roda os loaders (ver
-`ONBOARDING.md`).
+Todas as planilhas de origem vivem no SharePoint do time Comercial (nas pastas
+"BI - Comercial" e "Relatórios Comercial"), e são mantidas pelo backoffice
+comercial. Quem precisar de acesso a alguma delas deve pedir diretamente ao time
+comercial ou ao backoffice. O `.env` local de cada máquina aponta para a cópia
+sincronizada via OneDrive, na máquina de quem roda os carregadores (veja
+`ONBOARDING.md` para o passo a passo dessa configuração).

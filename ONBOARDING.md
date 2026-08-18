@@ -1,10 +1,11 @@
-# Onboarding — do zero até uma query na `gold`
+# Onboarding: do zero até uma consulta na gold
 
-> Para quem está pegando o projeto pela primeira vez (novo dev, ou você mesmo numa
-> máquina nova). Assume Windows + PowerShell (ambiente atual do projeto); os passos
-> de Python/Postgres valem para Linux/macOS com ajustes triviais de caminho.
+Este guia é para quem está pegando o projeto pela primeira vez, seja uma pessoa nova
+no time ou você mesmo configurando uma máquina nova. Ele assume Windows com
+PowerShell, que é o ambiente atual do projeto. Os passos de Python e Postgres valem
+também para Linux ou macOS, com pequenos ajustes de caminho.
 
-## 1. Clonar e montar o ambiente
+## 1. Clonar o repositório e montar o ambiente
 
 ```powershell
 git clone <url-do-repo-privado>
@@ -20,24 +21,26 @@ pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
-Depois edite o `.env` com os valores reais. De onde vem cada um:
+Depois, edite o `.env` com os valores reais. Aqui está de onde vem cada um:
 
 | Variável | De onde vem |
 |---|---|
-| `CVCRM_SUBDOMINIO`/`CVCRM_EMAIL`/`CVCRM_TOKEN` | Peça um token de API ao administrador do CVCRM da Pafil (subdomínio `pafil`). **Nunca** reuse um token que já circulou fora do `.env` — gere um novo. |
-| `PG_*` | Depende de onde você vai rodar (ver seção 3: local ou VPS). |
-| `DEPARA_*_XLSX`/`XLSM`, `VENDAS_CONSOLIDADAS_XLSM` | Caminhos para planilhas do SharePoint **COMERCIAL**, sincronizadas via OneDrive na sua máquina. Peça acesso à pasta `BI - Comercial / Relatórios Comercial` ao time comercial/backoffice; depois de sincronizado, aponte para o caminho local do OneDrive. Ver inventário completo em `DEPARAS.md`. |
+| `CVCRM_SUBDOMINIO`, `CVCRM_EMAIL`, `CVCRM_TOKEN` | Peça um token de API ao administrador do CVCRM da Pafil (o subdomínio é `pafil`). Nunca reaproveite um token que já circulou fora de um `.env`: gere sempre um novo. |
+| `PG_*` | Depende de onde você vai rodar o banco. Veja a seção 3 abaixo, que cobre tanto a instância local quanto a de produção. |
+| `DEPARA_*_XLSX`, `DEPARA_*_XLSM`, `VENDAS_CONSOLIDADAS_XLSM` | São caminhos para planilhas do SharePoint do time Comercial, sincronizadas via OneDrive na sua máquina. Peça acesso à pasta "BI - Comercial / Relatórios Comercial" ao time comercial ou ao backoffice. Depois de sincronizada, aponte a variável para o caminho local do OneDrive. O inventário completo dessas planilhas está em `DEPARAS.md`. |
 
-Sem as planilhas, o pipeline **bronze→silver→gold ainda funciona** (as tabelas
-de-para só ficam vazias/desatualizadas) — não é bloqueante para começar.
+Sem essas planilhas configuradas, o pipeline inteiro (bronze, silver e gold)
+continua funcionando normalmente. Só as tabelas de-para ficam vazias ou
+desatualizadas. Ou seja, isso não é um bloqueio para começar a explorar o projeto.
 
 ## 3. Subir um Postgres
 
-### Opção A — instância local de dev (recomendada para começar)
+### Opção A: instância local de desenvolvimento (recomendada para começar)
 
-Se sua máquina não tem direitos de admin (caso comum aqui), crie uma instância
-**user-space** com `initdb` (não precisa instalar nada, não usa o serviço 5432 do
-sistema):
+Se sua máquina não tem direitos de administrador, o que é o caso mais comum aqui,
+você pode criar uma instância em modo "user space" usando `initdb`. Isso não exige
+instalar nada como serviço, e não usa a porta 5432 que já pertence ao serviço do
+sistema:
 
 ```powershell
 $bin = "C:\Program Files\PostgreSQL\16\bin"   # ajuste se a versão instalada for outra
@@ -46,51 +49,63 @@ $data = "$env:LOCALAPPDATA\pafil_pg\data"
 Add-Content "$data\postgresql.conf" "`nport = 5433"
 ```
 
-Suba com `pg_ctl start -D $data` (ou monte um wrapper `pg.ps1`, ver
-`local-postgres-userspace` nas notas do projeto). Aponte `.env`:
-`PG_HOST=localhost`, `PG_PORT=5433`, `PG_SSLMODE=disable`.
+Suba a instância com `pg_ctl start -D $data`, ou monte um script wrapper chamado
+`pg.ps1` (veja a memória do projeto sobre o Postgres local em user space para o
+modelo pronto). Depois, aponte o `.env` assim: `PG_HOST=localhost`, `PG_PORT=5433`,
+`PG_SSLMODE=disable`.
 
-> A instância cai no logoff/reboot — é normal, é só validação local. Para subir de
-> novo (e para quando o `start` falhar), veja [`RUNBOOK.md`](RUNBOOK.md). Guia
-> completo de consulta: `CONSULTAR.md`.
+> É normal essa instância cair a cada logoff ou reinício: ela serve só para
+> validação local, não é um serviço permanente. Para subi-la de novo, e para os
+> casos em que o `start` falha, veja o passo a passo em
+> [`RUNBOOK.md`](RUNBOOK.md). O guia completo de como consultar o banco está em
+> `CONSULTAR.md`.
 
-### Opção B — conectar direto na VPS de produção
+### Opção B: conectar direto na instância de produção (EC2)
 
-Se a VPS já estiver provisionada (ver `ARCHITECTURE.md` seção 3) e você tiver
-acesso liberado (túnel SSH ou IP allowlisted — a porta do Postgres nunca fica
-aberta à internet), aponte `PG_HOST`/`PG_PORT`/`PG_SSLMODE=require` para lá.
-**Cuidado:** isso é o banco real, com PII de clientes — evite rodar experimentos
-destrutivos.
+Se a instância EC2 já estiver provisionada (veja a seção 3 de `ARCHITECTURE.md`) e
+você já tiver acesso liberado, seja por túnel SSM ou SSH (a porta do Postgres nunca
+fica aberta diretamente para a internet), aponte `PG_HOST`, `PG_PORT` e
+`PG_SSLMODE=require` para lá.
+
+**Cuidado:** esse é o banco real, com dados pessoais de clientes de verdade. Evite
+rodar ali qualquer experimento que possa ser destrutivo.
 
 ## 4. Construir o warehouse
 
 ```powershell
-python criar_database.py                 # cria o database, se ainda não existir
-python ingestao.py --full --criar-tabelas # bronze.sql + carga completa da API
-python aplicar_tudo.py                    # silver -> gold -> seeds (sem planilhas)
-# ou, com as planilhas configuradas no .env:
+python criar_database.py                 # cria o banco, se ainda não existir
+python ingestao.py --full --criar-tabelas # aplica bronze.sql + faz a carga completa da API
+python aplicar_tudo.py                    # roda silver, gold e seeds (sem as planilhas)
+# ou, já com as planilhas configuradas no .env:
 python aplicar_tudo.py --xlsm "$env:VENDAS_CONSOLIDADAS_XLSM"
 ```
 
-Nas próximas vezes, sem recriar tudo: `python ingestao.py --incremental` para o
-dado novo do CRM (silver/gold são views, refletem na hora).
+Nas próximas vezes, não é preciso recriar tudo do zero: basta rodar
+`python ingestao.py --incremental` para trazer o dado novo do CRM. Como silver e
+gold são views, elas refletem essa atualização na hora, sem nenhum passo extra.
 
-## 5. Validar que deu certo
+## 5. Validar que deu tudo certo
 
 ```powershell
-python conferir_carga.py       # compara total da API vs. bronze, objeto a objeto
+python conferir_carga.py       # compara o total da API com o total na bronze, objeto a objeto
 .\consultar.ps1 -c "SELECT count(*) FROM gold.fato_reservas"
 ```
 
-Veja `CONSULTAR.md` para o passo a passo completo de exploração (psql, DBeaver/
-pgAdmin, consultas de exemplo por camada).
+Veja `CONSULTAR.md` para o passo a passo completo de exploração do banco, incluindo
+uso de `psql`, DBeaver, pgAdmin e uma coleção de consultas de exemplo por camada.
 
 ## 6. Mapa de leitura recomendado
 
-1. `CONTEXTO.md` — o porquê de negócio, o que já existe, achados-chave.
-2. `ARCHITECTURE.md` — visão técnica de ponta a ponta + infra.
-3. `MODELO_SEMANTICO.md` — o desenho do star schema (gold).
-4. `REGRAS_NEGOCIO.md` — catálogo de regras herdadas dos PBIX legados.
-5. `DEPARAS.md` — inventário dos de-paras e como recarregar.
-6. `SKILL.md` — decisões fechadas (não reabrir sem motivo forte).
-7. `ROADMAP.md` — fases e o que está pendente agora.
+Depois de rodar o ambiente com sucesso, esta é a ordem sugerida para entender o
+projeto em profundidade:
+
+1. `CONTEXTO.md`: o porquê de negócio por trás do projeto, o que já existe e os
+   achados mais importantes até agora.
+2. `ARCHITECTURE.md`: a visão técnica de ponta a ponta, incluindo a infraestrutura.
+3. `MODELO_SEMANTICO.md`: o desenho do star schema usado na camada gold.
+4. `REGRAS_NEGOCIO.md`: o catálogo de regras de negócio herdadas dos relatórios
+   PBIX legados.
+5. `DEPARAS.md`: o inventário dos de-paras e como recarregar cada um.
+6. `SKILL.md`: as decisões já fechadas do projeto, que não devem ser reabertas sem
+   um motivo forte.
+7. `ROADMAP.md`: as fases do projeto e o que está pendente agora.

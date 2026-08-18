@@ -1,32 +1,38 @@
-# Reconciliação de Vendas — pipeline vs. Vendas Consolidadas (legado)
+# Reconciliação de vendas: pipeline nova contra a Vendas Consolidadas (legado)
 
-> ⚠️ Contém valores reais de VGV/vendas da empresa. Repositório é **privado** —
-> não redistribuir fora dele (ver `SKILL.md` seção 7).
+**Atenção:** este documento contém valores reais de VGV e vendas da empresa. O
+repositório é privado; não redistribua esse conteúdo fora dele (veja a seção 7 de
+`SKILL.md`).
 
-Pipeline nova (API → `silver.reservas`) vs. planilha de fechamento manual `Vendas Consolidadas.xlsm` (depois consumida pelo PBI). Chave: Proposta = idreserva.
+Esta comparação coloca lado a lado a pipeline nova (dados vindos da API, através
+de `silver.reservas`) e a planilha de fechamento manual `Vendas Consolidadas.xlsm`
+(que depois alimenta o Power BI legado). A chave usada para cruzar os dois lados é
+a Proposta, que corresponde ao `idreserva`.
 
-> ⚠️ **Bronze local é parcial** — o run completo vai para a VPS. Por isso a comparação honesta é **por proposta no overlap**, não o total geral.
+**Atenção: o bronze local hoje é parcial.** A carga completa só vai acontecer na
+instância EC2 de produção. Por isso, a comparação honesta aqui é feita por
+proposta, dentro da interseção entre as duas fontes, e não pelo total geral.
 
-## Overlap por proposta
+## A interseção por proposta
 
 | | Propostas |
 |---|--:|
-| Legado (planilha) | 3194 |
-| Pipeline (reservas) | 4756 |
-| **Em ambos** | **1892** |
-| Só no legado (ausente no bronze local) | 1302 |
+| Legado (planilha) | 3.194 |
+| Pipeline (reservas) | 4.756 |
+| Presentes nos dois lados | 1.892 |
+| Só no legado (ausentes no bronze local) | 1.302 |
 
-## (a) VGV no overlap — `valor_contrato` vs. `VGV (Praticado)`
+## (a) VGV na interseção: `valor_contrato` contra "VGV (Praticado)"
 
-| Métrica | Legado | Pipeline | Δ |
+| Métrica | Legado | Pipeline | Diferença |
 |---|--:|--:|--:|
-| VGV (1892 propostas) | R$ 482.685.046,75 | R$ 482.413.195,41 | R$ -271.851,34 |
-| Δ % | | | -0.06% |
-| Propostas com VGV **idêntico** (≤ R$ 0,01) | | | **1869 / 1892** |
+| VGV (1.892 propostas) | R$ 482.685.046,75 | R$ 482.413.195,41 | R$ -271.851,34 |
+| Diferença percentual | | | -0,06% |
+| Propostas com VGV idêntico (diferença até R$ 0,01) | | | 1.869 de 1.892 |
 
-<details><summary>23 proposta(s) com VGV divergente</summary>
+<details><summary>As 23 propostas com VGV divergente</summary>
 
-| Proposta | Legado | Pipeline | Δ |
+| Proposta | Legado | Pipeline | Diferença |
 |--:|--:|--:|--:|
 | 337 | R$ 189.036,00 | R$ 0,00 | R$ -189.036,00 |
 | 5410 | R$ 297.803,94 | R$ 323.594,04 | R$ 25.790,10 |
@@ -51,13 +57,17 @@ Pipeline nova (API → `silver.reservas`) vs. planilha de fechamento manual `Ven
 | 4174 | R$ 288.859,00 | R$ 295.359,01 | R$ 6.500,01 |
 | 3946 | R$ 380.000,00 | R$ 386.199,98 | R$ 6.199,98 |
 | 5137 | R$ 442.500,00 | R$ 441.020,02 | R$ -1.479,98 |
+
 </details>
 
-## (b) Drift de status — Status (legado) × situacao (pipeline)
+## (b) O atraso nos status: Status (legado) contra situacao (pipeline)
 
-🔴 **420 propostas que o legado conta como venda viva (Vendida/Validada/Envio Mega) já estão DISTRATO no CRM** — a planilha manual está defasada (não pega distratos posteriores).
+**Crítico: 420 propostas que o legado ainda conta como venda viva (com status
+Vendida, Validada ou Envio Mega) já aparecem como Distrato no CRM.** Isso mostra
+que a planilha manual está defasada, porque ela não capta os distratos que
+acontecem depois do fechamento daquele mês.
 
-| Status (legado) | situacao (pipeline) | Qtd |
+| Status (legado) | situacao (pipeline) | Quantidade |
 |---|---|--:|
 | Vendida | Vendida | 989 |
 | Vendida | Distrato | 379 |
@@ -77,7 +87,16 @@ Pipeline nova (API → `silver.reservas`) vs. planilha de fechamento manual `Ven
 | Ajustes Contrato | Distrato | 1 |
 | Geração de Contrato | Distrato | 1 |
 
-### Leitura
-- `valor_contrato` da API reproduz o **VGV (Praticado)** do fechamento manual ao centavo em 1869/1892 propostas — a medida está correta.
-- Status como **Validada / Venda distratada / Repassada / Envio Mega** são reclassificação **manual** sem correspondência na API → viram regra de Silver/Gold (de-para de status) ou input operacional, não vêm do CRM.
-- As **vendas-defasadas** (Vendida no legado, Distrato no CRM) são o ganho da pipeline: número sempre atual vs. planilha que envelhece entre fechamentos.
+### Como interpretar esses resultados
+
+- O campo `valor_contrato`, vindo da API, reproduz o VGV (Praticado) do
+  fechamento manual ao centavo em 1.869 das 1.892 propostas: a medida está
+  correta.
+- Status como Validada, Venda distratada, Repassada e Envio Mega são
+  reclassificações manuais, sem nenhuma correspondência direta na API. Eles
+  devem virar uma regra na silver ou na gold (um de-para de status), ou
+  permanecer como input operacional, mas de qualquer forma não vêm do CRM.
+- As vendas defasadas (que aparecem como Vendida no legado, mas já são Distrato
+  no CRM) são exatamente o ganho que a pipeline nova traz: um número sempre
+  atual, contra uma planilha que envelhece no intervalo entre um fechamento e
+  outro.

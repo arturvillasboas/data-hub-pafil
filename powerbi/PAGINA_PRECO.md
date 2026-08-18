@@ -1,23 +1,27 @@
-# BI de Preço — como replicar as páginas na `gold` (task 6.5)
+# BI de Preço: como replicar as páginas na gold (task 6.5)
 
-Mapa visual-a-visual do PBIX legado (`Relatórios Comercial/Preço/BI Preço.pbix`) para o
-modelo novo. Extraído do `Report/Layout` do próprio arquivo em 12/ago/2026 + do catálogo de
-medidas em `_bi_ref/RESUMO_BIPreco.md`.
+Este documento é um mapa visual a visual, ligando o PBIX legado
+(`Relatórios Comercial/Preço/BI Preço.pbix`) ao modelo novo. Foi extraído do
+`Report/Layout` do próprio arquivo em 12 de agosto de 2026, combinado com o
+catálogo de medidas em `_bi_ref/RESUMO_BIPreco.md`.
 
-Medidas: `powerbi/MEDIDAS_ESTOQUE_PRECO.dax` (bloco A já criado no modelo vivo; bloco B
-depende de um refresh — ver "Passos no Desktop").
+As medidas ficam em `powerbi/MEDIDAS_ESTOQUE_PRECO.dax` (o bloco A já está criado
+no modelo vivo; o bloco B depende de um refresh, veja a seção "Passos no
+Desktop" mais abaixo).
 
 ---
 
-## 1. O que o legado é
+## 1. Como o sistema legado é organizado
 
-**21 páginas** = 1 página por empreendimento (13) + 1 página "Gráfico Histórico" para 7 deles
-+ "F16 Novo" (um redesign em HTML que ficou só no Fiusa) + "Resumo".
+São 21 páginas ao todo: uma por empreendimento (totalizando 13), mais uma página
+"Gráfico Histórico" para 7 deles, mais "F16 Novo" (um redesign em HTML que ficou
+restrito ao Fiusa) e, por fim, "Resumo".
 
-Cada página de empreendimento tem sempre **a mesma estrutura**, com as tabelas duplicadas por
-produto (`PA_Matriz`/`PA_Vendas`, `TR_Matriz`/`TR_Vendas`, ...) e 9 medidas repetidas com
-prefixo. É o R4 do `REGRAS_NEGOCIO.md` levado ao extremo: 12 conjuntos de medidas idênticas
-com constantes de margem coladas no DAX.
+Cada página de empreendimento segue sempre a mesma estrutura, com tabelas
+duplicadas por produto (`PA_Matriz`/`PA_Vendas`, `TR_Matriz`/`TR_Vendas`, e assim
+por diante) e 9 medidas repetidas, cada uma com um prefixo diferente. É a regra R4
+do `REGRAS_NEGOCIO.md` levada ao extremo: 12 conjuntos de medidas idênticas, cada
+um com suas próprias constantes de margem coladas diretamente no DAX.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
@@ -35,257 +39,325 @@ com constantes de margem coladas no DAX.
 └──────────────┴───────────────────────────────────────────────────────────┘
 ```
 
-A leitura de negócio das duas matrizes: **onde eu vendi e por quanto** (em cima) x **o que
-sobrou e a que preço de tabela** (embaixo), sempre cortado por posição da unidade — andar
-(prumada), face (frente/fundo/parque) e final. É o que sustenta decisão de reajuste de tabela
-por posição, que é o propósito do BI.
+A leitura de negócio por trás dessas duas matrizes é: onde eu vendi e por quanto
+(a matriz de cima), contra o que sobrou e a que preço de tabela (a de baixo),
+sempre cortado pela posição da unidade: o andar (prumada), a face (frente, fundo
+ou parque) e o final. É essa comparação que sustenta a decisão de reajustar a
+tabela de preço por posição, que é o propósito central deste BI.
 
-## 2. O desenho novo: 21 páginas → 3
+## 2. O novo desenho: de 21 páginas para 3
 
-Uma página só, com **slicer de empreendimento** (`dim_empreendimento[empreendimento]`), faz o
-papel das 13. As medidas não têm mais prefixo e a margem vem parametrizada de
-`dim_viabilidade` em vez de constante no DAX.
+Uma única página, com um slicer de empreendimento
+(`dim_empreendimento[empreendimento]`), passa a fazer o papel das 13 anteriores.
+As medidas deixam de ter prefixo, e a margem passa a vir parametrizada de
+`dim_viabilidade`, em vez de estar fixa no código DAX.
 
 | Página nova | Substitui | Fonte |
 |---|---|---|
-| **Preço & Estoque** | as 13 páginas de empreendimento | `dim_estrutura` + `fato_reservas` + `dim_viabilidade` |
-| **Histórico** | as 7 páginas "Gráfico Histórico" | `dim_estrutura` (ano_venda) |
-| **Carteira** | página "Resumo" | `dim_estrutura` + `fato_reservas` + `dim_viabilidade` |
+| Preço & Estoque | as 13 páginas de empreendimento | `dim_estrutura`, `fato_reservas` e `dim_viabilidade` |
+| Histórico | as 7 páginas "Gráfico Histórico" | `dim_estrutura` (campo `ano_venda`) |
+| Carteira | a página "Resumo" | `dim_estrutura`, `fato_reservas` e `dim_viabilidade` |
 
-## 3. Página "Preço & Estoque"
+## 3. A página "Preço & Estoque"
 
-### 3.1 Cards do topo (na ordem do legado)
+### 3.1 Os cards do topo (na mesma ordem do legado)
 
-| # | Card legado | Medida nova | Observação |
+| # | Card no legado | Medida nova | Observação |
 |---|---|---|---|
-| 1 | `XX_Margem` | `Margem` | ⚠️ só 2 produtos têm parâmetro — ver §6 |
-| 2 | `XX_MargemViab` | `MargemViab` | idem |
+| 1 | `XX_Margem` | `Margem` | Atenção: só 2 produtos têm o parâmetro preenchido, veja a seção 6 |
+| 2 | `XX_MargemViab` | `MargemViab` | O mesmo vale aqui |
 | 3 | `SUM(XX_Matriz[Área Privativa])` | `Metragem Total` | |
 | 4 | `XX_ProjetadoVGV` | `ProjetadoVGV` | |
 | 5 | `SUM(XX_Vendas[M² da unidade])` | `Metragem Vendida` | |
 | 6 | `SUM(XX_Vendas[Valor do contrato])` | `VGV Realizado` | |
 | 7 | `XX_MetragemAVender` | `MetragemAVender` | |
 | 8 | `XX_Permuta` | `Metragem Permuta` | |
-| 9 | `XX_EstoqueVGV` | `EstoqueVGV` | ⚠️ muda de número — ver §6 |
+| 9 | `XX_EstoqueVGV` | `EstoqueVGV` | Atenção: o número muda em relação ao legado, veja a seção 6 |
 
-Vale acrescentar dois que o legado não tinha e são baratos: `VSO` e `Ticket Médio Estoque`.
+Vale acrescentar dois cards que o legado não tinha, e que são baratos de calcular:
+`VSO` e `Ticket Médio Estoque`.
 
-### 3.2 Matriz "Realizado" (superior)
+### 3.2 A matriz "Realizado" (a de cima)
 
-| Papel | Legado | Novo |
+| Papel | No legado | No modelo novo |
 |---|---|---|
-| Linhas | `XX_Matriz[Produto]` > `[Torre]` > `[Prumada]` | `dim_estrutura[produto]` > `[bloco]` > `[config_1]` |
-| Colunas | `XX_Matriz[Frente/Fundo]` > `[Final]` | `dim_estrutura[config_2]` > `[config_3]` |
-| Valores | `COUNT(M² Praticado)` + `SUM(M² Praticado)` | `Qtd Vendida (matriz)`* + `M² Médio Realizado (matriz)` |
+| Linhas | `XX_Matriz[Produto]` acima de `[Torre]` acima de `[Prumada]` | `dim_estrutura[produto]` acima de `[bloco]` acima de `[config_1]` |
+| Colunas | `XX_Matriz[Frente/Fundo]` acima de `[Final]` | `dim_estrutura[config_2]` acima de `[config_3]` |
+| Valores | `COUNT(M² Praticado)` mais `SUM(M² Praticado)` | `Qtd Vendida (matriz)`* mais `M² Médio Realizado (matriz)` |
 
-\* use `CALCULATE(COUNTROWS(dim_estrutura), dim_estrutura[status_unidade]="Realizado")`, ou
-`VGV Realizado (matriz)` se quiser o valor em R$ em vez da contagem.
+\* Use `CALCULATE(COUNTROWS(dim_estrutura), dim_estrutura[status_unidade]="Realizado")`,
+ou `VGV Realizado (matriz)` se preferir o valor em reais em vez da contagem.
 
-**⚠️ Por que as medidas do bloco A não servem aqui:** elas leem `fato_reservas`, que **não é
-filtrada** pelas linhas da matriz — não existe (e não pode existir) relacionamento
-`dim_estrutura → fato_reservas`, porque fecharia um losango de filtro com `dim_empreendimento`
-e o Power BI recusa. Por isso a `gold.dim_estrutura` passou a carregar o realizado no grão da
-unidade (`vgv_realizado`, `m2_praticado`, `agio_pct`, `ano_venda`) — é o que o bloco B usa.
+**Atenção: por que as medidas do bloco A não servem aqui.** Elas leem
+`fato_reservas`, que não é filtrada pelas linhas da matriz. Não existe, e não pode
+existir, um relacionamento direto de `dim_estrutura` para `fato_reservas`, porque
+isso fecharia um losango de filtro junto com `dim_empreendimento`, e o Power BI
+recusa esse tipo de relacionamento. Por causa disso, `gold.dim_estrutura` passou a
+carregar o realizado no próprio grão da unidade (as colunas `vgv_realizado`,
+`m2_praticado`, `agio_pct` e `ano_venda`). É exatamente isso que o bloco B usa.
 
-### 3.3 Matriz "A Realizar" (inferior)
+### 3.3 A matriz "A Realizar" (a de baixo)
 
-Mesmas linhas e colunas. Valores: `Estoque Qtd` + `M²ARealizar`. Essa já funciona 100% com o
-que está no modelo (é `dim_estrutura` pura).
+Usa as mesmas linhas e colunas da matriz de cima. Os valores são `Estoque Qtd` e
+`M²ARealizar`. Essa matriz já funciona 100% com o que já existe no modelo, porque
+é `dim_estrutura` pura, sem depender de `fato_reservas`.
 
-### 3.4 Cards laterais por posição
+### 3.4 Os cards laterais por posição
 
-O legado tinha ~6 cards com filtro fixo (`Frente/Fundo = 'Frente'`, `= 'Parque'`,
-`= 'Lateral'`...) — um por face, **hard-coded por empreendimento** (por isso Tríade tinha
-"Lazer" e Parc das Artes tinha "Parque"). No modelo novo isso vira **um gráfico de barras**
-por `dim_estrutura[config_2]` com a medida `M² Praticado (matriz)` / `M²ARealizar`: mesma
-informação, sem card hard-coded, e se aparecer uma face nova ela entra sozinha.
+O legado tinha cerca de 6 cards com filtro fixo (`Frente/Fundo = 'Frente'`,
+depois `= 'Parque'`, depois `= 'Lateral'`, e assim por diante), um por face, cada
+um fixo no código para aquele empreendimento específico (por isso Tríade tinha um
+card "Lazer" e Parc das Artes tinha um card "Parque", cada um hard-coded). No
+modelo novo, isso vira um único gráfico de barras, agrupado por
+`dim_estrutura[config_2]`, usando a medida `M² Praticado (matriz)` dividida por
+`M²ARealizar`: a mesma informação, sem nenhum card fixo no código, e se uma face
+nova aparecer no futuro, ela já entra sozinha no gráfico.
 
-### 3.5 O que significa `config_1/2/3` em cada produto
+### 3.5 O que `config_1`, `config_2` e `config_3` significam em cada produto
 
-O `base_precos.xlsm` padronizou as colunas de posição como CONFIG_1/2/3, mas o significado
-muda entre vertical e horizontal — importante ao rotular a matriz:
+O arquivo `base_precos.xlsm` padronizou as colunas de posição como CONFIG_1, 2 e
+3, mas o significado de cada uma muda entre produtos verticais e horizontais, o
+que é importante na hora de rotular a matriz.
 
-Na matriz do legado as colunas se chamam `Prumada` / `Frente/Fundo` / `Final` nos produtos
-verticais mais antigos e `CONFIG_1/2/3` nos mais novos — o loader normaliza tudo para
-`config_1/2/3`, então o significado por produto é:
+Na matriz do legado, essas colunas se chamam `Prumada`, `Frente/Fundo` e `Final`
+nos produtos verticais mais antigos, e `CONFIG_1/2/3` nos mais novos. O loader
+normaliza tudo para `config_1`, `config_2` e `config_3`, e o significado de cada
+uma por produto fica assim:
 
 | Produto | config_1 | config_2 | config_3 |
 |---|---|---|---|
-| Arboretto, Fiusa 016, Parc Cidade Jardim, Parc Sul, Parc das Artes, Tríade, Primaveras, Parc das Orquídeas | prumada (faixa de pavimentos: "01º ao 03º") | face ("Frente"/"Fundo"/"Lazer"/"Parque"/"Estac.") | final ("1 e 8", "2 e 7") |
-| Villas do Parque (Casas e Lotes) | "Esquina"/"Quadra" | "Muro"/"Sem Muro" | detalhe do muro |
-| Parc Paineira | prumada | — | — |
-| Quinta da Boa Vista | tipologia do lote ("LOTE MISTO...") | — | — |
-| Villa Manacás | "Com suíte"/"Sem suíte" | — | — |
-| Residencial Quinta dos Ventos | "Lote_Casa" | — | — |
+| Arboretto, Fiusa 016, Parc Cidade Jardim, Parc Sul, Parc das Artes, Tríade, Primaveras, Parc das Orquídeas | prumada (faixa de pavimentos, como "01º ao 03º") | face ("Frente", "Fundo", "Lazer", "Parque" ou "Estac.") | final ("1 e 8", "2 e 7") |
+| Villas do Parque (Casas e Lotes) | "Esquina" ou "Quadra" | "Muro" ou "Sem Muro" | detalhe do muro |
+| Parc Paineira | prumada | | |
+| Quinta da Boa Vista | tipologia do lote ("LOTE MISTO...") | | |
+| Villa Manacás | "Com suíte" ou "Sem suíte" | | |
+| Residencial Quinta dos Ventos | "Lote_Casa" | | |
 
-Nos 4 últimos a matriz de posição degenera (só uma dimensão para cruzar) — a página mostra a
-quebra por `bloco`/quadra x `config_1`. Não é falha da migração: **é o que existe na origem**.
+Nos últimos quatro produtos da lista, a matriz de posição degenera, porque só
+existe uma dimensão para cruzar; a página mostra a quebra por bloco ou quadra
+contra `config_1`. Isso não é uma falha da migração: é exatamente o que existe na
+origem dos dados.
 
 ### 3.6 Duas páginas, não uma
 
-A quebra da matriz serve a duas perguntas diferentes, e uma página não faz as duas:
+A quebra da matriz serve a duas perguntas diferentes, e uma página só não
+consegue responder às duas ao mesmo tempo:
 
 | Página | Slicer | Linha da matriz | Pergunta que responde |
 |---|---|---|---|
-| **Carteira** | nenhum | `produto` | qual produto está com o estoque parado, e a que preço |
-| **Preço por Produto** | `dim_empreendimento[empreendimento]` | `produto` × `bloco` | dentro deste produto, que posição está cara ou barata |
+| Carteira | nenhum | `produto` | qual produto está com o estoque parado, e a que preço |
+| Preço por Produto | `dim_empreendimento[empreendimento]` | `produto` cruzado com `bloco` | dentro deste produto específico, qual posição está cara ou barata |
 
-A segunda é o BI de Preço legado propriamente dito (era 1 página por produto). A primeira
-não existia — o "Resumo" do legado era 18 tabelas empilhadas.
+A segunda é, na prática, o BI de Preço legado propriamente dito (antes, era uma
+página por produto). A primeira não existia no legado: o "Resumo" de lá era 18
+tabelas empilhadas uma em cima da outra.
 
-Mudam só as duas medidas de matriz; KPIs do topo e painéis laterais são os mesmos nas duas.
+Só as duas medidas de matriz mudam entre as páginas; os KPIs do topo e os painéis
+laterais são exatamente os mesmos nas duas.
 
 | Visual | Carteira | Preço por Produto |
 |---|---|---|
 | matriz de cima | `Matriz M² Realizado HTML` | `Matriz M² Realizado por Bloco HTML` |
 | matriz de baixo | `Matriz M² A Realizar HTML` | `Matriz M² A Realizar por Bloco HTML` |
 
-⚠️ **Na Carteira as colunas ficam com as 33 `config_1` de todos os produtos** — prumada de
-apartamento e tipologia de lote na mesma tabela. É correto (é o que existe), mas é muita
-coluna. Duas saídas: deixar rolar na horizontal (`overflow-x:auto` já está no CSS), ou trocar
-o eixo de coluna da Carteira para algo comum a todos os produtos — `status_unidade`, ou nada,
-virando a matriz do §5. Vale decidir olhando a página montada.
+**Atenção:** na página Carteira, as colunas acabam reunindo as 33 grafias
+distintas de `config_1` de todos os produtos ao mesmo tempo, misturando a
+prumada de um apartamento com a tipologia de um lote na mesma tabela. Isso é
+correto, no sentido de refletir fielmente o que existe nos dados, mas resulta em
+muitas colunas. Há duas saídas possíveis: deixar a tabela rolar horizontalmente
+(o CSS já inclui `overflow-x:auto`), ou trocar o eixo de coluna da Carteira para
+algo comum a todos os produtos, como `status_unidade`, ou simplesmente remover
+esse eixo, transformando a tabela na matriz mais simples descrita na seção 5.
+Vale decidir isso olhando a página já montada.
 
-### 3.7 Versão em HTML Content (é a que está montada)
+### 3.7 A versão em HTML Content (é a que está montada hoje)
 
-O dev já tinha começado essa página no legado com o visual **HTML Content**, e a réplica seguiu
-por ali — 5 medidas em `powerbi/PAGINA_PRECO_HTML.dax`, todas já criadas no modelo (pasta
-`Preço/HTML`):
+O desenvolvedor responsável já tinha começado essa página no legado usando o
+visual HTML Content, e a réplica seguiu pelo mesmo caminho: são 5 medidas em
+`powerbi/PAGINA_PRECO_HTML.dax`, todas já criadas no modelo, dentro da pasta
+`Preço/HTML`:
 
-| Medida | Onde vai | Substitui |
+| Medida | Onde é usada | O que substitui |
 |---|---|---|
-| `KPIs Preço HTML` | faixa do topo, largura cheia (~80px de altura) | os 9 cards |
-| `Painel Realizado HTML` | coluna esquerda, ao lado da matriz de cima | os cards "M² Realizado / Frente / Fundo / Média VGV / Atingimento" |
-| `Matriz M² Realizado HTML` | centro/direita, em cima | a matriz superior |
-| `Painel A Realizar HTML` | coluna esquerda, ao lado da matriz de baixo | os cards de estoque |
-| `Matriz M² A Realizar HTML` | centro/direita, embaixo | a matriz inferior |
+| `KPIs Preço HTML` | na faixa do topo, em largura cheia (cerca de 80px de altura) | os 9 cards |
+| `Painel Realizado HTML` | na coluna esquerda, ao lado da matriz de cima | os cards "M² Realizado / Frente / Fundo / Média VGV / Atingimento" |
+| `Matriz M² Realizado HTML` | no centro/direita, na parte de cima | a matriz superior |
+| `Painel A Realizar HTML` | na coluna esquerda, ao lado da matriz de baixo | os cards de estoque |
+| `Matriz M² A Realizar HTML` | no centro/direita, na parte de baixo | a matriz inferior |
 
-Cada uma vai num visual **HTML Content**, campo `content`/`Values` = a medida. Nada de linha,
-coluna ou valor: a medida monta a tabela inteira.
+Cada uma dessas medidas vai dentro de um visual HTML Content, no campo `content`
+(ou `Values`), recebendo a medida diretamente. Não é preciso configurar linha,
+coluna ou valor separadamente: a própria medida já monta a tabela inteira.
 
-Três coisas que a versão nova faz diferente do rascunho, todas propositais:
+Há três diferenças propositais entre a versão nova e o rascunho original:
 
-1. **A matriz de estoque mostra preço de tabela** (`M²ARealizar`). No rascunho ela usava
-   `[F16_M²Médio]` — média do praticado nas *vendas* — e por isso as duas tabelas exibiam o
-   mesmo R$/m² em todas as células.
-2. **Os cards de face são dinâmicos** (`config_2`), não hard-coded. Fiusa mostra Frente/Fundo,
-   Parc das Artes mostra Frente/Lateral/Parque, Tríade mostra Frente/Lazer — sem editar medida.
-3. **O gradiente é calculado sobre as células** (média por linha × coluna), não sobre a unidade
-   solta. No rascunho o min/max vinha da coluna crua e quase toda célula caía na faixa clara.
+1. **A matriz de estoque agora mostra o preço de tabela** (`M²ARealizar`). No
+   rascunho, ela usava `[F16_M²Médio]`, que é a média do preço praticado nas
+   vendas, e por isso as duas tabelas acabavam mostrando o mesmo valor de R$/m²
+   em todas as células.
+2. **Os cards de face agora são dinâmicos**, calculados a partir de `config_2`,
+   em vez de fixos no código. O Fiusa mostra Frente e Fundo, Parc das Artes
+   mostra Frente, Lateral e Parque, e Tríade mostra Frente e Lazer, tudo sem
+   precisar editar nenhuma medida.
+3. **O gradiente de cor agora é calculado sobre as células** (a média por linha
+   cruzada com coluna), em vez de sobre a unidade solta. No rascunho, o mínimo e
+   o máximo vinham da coluna crua, e quase toda célula acabava caindo na faixa
+   clara da escala de cor.
 
-Conferido contra o print do legado (Fiusa 016): colunas idênticas, total 330 unidades,
-R$/m² por coluna 5.519 / 5.344 / 5.737 / 6.789 / 6.283 / 6.147 contra 5.519 / 5.334 / 5.737 /
-6.842 / 6.310 / 6.118, atingimento de VGV 57,2% igual. As diferenças de 1-2 unidades por
-célula são o match unidade↔reserva (R17), não a fórmula.
+Isso foi conferido contra um print do sistema legado, para o produto Fiusa 016:
+as colunas ficaram idênticas, o total de 330 unidades bateu, e o valor de R$/m²
+por coluna ficou em 5.519, 5.344, 5.737, 6.789, 6.283 e 6.147, contra 5.519,
+5.334, 5.737, 6.842, 6.310 e 6.118 no legado, com o atingimento de VGV igual em
+57,2%. As pequenas diferenças de 1 a 2 unidades por célula vêm do processo de
+match entre unidade e reserva (regra R17), não de um erro na fórmula.
 
-## 4. Página "Histórico"
+## 4. A página "Histórico"
 
-Legado: slicers (Prumada, Frente/Fundo, Final, Área Privativa, Ano) + gráfico de linha de
-`SUM(M² Praticado)` e `COUNT(M² Praticado)` por Ano.
+No legado: slicers de Prumada, Frente/Fundo, Final, Área Privativa e Ano, com um
+gráfico de linha mostrando `SUM(M² Praticado)` e `COUNT(M² Praticado)` por ano.
 
-Novo: mesmos slicers em `dim_estrutura[config_1/2/3]` e `[area_privativa]`, gráfico de linha
-com eixo `dim_estrutura[ano_venda]` e as medidas `M² Médio Realizado (matriz)` (linha) +
-`VGV Realizado (matriz)` ou contagem de realizadas (coluna).
+No modelo novo: os mesmos slicers, agora sobre `dim_estrutura[config_1/2/3]` e
+`[area_privativa]`, com um gráfico de linha usando `dim_estrutura[ano_venda]`
+como eixo, e as medidas `M² Médio Realizado (matriz)` (na linha) e
+`VGV Realizado (matriz)` ou a contagem de unidades realizadas (na coluna).
 
-Usar `ano_venda` de `dim_estrutura` (e não `dim_calendario`) é de propósito: mantém os
-slicers de posição funcionando, que é o ponto da página. Para recorte mensal/trimestral, a
-`fato_reservas` + `dim_calendario` continuam disponíveis — só não aceitam corte por posição.
+Usar o `ano_venda` de `dim_estrutura`, em vez do `dim_calendario`, é uma escolha
+deliberada: ela mantém os slicers de posição funcionando, que é justamente o
+ponto central dessa página. Para quem precisar de um recorte mensal ou
+trimestral, `fato_reservas` combinada com `dim_calendario` continua disponível
+normalmente, só que sem aceitar o corte por posição.
 
-## 5. Página "Carteira" (ex-"Resumo")
+## 5. A página "Carteira" (antiga página "Resumo")
 
-O legado tinha **18 tabelas empilhadas**, duas por empreendimento (uma de metragem, uma de
-valor), cada uma amarrada às tabelas daquele produto. Vira **uma matriz só**, linhas =
+O legado tinha 18 tabelas empilhadas, duas por empreendimento (uma de metragem e
+uma de valor), cada uma amarrada às tabelas específicas daquele produto. Isso
+virou uma única matriz, com as linhas organizadas por
 `dim_empreendimento[empreendimento]`:
 
-`Metragem Total` · `Metragem Vendida` · `MetragemAVender` · `Metragem Permuta` ·
-`ProjetadoVGV` · `VGV Realizado` · `M² Médio Realizado` · `EstoqueVGV` · `M²ARealizar` ·
-`MargemViab` · `Margem` · `VSO` · `% IVV Padrão` · `Diferença IVV x Padrão`
+`Metragem Total`, `Metragem Vendida`, `MetragemAVender`, `Metragem Permuta`,
+`ProjetadoVGV`, `VGV Realizado`, `M² Médio Realizado`, `EstoqueVGV`,
+`M²ARealizar`, `MargemViab`, `Margem`, `VSO`, `% IVV Padrão` e
+`Diferença IVV x Padrão`.
 
-As 3 últimas o legado não tinha nessa tela e são as que respondem a pergunta que a página
-quer responder ("qual produto está com o estoque parado?").
+As três últimas dessa lista não existiam nessa tela no legado, e são justamente
+as que respondem à pergunta que a página quer responder: qual produto está com o
+estoque parado?
 
 ## 6. O que muda de número em relação ao legado
 
-Levantado comparando os dois modelos ao vivo (o PBIX legado estava aberto). Detalhe completo
-em `reconciliacao/preco_legado_vs_gold.md`.
+Estas diferenças foram levantadas comparando os dois modelos ao vivo, com o PBIX
+legado aberto ao mesmo tempo. O detalhe completo está em
+`reconciliacao/preco_legado_vs_gold.md`.
 
-**A pipeline usa a MESMA matriz de preço do legado** desde 12/ago/2026 (`Preço/Apoio/Apoio -
-BI de Preço.xlsm`) — decisão do dev sobre R22. Com isso o preço de tabela deixou de ser fonte
-de divergência: `EstoqueVGV` bate ao centavo em Arboretto e Primaveras, e `MargemViab` bate à
-8ª casa em 7 produtos. O que ainda difere:
+**Desde 12 de agosto de 2026, a pipeline usa a mesma matriz de preço do legado**
+(o arquivo `Preço/Apoio/Apoio - BI de Preço.xlsm`), uma decisão do desenvolvedor
+relacionada à regra R22. Com isso, o preço de tabela deixou de ser fonte de
+divergência: `EstoqueVGV` bate ao centavo em Arboretto e em Primaveras, e
+`MargemViab` bate até a 8ª casa decimal em 7 produtos. O que ainda diverge é o
+seguinte:
 
-1. **`EstoqueVGV` incluía permuta no legado** e a `Estoque Qtd`/`MetragemAVender` não —
-   inconsistência do próprio legado. `EstoqueVGV` novo exclui; `EstoqueVGV (legado, c/
-   permuta)` reproduz o antigo. Diferença de R$ 16,6 mi no Arboretto e R$ 15,1 mi no Parc Sul.
-2. **`ProjetadoVGV` agora usa valor de contrato no realizado** (como o legado), não o preço
-   de tabela — a versão da task 6.4 inflava o realizado.
-3. **Unidade distratada volta pro estoque.** O legado só enxergava vendas vivas (as planilhas
-   `<Produto> - Resumo.xlsm` só têm Situação="Vendida"); a task 6.4 contava distrato como
-   vendido. A regra antiga segue em `dim_estrutura[status_unidade_c_distrato]` para auditoria.
-4. Estoque diverge 1-3 unidades por produto porque **a base do legado está defasada** (o
-   resumo é colado à mão): ex. Parc das Artes 22 unidades no legado x 20 na gold. É o mesmo
-   R10 da Vendas Consolidadas, e a favor da pipeline.
-5. **F16** difere 0,007pp na MargemViab: o DAX legado subtraía 0,097 mas usava 0,9033 no
-   denominador (não fecha com ele mesmo). **Parc das Orquídeas** difere 0,35pp porque usa o
-   estudo de viabilidade real da planilha, não a constante do DAX (que tinha outro custo de
-   obra, ~R$ 531 mil a mais).
+1. **No legado, `EstoqueVGV` incluía permuta**, enquanto `Estoque Qtd` e
+   `MetragemAVender` não incluíam, uma inconsistência que já existia no próprio
+   sistema legado. O novo `EstoqueVGV` exclui permuta; para reproduzir o
+   comportamento antigo, existe a medida `EstoqueVGV (legado, com permuta)`. A
+   diferença chega a R$ 16,6 milhões em Arboretto e R$ 15,1 milhões em Parc Sul.
+2. **`ProjetadoVGV` agora usa o valor de contrato no realizado**, do mesmo jeito
+   que o legado fazia, em vez do preço de tabela. A versão implementada na task
+   6.4 inflava esse número.
+3. **Uma unidade distratada agora volta ao estoque.** O legado só enxergava
+   vendas vivas, porque as planilhas `<Produto> - Resumo.xlsm` só trazem
+   `Situação="Vendida"`; a implementação da task 6.4 contava distrato como se
+   fosse venda. A regra antiga continua disponível em
+   `dim_estrutura[status_unidade_c_distrato]`, para fins de auditoria.
+4. O estoque diverge de 1 a 3 unidades por produto, porque a base do legado está
+   defasada (o resumo é colado à mão): por exemplo, Parc das Artes aparece com
+   22 unidades no legado contra 20 na gold. É o mesmo fenômeno da regra R10 da
+   Vendas Consolidadas, e a divergência joga a favor da pipeline nova, que está
+   mais atualizada.
+5. **O produto F16 diverge 0,007 ponto percentual na MargemViab**, porque o DAX
+   legado subtraía 0,097 mas usava 0,9033 no denominador, uma inconsistência que
+   já existia dentro do próprio DAX legado, sem bater consigo mesmo. **Parc das
+   Orquídeas diverge 0,35 ponto percentual** porque a versão nova usa o estudo de
+   viabilidade real da planilha, em vez da constante fixa no DAX (que tinha um
+   custo de obra diferente, cerca de R$ 531 mil a mais).
 
-## 7. Regra de ouro ao mexer no modelo por fora (XMLA/powerbi-mcp)
+## 7. A regra de ouro ao mexer no modelo por fora (via XMLA ou powerbi-mcp)
 
-**Só medidas, relacionamentos e propriedades. Tabela e coluna, nunca.** Aprendido na marra
-em 12/ago/2026, duas vezes no mesmo dia:
+**Só mexa em medidas, relacionamentos e propriedades. Nunca em tabela ou coluna.**
+Essa lição foi aprendida da forma mais difícil possível, em 12 de agosto de 2026,
+duas vezes no mesmo dia:
 
-1. **Coluna nova numa view já importada não entra**: o Power Query cacheia o schema da fonte
-   por sessão do Desktop. `column_operations Create` + refresh falha com *"A coluna 'x' não
-   existe no conjunto de linhas"* e deixa a partição `Incomplete` — o que quebra o refresh
-   do dev também. Só sai reabrindo o Desktop.
-2. **Tabela nova criada por XMLA impede salvar o arquivo**: ela entra como consulta que o
-   editor do Power Query não authorou, aí a barra "alterações pendentes" aparece e o
-   "Aplicar alterações" morre em *"Coleção foi modificada; talvez a operação de enumeração
-   não seja executada"*. O modelo em memória fica perfeito e o `.pbix` não salva — todo o
-   trabalho se perde ao fechar.
+1. **Uma coluna nova em uma view já importada simplesmente não entra no
+   modelo.** O Power Query guarda em cache o schema da fonte durante toda a
+   sessão do Desktop. Rodar `column_operations Create` seguido de um refresh
+   falha com o erro "A coluna 'x' não existe no conjunto de linhas", e deixa a
+   partição marcada como `Incomplete`, o que quebra até o refresh normal do
+   desenvolvedor. A única saída é reabrir o Power BI Desktop do zero.
+2. **Uma tabela nova criada por XMLA impede que o arquivo seja salvo.** Ela
+   entra como uma consulta que o editor do Power Query não reconhece como
+   própria, então a barra de "alterações pendentes" aparece, e o botão "Aplicar
+   alterações" trava com o erro "Coleção foi modificada; talvez a operação de
+   enumeração não seja executada". O modelo em memória fica perfeito, mas o
+   `.pbix` não salva, e todo o trabalho se perde ao fechar o programa.
 
-Medidas e relacionamentos não tocam a camada de consultas e salvam sem problema.
+Medidas e relacionamentos não tocam a camada de consultas, e por isso salvam sem
+nenhum problema.
 
-## 8. Passos no Desktop
+## 8. Passos a seguir no Power BI Desktop
 
-Estado em 13/ago/2026 — **25 medidas já estão no modelo** ("Esteira de reservas"), em pastas
-`Preço/*`. As colunas novas de `dim_estrutura`/`fato_reservas` também já entraram, e a
-`dim_ivv` do modelo aponta para `gold.dim_ivv_padrao` (serve o `% IVV Padrão` sem tabela nova).
+Estado em 13 de agosto de 2026: 25 medidas já estão no modelo, organizadas na
+pasta "Esteira de reservas", dentro das subpastas `Preço/*`. As colunas novas de
+`dim_estrutura` e `fato_reservas` também já entraram, e a `dim_ivv` do modelo já
+aponta para `gold.dim_ivv_padrao`, o que já serve o `% IVV Padrão` sem precisar de
+uma tabela nova.
 
-1. **Ctrl+S agora** — persiste as 25 medidas antes de qualquer outra coisa.
-2. **Adicionar `gold.dim_viabilidade` pela UI**: Obter dados → PostgreSQL →
-   `localhost:5433` / `pafil_dw` → marcar `gold.dim_viabilidade` → Carregar. É a única
-   tabela que falta, e tem que ser pela UI (§7).
-3. Relacionar `dim_viabilidade[codigo_cv]` (muitos) → `dim_empreendimento[codigo_interno_empreendimento]` (um).
-4. Colar as 5 medidas de margem (`Custo de Obra`, `% Receita Líquida`, `Margem`, `MargemViab`,
-   `Δ Margem x Viabilidade`) de `MEDIDAS_ESTOQUE_PRECO.dax`.
-5. **Ctrl+S de novo.**
-6. Montar os visuais (§3–§5) — isso é UI mesmo, não dá pela API.
+1. **Aperte Ctrl+S agora**, antes de qualquer outra coisa, para persistir as 25
+   medidas.
+2. **Adicione `gold.dim_viabilidade` pela interface**: vá em Obter dados →
+   PostgreSQL → `localhost:5433` / `pafil_dw` → marque `gold.dim_viabilidade` →
+   Carregar. É a única tabela que ainda falta, e ela precisa entrar pela
+   interface, pelo motivo explicado na seção 7.
+3. Relacione `dim_viabilidade[codigo_cv]` (o lado "muitos") com
+   `dim_empreendimento[codigo_interno_empreendimento]` (o lado "um").
+4. Cole as 5 medidas de margem (`Custo de Obra`, `% Receita Líquida`, `Margem`,
+   `MargemViab`, `Δ Margem x Viabilidade`), disponíveis em
+   `MEDIDAS_ESTOQUE_PRECO.dax`.
+5. **Aperte Ctrl+S de novo.**
+6. Monte os visuais descritos nas seções 3 a 5. Essa parte é mesmo trabalho
+   manual de interface, não dá para fazer pela API.
 
-## 9. Pendências / decisões da gestão
+## 9. Pendências e decisões que dependem da gestão
 
-Resolvidos em 12/ago/2026 pela troca de matriz + preenchimento da viabilidade:
-✅ Margem/MargemViab saem para 11 produtos (era 2) · ✅ Villa Manacás sem o erro de 1000x
-(era só do `base_precos.xlsm`) · ✅ Quinta da Boa Vista bate exatamente · ✅ Parc Paineira
-passou a existir (144 unidades).
+Já resolvidos em 12 de agosto de 2026, pela troca de matriz de preço combinada
+com o preenchimento da viabilidade: a Margem e a MargemViab agora saem para 11
+produtos, contra apenas 2 antes; Villa Manacás não tem mais o erro de 1000x (que
+existia só no `base_precos.xlsm`); Quinta da Boa Vista bate exatamente; e Parc
+Paineira voltou a existir no relatório, com 144 unidades.
 
-Em aberto:
+O que ainda está em aberto:
 
-- 🔴 **Villas do Pq. Lotes Mistos ficou sem preço**: a matriz do legado nunca precificou esses
-  164 lotes (o `base_precos.xlsm` tinha, R$ 23,9 mi de estoque). Hoje eles aparecem no estoque
-  em quantidade e metragem, mas com VGV vazio. Decidir: completar na planilha do legado, ou
-  fazer o loader cair no `base_precos.xlsm` só para as unidades sem preço.
-- ⚠️ **Residencial Quinta dos Ventos** tem estrutura diferente nos dois arquivos (158 unidades
-  / 7.119 m² no legado x 161 / 4.103 m² no `base_precos`). O legado não tinha página para esse
-  produto, então nenhum dos dois foi validado por uso. Conferir qual está certo.
-- **R1 aplicado ao estoque:** distrato devolve a unidade ao estoque? (implementado como sim,
-  igual ao legado — confirmar com a gestão).
-- **Viabilidade preenchida a partir do DAX legado** (9 produtos): são constantes de vintage
-  desconhecido, recuperadas de fórmula. Validar contra o estudo vigente. Duas ressalvas já
-  conhecidas: o custo de obra veio só como TOTAL (a linha "Terreno" ficou em branco de
-  propósito e o valor inteiro está em "Construção"), e **Villas do Pq. Casas recebeu a
-  viabilidade do produto inteiro** (o legado tratava Casas + Lotes como um só) — se a gestão
-  quiser separar, é preciso ratear.
-- **Parc Paineira** ainda não tem viabilidade (não existe na `tab_viabil_padrão`), e no DAX
-  legado ele usava as constantes de Parc das Orquídeas — provavelmente errado desde sempre.
+- **Crítico: Villas do Pq. Lotes Mistos ficou sem preço.** A matriz do legado
+  nunca precificou esses 164 lotes (o `base_precos.xlsm` tinha um valor para
+  eles, R$ 23,9 milhões em estoque). Hoje esses lotes aparecem no estoque em
+  quantidade e em metragem, mas com o VGV vazio. É preciso decidir: completar o
+  preço na planilha do legado, ou fazer o loader recorrer ao `base_precos.xlsm`
+  só para as unidades que estão sem preço.
+- **Atenção: Residencial Quinta dos Ventos tem uma estrutura diferente entre os
+  dois arquivos** (158 unidades e 7.119 m² no legado, contra 161 unidades e
+  4.103 m² no `base_precos`). O legado não tinha uma página dedicada a esse
+  produto, então nenhuma das duas versões foi validada pelo uso real. É preciso
+  conferir qual delas está correta.
+- **A regra R1 aplicada ao estoque:** um distrato deve devolver a unidade ao
+  estoque? Hoje está implementado que sim, igual ao comportamento do legado, mas
+  isso precisa ser confirmado com a gestão.
+- **A viabilidade preenchida a partir do DAX legado** (9 produtos) usa
+  constantes de uma época desconhecida, recuperadas por engenharia reversa de
+  fórmula. Precisa ser validada contra o estudo de viabilidade vigente. Duas
+  ressalvas já conhecidas: o custo de obra veio só como valor total (a linha
+  "Terreno" ficou em branco de propósito, e o valor inteiro está em
+  "Construção"), e Villas do Pq. Casas recebeu a viabilidade do produto inteiro,
+  porque o legado tratava Casas e Lotes como um produto só. Se a gestão quiser
+  separar os dois, vai ser preciso ratear esse valor.
+- **Parc Paineira ainda não tem viabilidade própria** (não existe uma linha para
+  ele em `tab_viabil_padrão`), e no DAX legado ele usava as constantes de Parc
+  das Orquídeas, o que provavelmente estava errado desde o início.
