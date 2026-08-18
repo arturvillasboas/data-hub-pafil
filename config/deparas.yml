@@ -118,12 +118,4 @@ deparas:
     fonte_rel: "Crédito/Base - Crédito.xlsm"
     descricao: "Aba Apoio (Etapa WKF/Etapa precadastro BI/Etapa precadastro BI Detalhada): situação crua do CVCRM -> etapa do funil de crédito (Montagem/Análise Documental/Análise de Crédito/Crédito Aprovado/Com Reserva/Ajustes/Cancelada/Vencida). Base do dashboard Pré Cadastro (DP-05). Recarga: popular_seeds --etapa-precadastro."
 
-  # ---- pendentes (SharePoint, ainda sem carga) -----------------------------
-  - nome: profissoes
-    silver: dpara_profissoes
-    tipo: pendente
-    descricao: "Profissão original -> micro/macro (perfil de cliente)."
-  - nome: feriados
-    silver: dpara_feriados
-    tipo: pendente
-    descricao: "Calendário de feriados (tempos médios / SLA em dias úteis)."
+
