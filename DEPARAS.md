@@ -31,7 +31,7 @@ não a fonte de verdade em si.
 | `arquivo` | Copia um arquivo `.xlsx` ou `.xlsm` já pronto, vindo do SharePoint | `dpara_gerente_contexto` |
 | `silver` | Materializa uma tabela `silver.*` para Excel. A regra já está embutida no pipeline, sem depender de uma planilha externa | `dpara_ordem_etapa` |
 | `gerado` | É produzido por um script do próprio projeto | `de_para_classificacao.xlsx`, gerado por `gerar_depara_classificacao.py` |
-| `pendente` | Documenta uma lacuna conhecida: ainda não existe uma fonte local carregada para esse de-para | `dpara_profissoes`, `dpara_feriados` |
+| `pendente` | Documenta uma lacuna conhecida: ainda não existe uma fonte local carregada para esse de-para | (nenhum pendente no momento; veja `config/deparas.yml`) |
 
 ## Como recarregar cada de-para
 
@@ -77,8 +77,6 @@ explicitamente na linha de comando.
 | Corretores fora do ranking (coordenação) | `dpara_corretor_fora_ranking` | silver | regra embutida no código, sem planilha | não se aplica |
 | Responsável para imobiliária | `dpara_responsavel_imobiliaria` | silver | regra embutida no código, sem planilha | não se aplica |
 | Etapa do pré-cadastro (funil de crédito) | `dpara_etapa_precadastro` | arquivo | `Crédito/Base - Crédito.xlsm`, aba Apoio | `--etapa-precadastro` |
-| Profissões (perfil de cliente) | `dpara_profissoes` | pendente | ainda sem fonte local | não se aplica |
-| Feriados (usados no cálculo de SLA em dias úteis) | `dpara_feriados` | pendente | ainda sem fonte local | não se aplica |
 
 ## De quem é cada planilha de origem
 
