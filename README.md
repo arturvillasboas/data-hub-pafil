@@ -124,7 +124,6 @@ são versionados.
 | `PG_DB` | sim | — | banco |
 | `PG_USER` | sim | — | usuário |
 | `PG_PASSWORD` | sim | — | senha |
-| `PG_SSLMODE` | não | `require` | modo SSL (Azure exige; `require` ou `verify-full`) |
 | `BRONZE_SCHEMA` | não | `bronze` | schema de destino |
 
 ---
