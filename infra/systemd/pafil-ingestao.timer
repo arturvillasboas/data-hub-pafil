@@ -1,0 +1,22 @@
+# pafil-ingestao.timer — dispara a carga incremental de madrugada.
+#
+# 03:00 no horário de Brasília: depois do backup (02:30) e bem antes de qualquer
+# pessoa abrir o Power BI. O timezone é declarado explicitamente para o horário
+# não escorregar se a instância for criada em UTC.
+
+[Unit]
+Description=Agenda diaria da ingestao CVDW (Pafil DW)
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 America/Sao_Paulo
+
+# Se a instância estiver desligada/reiniciando na hora marcada, roda assim que
+# voltar em vez de simplesmente pular o dia — a API não guarda histórico, então
+# um dia pulado é um dia perdido.
+Persistent=true
+
+# Espalha o disparo em até 5min para não bater sempre no mesmo segundo.
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

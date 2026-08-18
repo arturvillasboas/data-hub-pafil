@@ -1,0 +1,53 @@
+# pafil-ingestao.service — carga incremental diária CVDW -> bronze.
+#
+# Etapa 7.4 do roadmap. Roda NA PRÓPRIA EC2, e não no GitHub Actions, por um
+# motivo de arquitetura: a porta do Postgres nunca é exposta à internet, então um
+# runner hospedado do GitHub (IP dinâmico, faixa pública enorme) não teria como
+# alcançar o banco sem furar exatamente a regra que protege o dado de LGPD.
+# Rodando aqui, a conexão é localhost e nenhum segredo PG_* precisa existir fora
+# da instância.
+#
+# Instalar:
+#   sudo install -m 644 pafil-ingestao.service pafil-ingestao.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now pafil-ingestao.timer
+
+[Unit]
+Description=Pafil DW - ingestao incremental CVDW para a bronze
+Documentation=file:///opt/pafil/app/infra/README.md
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pafil
+Group=pafil
+WorkingDirectory=/opt/pafil/app
+
+# Credenciais (CVCRM_TOKEN, PG_PASSWORD, ...) fora do repositório e fora da
+# unit: arquivo 0640 root:pafil, legível só pelo serviço.
+EnvironmentFile=/etc/pafil/pafil.env
+
+ExecStart=/opt/pafil/venv/bin/python ingestao.py --incremental
+
+# A API do CVDW é limitada a ~18 req/min; um incremental normal leva minutos,
+# mas um dia com backlog grande pode se arrastar. 2h corta antes de colidir com
+# o expediente, e o próximo run pega o delta que faltou (a ingestão é retomável
+# pelo controle de watermark).
+TimeoutStartSec=2h
+
+# Falha de rede/API é transitória: tenta de novo em 30min, no máximo.
+Restart=on-failure
+RestartSec=30min
+
+# Hardening — o processo só precisa ler o código e falar com a rede/banco.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=/var/log/pafil
+
+[Install]
+WantedBy=multi-user.target

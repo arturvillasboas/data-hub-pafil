@@ -28,6 +28,7 @@ tabelas de CRM. Agendamento por **cron** ou **GitHub Actions**.
 | [`SKILL.md`](SKILL.md) | Decisões fechadas do projeto (não reabrir sem motivo) + segurança/LGPD |
 | [`ROADMAP.md`](ROADMAP.md) | Fases do projeto e o que está pendente agora |
 | [`CONSULTAR.md`](CONSULTAR.md) | Como consultar o warehouse localmente (psql/DBeaver/pgAdmin) |
+| [`RUNBOOK.md`](RUNBOOK.md) | Incidentes do ambiente de dev local — principalmente "o Postgres da 5433 não sobe" |
 | [`powerbi/README.md`](powerbi/README.md) | Kit de consumo do Power BI sobre a `gold` |
 
 ---

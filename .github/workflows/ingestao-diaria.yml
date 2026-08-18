@@ -1,9 +1,20 @@
 ﻿name: Ingestão CVDW diária
 
-# Disparo manual habilitado; o cron diário fica DESLIGADO até a VPS existir e os
-# secrets PG_* apontarem para um Postgres real (sem isso, toda execução agendada
-# falharia com "PG_HOST ausente"). Reativar removendo o comentário abaixo quando
-# a Parte B do plano de infra (VPS) estiver concluída — ver ARCHITECTURE.md.
+# ATENÇÃO — este workflow NÃO é mais o caminho da ingestão diária.
+#
+# Ele foi escrito assumindo um Postgres alcançável pela internet (PG_HOST público +
+# sslmode=require). Isso é incompatível com a regra de arquitetura de nunca expor a
+# porta 5432: os runners hospedados do GitHub têm IP dinâmico numa faixa pública
+# enorme, então "liberar só o runner" é, na prática, liberar meio mundo — inaceitável
+# num banco com PII de clientes/leads (LGPD).
+#
+# A ingestão diária roda na PRÓPRIA EC2, via systemd timer:
+#   infra/systemd/pafil-ingestao.{service,timer}   (etapa 7.4 do roadmap)
+# Lá a conexão é localhost e nenhum segredo PG_* precisa existir fora da instância.
+#
+# Este arquivo fica só como disparo MANUAL de emergência, e só funciona se os secrets
+# PG_* apontarem para um host alcançável. O cron segue DESLIGADO de propósito —
+# não reativar sem antes reler ARCHITECTURE.md seção 2.
 on:
   # schedule:
   #   # 06:00 UTC ~ 03:00 no horário de Brasília (BRT, UTC-3).

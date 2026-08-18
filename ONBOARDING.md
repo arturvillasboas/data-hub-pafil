@@ -50,8 +50,9 @@ Suba com `pg_ctl start -D $data` (ou monte um wrapper `pg.ps1`, ver
 `local-postgres-userspace` nas notas do projeto). Aponte `.env`:
 `PG_HOST=localhost`, `PG_PORT=5433`, `PG_SSLMODE=disable`.
 
-> A instância cai no logoff/reboot — é normal, é só validação local. Guia completo
-> de consulta: `CONSULTAR.md`.
+> A instância cai no logoff/reboot — é normal, é só validação local. Para subir de
+> novo (e para quando o `start` falhar), veja [`RUNBOOK.md`](RUNBOOK.md). Guia
+> completo de consulta: `CONSULTAR.md`.
 
 ### Opção B — conectar direto na VPS de produção
 

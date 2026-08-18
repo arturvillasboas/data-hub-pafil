@@ -48,7 +48,7 @@ class ConfigAPI:
 
 @dataclass(frozen=True)
 class ConfigPostgres:
-    """Parâmetros de conexão com o Postgres (Azure, via SSL)."""
+    """Parâmetros de conexão com o Postgres (local via 5433, produção via túnel)."""
 
     host: str
     port: int
@@ -59,7 +59,7 @@ class ConfigPostgres:
     bronze_schema: str
 
     def conninfo(self) -> str:
-        """String de conexão libpq; sslmode garante o SSL exigido pelo Azure."""
+        """String de conexão libpq. sslmode=disable só é aceitável em localhost."""
         return (
             f"host={self.host} port={self.port} dbname={self.db} "
             f"user={self.user} password={self.password} sslmode={self.sslmode}"
