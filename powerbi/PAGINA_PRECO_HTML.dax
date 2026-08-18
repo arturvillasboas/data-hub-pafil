@@ -1,0 +1,277 @@
+// =============================================================================
+// Página "Preço & Estoque" — visuais em HTML Content (task 6.5).
+//
+// Réplica da página que o dev tinha começado no BI legado (F16 Novo), agora
+// parametrizada: uma página só serve os 14 produtos, com o slicer de
+// empreendimento. Nada de tabela/medida por produto.
+//
+// >>> ESCALA: `VAR _e` no topo de cada medida multiplica todos os tamanhos de
+// FONTE/espaçamento. As matrizes usam `width:100%` com layout AUTOMÁTICO, então
+// a largura de cada coluna vem do conteúdo (autofit), não do _e. (Antes as
+// colunas tinham px fixo e subir o _e estourava a tabela para fora do visual:
+// era o que fazia "_e=2 fica melhor mas ilegível, _e=3 legível mas desalinhado".)
+//
+// Como escolher o _e: o Power BI reduz o canvas para caber na tela por
+// min(largura_tela/largura_pagina, altura_tela/altura_pagina). Numa tela Full HD
+// a área útil é ~1520x780. Regra prática para página 16:9: _e ≈ largura / 1300.
+//   2560x1440 -> escala 0,54 -> _e = 2      (recomendado)
+//   1920x1080 -> escala 0,72 -> _e = 1,5
+//   4500x3600 -> escala 0,22 -> _e = 4,5    (5:4 numa tela 16:9: a ALTURA manda
+//                                            no cálculo e esmaga tudo)
+//
+// DE-PARA com o rascunho legado:
+//   'F16_Matriz'[Produto]/[Torre]  -> dim_estrutura[produto]/[bloco]
+//   'F16_Matriz'[CONFIG_1]         -> dim_estrutura[config_1]   (prumada)
+//   'F16_Matriz'[CONFIG_2]         -> dim_estrutura[config_2]   (face: Frente/Fundo/...)
+//   'F16_Vendas'[M² Praticado]     -> dim_estrutura[m2_praticado]
+//   [F16_Estoque_Qtd]              -> [Estoque Qtd]
+//   [F16_M²ARealizar]              -> [M²ARealizar]
+//
+// 3 diferenças propositais em relação ao rascunho:
+//   1. A matriz "A Realizar" usava [F16_M²Médio] (média do praticado nas VENDAS),
+//      então as duas tabelas mostravam o MESMO R$/m². Aqui usa [M²ARealizar]
+//      (preço de tabela do estoque), que é o que a tabela quer dizer.
+//   2. Os cards de face eram hard-coded ("M² Frente", "M² Fundo") por produto —
+//      por isso Tríade tinha "Lazer" e Parc das Artes tinha "Parque". Aqui a
+//      quebra por config_2 é gerada dinamicamente.
+//   3. O gradiente é calculado sobre as CÉLULAS (média por linha x coluna); no
+//      rascunho o min/max vinha da coluna crua e quase tudo caía na faixa clara.
+//
+// 3 armadilhas que custaram tempo (não desfazer):
+//   a. `ALLSELECTED(coluna)` puro IGNORA o slicer de empreendimento — a matriz
+//      sai com as 33 config_1 de todos os produtos. Use
+//      CALCULATETABLE(VALUES(col), ALLSELECTED(col)): tira só o filtro da própria
+//      coluna (para cross-highlight não encolher o cabeçalho) e mantém o produto.
+//   b. Total de LINHA com agregação crua (AVERAGE) sai igual em todas as linhas:
+//      falta context transition. Envolver em CALCULATE. Referência a MEDIDA já
+//      transita sozinha.
+//   c. FORMAT devolve vírgula decimal (pt-BR) e CSS não aceita "width:57,2%" — a
+//      barra some. SUBSTITUTE(...,",",".") resolve.
+//
+// As linhas usam context transition (CALCULATE dentro do CONCATENATEX sobre
+// SUMMARIZE) em vez de filtrar produto/bloco explicitamente — assim produto sem
+// bloco (Parc das Artes, Arboretto: bloco NULL) também funciona.
+// =============================================================================
+
+
+// -----------------------------------------------------------------------------
+// 1. MATRIZ "M² REALIZADO"
+// -----------------------------------------------------------------------------
+Matriz M² Realizado HTML =
+VAR _e = 3
+VAR _CorPrincipal = "#003254"
+VAR _CorSutil = "#F6F7F9"
+VAR _CorZero = "#E0E0E0"
+VAR _Verde1 = "#E8F5E9"
+VAR _Verde2 = "#C8E6C9"
+VAR _Verde3 = "#A5D6A7"
+VAR _Verde4 = "#66BB6A"
+VAR _Verde5 = "#00C36B"
+VAR _Colunas = FILTER ( SELECTCOLUMNS ( CALCULATETABLE ( VALUES ( dim_estrutura[config_1] ), ALLSELECTED ( dim_estrutura[config_1] ) ), "ColName", dim_estrutura[config_1] ), NOT ISBLANK ( [ColName] ) )
+-- LARGURA DA COLUNA: sem `table-layout:fixed` o navegador usa layout automático
+-- e dimensiona cada coluna pelo CONTEÚDO (o autofit do Excel). `white-space:
+-- nowrap` nas células é o que faz a coluna encolher até o texto em vez de
+-- quebrar linha. Se o total natural passar da largura do visual, rola na
+-- horizontal (overflow-x no .container) — igual ao Excel.
+--
+-- Fonte e orientação do cabeçalho se adaptam à QUANTIDADE DE COLUNAS: com o
+-- slicer de empreendimento são ~6 (texto horizontal, fonte cheia); sem slicer
+-- são 31 e só cabe girando o rótulo na vertical. Sem isso o cabeçalho quebra
+-- caractere a caractere ("00 - Térre o/Gar den") e fica ilegível.
+VAR _nCols = COUNTROWS ( _Colunas )
+VAR _vertical = _nCols > 12
+VAR _fsTh = IF ( _nCols <= 8, 10, IF ( _nCols <= 14, 8, 7 ) ) * _e
+VAR _fsQtd = IF ( _nCols <= 8, 15, IF ( _nCols <= 14, 12, 10 ) ) * _e
+VAR _fsM2 = IF ( _nCols <= 8, 9, IF ( _nCols <= 14, 8, 7 ) ) * _e
+VAR _thCls = IF ( _vertical, " class='rot'", "" )
+-- GRÃO DA LINHA: produto. Para voltar a quebrar por bloco/torre (como no legado),
+-- troque as 2 linhas marcadas [GRAO] — esta e a do _Rotulo no _RowsBody.
+VAR _Linhas = SUMMARIZE ( dim_estrutura, dim_estrutura[produto] )                            -- [GRAO]
+-- VAR _Linhas = SUMMARIZE ( dim_estrutura, dim_estrutura[produto], dim_estrutura[bloco] )   -- [GRAO] por bloco
+VAR _CelulasRange = ADDCOLUMNS ( SUMMARIZE ( dim_estrutura, dim_estrutura[produto], dim_estrutura[config_1] ), "@v", CALCULATE ( AVERAGE ( dim_estrutura[m2_praticado] ) ) )
+VAR _Max = MAXX ( _CelulasRange, [@v] )
+VAR _Min = MINX ( FILTER ( _CelulasRange, [@v] > 0 ), [@v] )
+VAR _Diff = _Max - _Min
+VAR _CSS = "<style> html,body { margin:0; padding:0; } .container { font-family:'Segoe UI',sans-serif; padding:" & FORMAT(5*_e,"0") & "px; background:white; width:100%; box-sizing:border-box; overflow-x:auto; } .title-area { text-align:center; margin-bottom:" & FORMAT(10*_e,"0") & "px; } .title { color:" & _CorPrincipal & "; font-size:" & FORMAT(18*_e,"0") & "px; font-weight:800; text-transform:uppercase; margin:0; } .pafil-matrix { border-collapse:collapse; font-size:" & FORMAT(11*_e,"0") & "px; width:100%; } .pafil-matrix th { background-color:" & _CorPrincipal & "; color:white; font-size:" & FORMAT(_fsTh,"0") & "px; font-weight:600; padding:" & FORMAT(6*_e,"0") & "px " & FORMAT(4*_e,"0") & "px; text-align:center; border:none; line-height:1.25; white-space:nowrap; vertical-align:bottom; } .pafil-matrix th.rot { writing-mode:vertical-rl; transform:rotate(180deg); padding:" & FORMAT(8*_e,"0") & "px " & FORMAT(3*_e,"0") & "px; } .pafil-matrix th:first-child { border-radius:" & FORMAT(8*_e,"0") & "px 0 0 0; text-align:left; padding-left:" & FORMAT(10*_e,"0") & "px; min-width:14ch; max-width:26ch; white-space:normal; vertical-align:middle; } .pafil-matrix th:last-child { border-radius:0 " & FORMAT(8*_e,"0") & "px 0 0; vertical-align:middle; } .pafil-matrix td { padding:" & FORMAT(6*_e,"0") & "px " & FORMAT(4*_e,"0") & "px; border-bottom:" & FORMAT(1*_e,"0") & "px solid #EEE; text-align:center; line-height:1.2; white-space:nowrap; } .pafil-matrix td.row-label { text-align:left !important; font-weight:bold; color:#333; font-size:" & FORMAT(10*_e,"0") & "px; padding-left:" & FORMAT(10*_e,"0") & "px !important; white-space:normal; word-break:normal; overflow-wrap:break-word; max-width:26ch; } .pafil-matrix tr:nth-child(even) { background-color:" & _CorSutil & "; } .qtd-val { font-weight:800; font-size:" & FORMAT(_fsQtd,"0") & "px; color:" & _CorPrincipal & "; display:block; } .m2-val { font-size:" & FORMAT(_fsM2,"0") & "px; color:#666; font-weight:bold; white-space:nowrap; } .footer-total { background-color:" & _CorPrincipal & " !important; color:white !important; font-weight:bold; } .footer-total td { border:none; color:white; padding:" & FORMAT(8*_e,"0") & "px " & FORMAT(4*_e,"0") & "px; } .bar-container { width:100%; height:" & FORMAT(4*_e,"0") & "px; background:#F0F0F0; border-radius:" & FORMAT(2*_e,"0") & "px; margin-top:" & FORMAT(4*_e,"0") & "px; overflow:hidden; } .bar-fill { height:100%; width:100%; border-radius:" & FORMAT(2*_e,"0") & "px; } .total-col { font-weight:800; background-color:rgba(0,50,84,0.05); } </style>"
+VAR _Topo = "<div class='container'><div class='title-area'><h1 class='title'>M² Realizado</h1></div>"
+VAR _TableStart = "<table class='pafil-matrix'><thead><tr><th>PRODUTO</th>" & CONCATENATEX ( _Colunas, "<th" & _thCls & ">" & IF ( _vertical && LEN ( [ColName] ) > 28, LEFT ( [ColName], 27 ) & "…", [ColName] ) & "</th>", "", [ColName], ASC ) & "<th>TOTAL</th></tr></thead><tbody>"
+VAR _RowsBody = CONCATENATEX ( _Linhas,
+    VAR _Rotulo = dim_estrutura[produto]                                                     -- [GRAO]
+    -- VAR _Rotulo = dim_estrutura[produto] & IF ( ISBLANK ( dim_estrutura[bloco] ), "", " - " & dim_estrutura[bloco] )  -- [GRAO] por bloco
+    VAR _Cells = CONCATENATEX ( _Colunas,
+        VAR _C = [ColName]
+        VAR _Qtd = CALCULATE ( [Qtd Realizada (matriz)], dim_estrutura[config_1] = _C )
+        VAR _M2 = CALCULATE ( AVERAGE ( dim_estrutura[m2_praticado] ), dim_estrutura[config_1] = _C )
+        VAR _dQtd = IF ( ISBLANK ( _Qtd ), 0, _Qtd )
+        VAR _dM2 = IF ( ISBLANK ( _M2 ), 0, _M2 )
+        VAR _Ratio = DIVIDE ( _M2 - _Min, _Diff )
+        VAR _Cor = SWITCH ( TRUE (), _dQtd = 0, _CorZero, _Ratio >= 0.9, _Verde5, _Ratio >= 0.7, _Verde4, _Ratio >= 0.5, _Verde3, _Ratio >= 0.2, _Verde2, _Verde1 )
+        RETURN "<td><span class='qtd-val'>" & _dQtd & "</span><span class='m2-val'>R$ " & FORMAT ( _dM2, "#,0" ) & "</span><div class='bar-container'><div class='bar-fill' style='background-color:" & _Cor & "'></div></div></td>",
+        "", [ColName], ASC )
+    VAR _RowQtd = [Qtd Realizada (matriz)]
+    VAR _RowM2 = CALCULATE ( AVERAGE ( dim_estrutura[m2_praticado] ) )   -- CALCULATE = context transition (ver armadilha b)
+    RETURN "<tr><td class='row-label'>" & _Rotulo & "</td>" & _Cells & "<td class='total-col'><span class='qtd-val'>" & IF ( ISBLANK ( _RowQtd ), 0, _RowQtd ) & "</span><span class='m2-val'>R$ " & FORMAT ( IF ( ISBLANK ( _RowM2 ), 0, _RowM2 ), "#,0" ) & "</span></td></tr>",
+    "" )
+VAR _Footer = "<tr class='footer-total'><td class='row-label' style='color:white'>TOTAL</td>" & CONCATENATEX ( _Colunas,
+        VAR _C = [ColName]
+        VAR _Qtd = CALCULATE ( [Qtd Realizada (matriz)], dim_estrutura[config_1] = _C )
+        VAR _M2 = CALCULATE ( AVERAGE ( dim_estrutura[m2_praticado] ), dim_estrutura[config_1] = _C )
+        RETURN "<td><span class='qtd-val' style='color:white'>" & IF ( ISBLANK ( _Qtd ), 0, _Qtd ) & "</span><span class='m2-val' style='color:#CCC'>R$ " & FORMAT ( IF ( ISBLANK ( _M2 ), 0, _M2 ), "#,0" ) & "</span></td>",
+        "", [ColName], ASC ) & "<td><span class='qtd-val' style='color:white'>" & IF ( ISBLANK ( [Qtd Realizada (matriz)] ), 0, [Qtd Realizada (matriz)] ) & "</span><span class='m2-val' style='color:#CCC'>R$ " & FORMAT ( [M² Médio Realizado (matriz)], "#,0" ) & "</span></td></tr>"
+RETURN _CSS & _Topo & _TableStart & _RowsBody & _Footer & "</tbody></table></div>"
+
+
+// -----------------------------------------------------------------------------
+// 2. MATRIZ "M² A REALIZAR (ESTOQUE)"
+// -----------------------------------------------------------------------------
+Matriz M² A Realizar HTML =
+VAR _e = 3
+VAR _CorPrincipal = "#003254"
+VAR _CorSutil = "#F6F7F9"
+VAR _CorZero = "#E0E0E0"
+VAR _Verde1 = "#E8F5E9"
+VAR _Verde2 = "#C8E6C9"
+VAR _Verde3 = "#A5D6A7"
+VAR _Verde4 = "#66BB6A"
+VAR _Verde5 = "#00C36B"
+VAR _Colunas = FILTER ( SELECTCOLUMNS ( CALCULATETABLE ( VALUES ( dim_estrutura[config_1] ), ALLSELECTED ( dim_estrutura[config_1] ) ), "ColName", dim_estrutura[config_1] ), NOT ISBLANK ( [ColName] ) )
+-- LARGURA DA COLUNA: sem `table-layout:fixed` o navegador usa layout automático
+-- e dimensiona cada coluna pelo CONTEÚDO (o autofit do Excel). `white-space:
+-- nowrap` nas células é o que faz a coluna encolher até o texto em vez de
+-- quebrar linha. Se o total natural passar da largura do visual, rola na
+-- horizontal (overflow-x no .container) — igual ao Excel.
+--
+-- Fonte e orientação do cabeçalho se adaptam à QUANTIDADE DE COLUNAS: com o
+-- slicer de empreendimento são ~6 (texto horizontal, fonte cheia); sem slicer
+-- são 31 e só cabe girando o rótulo na vertical. Sem isso o cabeçalho quebra
+-- caractere a caractere ("00 - Térre o/Gar den") e fica ilegível.
+VAR _nCols = COUNTROWS ( _Colunas )
+VAR _vertical = _nCols > 12
+VAR _fsTh = IF ( _nCols <= 8, 10, IF ( _nCols <= 14, 8, 7 ) ) * _e
+VAR _fsQtd = IF ( _nCols <= 8, 15, IF ( _nCols <= 14, 12, 10 ) ) * _e
+VAR _fsM2 = IF ( _nCols <= 8, 9, IF ( _nCols <= 14, 8, 7 ) ) * _e
+VAR _thCls = IF ( _vertical, " class='rot'", "" )
+-- GRÃO DA LINHA: produto. Para voltar a quebrar por bloco/torre (como no legado),
+-- troque as 2 linhas marcadas [GRAO] — esta e a do _Rotulo no _RowsBody.
+VAR _Linhas = SUMMARIZE ( dim_estrutura, dim_estrutura[produto] )                            -- [GRAO]
+-- VAR _Linhas = SUMMARIZE ( dim_estrutura, dim_estrutura[produto], dim_estrutura[bloco] )   -- [GRAO] por bloco
+VAR _CelulasRange = ADDCOLUMNS ( SUMMARIZE ( dim_estrutura, dim_estrutura[produto], dim_estrutura[config_1] ), "@v", CALCULATE ( [M²ARealizar] ) )
+VAR _Max = MAXX ( _CelulasRange, [@v] )
+VAR _Min = MINX ( FILTER ( _CelulasRange, [@v] > 0 ), [@v] )
+VAR _Diff = _Max - _Min
+VAR _CSS = "<style> html,body { margin:0; padding:0; } .container { font-family:'Segoe UI',sans-serif; padding:" & FORMAT(5*_e,"0") & "px; background:white; width:100%; box-sizing:border-box; overflow-x:auto; } .title-area { text-align:center; margin-bottom:" & FORMAT(10*_e,"0") & "px; } .title { color:" & _CorPrincipal & "; font-size:" & FORMAT(18*_e,"0") & "px; font-weight:800; text-transform:uppercase; margin:0; } .pafil-matrix { border-collapse:collapse; font-size:" & FORMAT(11*_e,"0") & "px; width:100%; } .pafil-matrix th { background-color:" & _CorPrincipal & "; color:white; font-size:" & FORMAT(_fsTh,"0") & "px; font-weight:600; padding:" & FORMAT(6*_e,"0") & "px " & FORMAT(4*_e,"0") & "px; text-align:center; border:none; line-height:1.25; white-space:nowrap; vertical-align:bottom; } .pafil-matrix th.rot { writing-mode:vertical-rl; transform:rotate(180deg); padding:" & FORMAT(8*_e,"0") & "px " & FORMAT(3*_e,"0") & "px; } .pafil-matrix th:first-child { border-radius:" & FORMAT(8*_e,"0") & "px 0 0 0; text-align:left; padding-left:" & FORMAT(10*_e,"0") & "px; min-width:14ch; max-width:26ch; white-space:normal; vertical-align:middle; } .pafil-matrix th:last-child { border-radius:0 " & FORMAT(8*_e,"0") & "px 0 0; vertical-align:middle; } .pafil-matrix td { padding:" & FORMAT(6*_e,"0") & "px " & FORMAT(4*_e,"0") & "px; border-bottom:" & FORMAT(1*_e,"0") & "px solid #EEE; text-align:center; line-height:1.2; white-space:nowrap; } .pafil-matrix td.row-label { text-align:left !important; font-weight:bold; color:#333; font-size:" & FORMAT(10*_e,"0") & "px; padding-left:" & FORMAT(10*_e,"0") & "px !important; white-space:normal; word-break:normal; overflow-wrap:break-word; max-width:26ch; } .pafil-matrix tr:nth-child(even) { background-color:" & _CorSutil & "; } .qtd-val { font-weight:800; font-size:" & FORMAT(_fsQtd,"0") & "px; color:" & _CorPrincipal & "; display:block; } .m2-val { font-size:" & FORMAT(_fsM2,"0") & "px; color:#666; font-weight:bold; white-space:nowrap; } .footer-total { background-color:" & _CorPrincipal & " !important; color:white !important; font-weight:bold; } .footer-total td { border:none; color:white; padding:" & FORMAT(8*_e,"0") & "px " & FORMAT(4*_e,"0") & "px; } .bar-container { width:100%; height:" & FORMAT(4*_e,"0") & "px; background:#F0F0F0; border-radius:" & FORMAT(2*_e,"0") & "px; margin-top:" & FORMAT(4*_e,"0") & "px; overflow:hidden; } .bar-fill { height:100%; width:100%; border-radius:" & FORMAT(2*_e,"0") & "px; } .total-col { font-weight:800; background-color:rgba(0,50,84,0.05); } </style>"
+VAR _Topo = "<div class='container'><div class='title-area'><h1 class='title'>M² A Realizar (Estoque)</h1></div>"
+VAR _TableStart = "<table class='pafil-matrix'><thead><tr><th>PRODUTO</th>" & CONCATENATEX ( _Colunas, "<th" & _thCls & ">" & IF ( _vertical && LEN ( [ColName] ) > 28, LEFT ( [ColName], 27 ) & "…", [ColName] ) & "</th>", "", [ColName], ASC ) & "<th>TOTAL</th></tr></thead><tbody>"
+VAR _RowsBody = CONCATENATEX ( _Linhas,
+    VAR _Rotulo = dim_estrutura[produto]                                                     -- [GRAO]
+    -- VAR _Rotulo = dim_estrutura[produto] & IF ( ISBLANK ( dim_estrutura[bloco] ), "", " - " & dim_estrutura[bloco] )  -- [GRAO] por bloco
+    VAR _Cells = CONCATENATEX ( _Colunas,
+        VAR _C = [ColName]
+        VAR _Qtd = CALCULATE ( [Estoque Qtd], dim_estrutura[config_1] = _C )
+        VAR _M2 = CALCULATE ( [M²ARealizar], dim_estrutura[config_1] = _C )
+        VAR _dQtd = IF ( ISBLANK ( _Qtd ), 0, _Qtd )
+        VAR _dM2 = IF ( ISBLANK ( _M2 ), 0, _M2 )
+        VAR _Ratio = DIVIDE ( _M2 - _Min, _Diff )
+        VAR _Cor = SWITCH ( TRUE (), _dQtd = 0, _CorZero, _Ratio >= 0.9, _Verde5, _Ratio >= 0.7, _Verde4, _Ratio >= 0.5, _Verde3, _Ratio >= 0.2, _Verde2, _Verde1 )
+        RETURN "<td><span class='qtd-val'>" & _dQtd & "</span><span class='m2-val'>R$ " & FORMAT ( _dM2, "#,0" ) & "</span><div class='bar-container'><div class='bar-fill' style='background-color:" & _Cor & "'></div></div></td>",
+        "", [ColName], ASC )
+    VAR _RowQtd = [Estoque Qtd]
+    VAR _RowM2 = [M²ARealizar]
+    RETURN "<tr><td class='row-label'>" & _Rotulo & "</td>" & _Cells & "<td class='total-col'><span class='qtd-val'>" & IF ( ISBLANK ( _RowQtd ), 0, _RowQtd ) & "</span><span class='m2-val'>R$ " & FORMAT ( IF ( ISBLANK ( _RowM2 ), 0, _RowM2 ), "#,0" ) & "</span></td></tr>",
+    "" )
+VAR _Footer = "<tr class='footer-total'><td class='row-label' style='color:white'>TOTAL</td>" & CONCATENATEX ( _Colunas,
+        VAR _C = [ColName]
+        VAR _Qtd = CALCULATE ( [Estoque Qtd], dim_estrutura[config_1] = _C )
+        VAR _M2 = CALCULATE ( [M²ARealizar], dim_estrutura[config_1] = _C )
+        RETURN "<td><span class='qtd-val' style='color:white'>" & IF ( ISBLANK ( _Qtd ), 0, _Qtd ) & "</span><span class='m2-val' style='color:#CCC'>R$ " & FORMAT ( IF ( ISBLANK ( _M2 ), 0, _M2 ), "#,0" ) & "</span></td>",
+        "", [ColName], ASC ) & "<td><span class='qtd-val' style='color:white'>" & IF ( ISBLANK ( [Estoque Qtd] ), 0, [Estoque Qtd] ) & "</span><span class='m2-val' style='color:#CCC'>R$ " & FORMAT ( [M²ARealizar], "#,0" ) & "</span></td></tr>"
+RETURN _CSS & _Topo & _TableStart & _RowsBody & _Footer & "</tbody></table></div>"
+
+
+// -----------------------------------------------------------------------------
+// 3. PAINEL LATERAL — REALIZADO (à esquerda da matriz de cima)
+// "Total" do Atingimento = preço de TABELA de todas as unidades (o potencial
+// cheio), como no legado — não o VGV projetado. Reproduz os 57,2% do print.
+// -----------------------------------------------------------------------------
+Painel Realizado HTML =
+VAR _e = 3
+VAR _CorPrincipal = "#003254"
+VAR _Verde = "#00C36B"
+VAR _M2Medio = [M² Médio Realizado (matriz)]
+VAR _VgvReal = [VGV Realizado (matriz)]
+VAR _QtdReal = [Qtd Realizada (matriz)]
+VAR _VgvMedio = DIVIDE ( _VgvReal, _QtdReal )
+VAR _VgvTotal = CALCULATE ( SUM ( dim_estrutura[preco] ) )
+VAR _Ating = DIVIDE ( _VgvReal, _VgvTotal )
+VAR _AtingPct = FORMAT ( _Ating * 100, "0.0" )
+VAR _BarraW = SUBSTITUTE ( FORMAT ( MIN ( _Ating, 1 ) * 100, "0.0" ), ",", "." )   -- ver armadilha c
+VAR _Faces = FILTER ( SELECTCOLUMNS ( CALCULATETABLE ( VALUES ( dim_estrutura[config_2] ), ALLSELECTED ( dim_estrutura[config_2] ) ), "Face", dim_estrutura[config_2] ), NOT ISBLANK ( [Face] ) )
+VAR _CSS = "<style> .p { font-family:'Segoe UI Semibold','Segoe UI',Arial,sans-serif; display:flex; flex-direction:column; gap:" & FORMAT(10*_e,"0") & "px; width:100%; box-sizing:border-box; } .p .card { background:#fff; border:" & FORMAT(1*_e,"0") & "px solid #E6E9EE; border-radius:" & FORMAT(14*_e,"0") & "px; padding:" & FORMAT(12*_e,"0") & "px " & FORMAT(16*_e,"0") & "px; text-align:center; box-shadow:0 1px 2px rgba(0,0,0,.04); } .p .lbl { font-size:" & FORMAT(13*_e,"0") & "px; color:#6B7280; letter-spacing:.02em; } .p .val { font-size:" & FORMAT(30*_e,"0") & "px; font-weight:800; color:" & _CorPrincipal & "; line-height:1.1; margin-top:" & FORMAT(4*_e,"0") & "px; } .p .row { display:flex; gap:" & FORMAT(10*_e,"0") & "px; flex-wrap:wrap; } .p .row .card { flex:1 1 0; min-width:" & FORMAT(70*_e,"0") & "px; padding:" & FORMAT(10*_e,"0") & "px " & FORMAT(8*_e,"0") & "px; } .p .row .val { font-size:" & FORMAT(22*_e,"0") & "px; } .p .prog { background:#fff; border:" & FORMAT(1*_e,"0") & "px solid #E6E9EE; border-radius:" & FORMAT(14*_e,"0") & "px; padding:" & FORMAT(12*_e,"0") & "px " & FORMAT(16*_e,"0") & "px; } .p .prog .top { display:flex; justify-content:space-between; align-items:center; } .p .prog .t { font-size:" & FORMAT(12*_e,"0") & "px; color:#6B7280; text-transform:uppercase; letter-spacing:.04em; } .p .prog .tag { font-size:" & FORMAT(10*_e,"0") & "px; color:#6B7280; background:#F3F4F6; border-radius:" & FORMAT(6*_e,"0") & "px; padding:" & FORMAT(2*_e,"0") & "px " & FORMAT(8*_e,"0") & "px; } .p .prog .pct { font-size:" & FORMAT(28*_e,"0") & "px; font-weight:800; color:" & _CorPrincipal & "; margin:" & FORMAT(6*_e,"0") & "px 0 " & FORMAT(8*_e,"0") & "px; } .p .prog .pct small { font-size:" & FORMAT(14*_e,"0") & "px; font-weight:600; } .p .bar { height:" & FORMAT(6*_e,"0") & "px; background:#F0F0F0; border-radius:" & FORMAT(3*_e,"0") & "px; overflow:hidden; } .p .bar > div { height:100%; background:" & _Verde & "; border-radius:" & FORMAT(3*_e,"0") & "px; } .p .foot { display:flex; justify-content:space-between; font-size:" & FORMAT(11*_e,"0") & "px; color:#9CA3AF; margin-top:" & FORMAT(6*_e,"0") & "px; } </style>"
+VAR _Cards = "<div class='card'><div class='lbl'>M² Realizado</div><div class='val'>" & FORMAT ( _M2Medio, "#,0" ) & "</div></div>" & "<div class='row'>" & CONCATENATEX ( _Faces, VAR _F = [Face] VAR _v = CALCULATE ( AVERAGE ( dim_estrutura[m2_praticado] ), dim_estrutura[config_2] = _F ) RETURN "<div class='card'><div class='lbl'>M² " & _F & "</div><div class='val'>" & FORMAT ( IF ( ISBLANK ( _v ), 0, _v ), "#,0" ) & "</div></div>", "", [Face], ASC ) & "</div>" & "<div class='card'><div class='lbl'>Média VGV Realizado</div><div class='val'>" & FORMAT ( _VgvMedio, "#,0" ) & "</div></div>" & "<div class='prog'><div class='top'><span class='t'>Atingimento de VGV</span><span class='tag'>Total</span></div><div class='pct'>" & _AtingPct & "<small>%</small></div><div class='bar'><div style='width:" & _BarraW & "%'></div></div><div class='foot'><span>VGV: R$ " & FORMAT ( _VgvReal / 1000000, "#,0.0" ) & "M</span><span>Total: R$ " & FORMAT ( _VgvTotal / 1000000, "#,0.0" ) & "M</span></div></div>"
+RETURN _CSS & "<div class='p'>" & _Cards & "</div>"
+
+
+// -----------------------------------------------------------------------------
+// 4. PAINEL LATERAL — A REALIZAR (à esquerda da matriz de baixo)
+// -----------------------------------------------------------------------------
+Painel A Realizar HTML =
+VAR _e = 3
+VAR _CorPrincipal = "#003254"
+VAR _M2AReal = [M²ARealizar]
+VAR _TicketEst = [Ticket Médio Estoque]
+VAR _Faces = FILTER ( SELECTCOLUMNS ( CALCULATETABLE ( VALUES ( dim_estrutura[config_2] ), ALLSELECTED ( dim_estrutura[config_2] ) ), "Face", dim_estrutura[config_2] ), NOT ISBLANK ( [Face] ) )
+VAR _CSS = "<style> .p { font-family:'Segoe UI Semibold','Segoe UI',Arial,sans-serif; display:flex; flex-direction:column; gap:" & FORMAT(10*_e,"0") & "px; width:100%; box-sizing:border-box; } .p .card { background:#fff; border:" & FORMAT(1*_e,"0") & "px solid #E6E9EE; border-radius:" & FORMAT(14*_e,"0") & "px; padding:" & FORMAT(12*_e,"0") & "px " & FORMAT(16*_e,"0") & "px; text-align:center; box-shadow:0 1px 2px rgba(0,0,0,.04); } .p .lbl { font-size:" & FORMAT(13*_e,"0") & "px; color:#6B7280; letter-spacing:.02em; } .p .val { font-size:" & FORMAT(30*_e,"0") & "px; font-weight:800; color:" & _CorPrincipal & "; line-height:1.1; margin-top:" & FORMAT(4*_e,"0") & "px; } .p .row { display:flex; gap:" & FORMAT(10*_e,"0") & "px; flex-wrap:wrap; } .p .row .card { flex:1 1 0; min-width:" & FORMAT(70*_e,"0") & "px; padding:" & FORMAT(10*_e,"0") & "px " & FORMAT(8*_e,"0") & "px; } .p .row .val { font-size:" & FORMAT(22*_e,"0") & "px; } </style>"
+VAR _Cards = "<div class='card'><div class='lbl'>M² Médio à Realizar</div><div class='val'>" & FORMAT ( _M2AReal, "#,0" ) & "</div></div>" & "<div class='row'>" & CONCATENATEX ( _Faces, VAR _F = [Face] VAR _v = CALCULATE ( [M²ARealizar], dim_estrutura[config_2] = _F ) RETURN "<div class='card'><div class='lbl'>M² " & _F & "</div><div class='val'>" & FORMAT ( IF ( ISBLANK ( _v ), 0, _v ), "#,0" ) & "</div></div>", "", [Face], ASC ) & "</div>" & "<div class='card'><div class='lbl'>Média VGV a Realizar</div><div class='val'>" & FORMAT ( _TicketEst, "#,0" ) & "</div></div>"
+RETURN _CSS & "<div class='p'>" & _Cards & "</div>"
+
+
+// -----------------------------------------------------------------------------
+// 5. KPIs DO TOPO — mesmo design system de [KPIs Pré-Cadastro HTML]
+// Mesmas classes (.k/.c/.ic/.l/.v/.s) e cores. O card de Margem usa a variante
+// verde/vermelha conforme esteja acima ou abaixo da margem de viabilidade.
+// Metragem Permuta usa a variante cinza (.g): não vira receita.
+// -----------------------------------------------------------------------------
+KPIs Preço HTML =
+VAR _e = 3
+VAR _margem = [Margem]
+VAR _margemViab = [MargemViab]
+VAR _metTotal = [Metragem Total]
+VAR _vgvProj = [ProjetadoVGV]
+VAR _metVend = [Metragem Vendida]
+VAR _vgvReal = [VGV Realizado]
+VAR _metAVender = [MetragemAVender]
+VAR _metPermuta = [Metragem Permuta]
+VAR _estoqueVGV = [EstoqueVGV]
+VAR _delta = _margem - _margemViab
+VAR _classeMg = IF ( ISBLANK ( _margemViab ), "c", IF ( _delta >= 0, "c v", "c r" ) )
+VAR _icoMargem = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><line x1='19' y1='5' x2='5' y2='19'></line><circle cx='6.5' cy='6.5' r='2.5'></circle><circle cx='17.5' cy='17.5' r='2.5'></circle></svg>"
+VAR _icoViab = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M3 3v18h18'></path><polyline points='19 9 13 15 9 11 5 15'></polyline></svg>"
+VAR _icoArea = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='3' width='18' height='18' rx='2'></rect><line x1='3' y1='9' x2='21' y2='9'></line><line x1='9' y1='21' x2='9' y2='9'></line></svg>"
+VAR _icoVGV = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><line x1='12' y1='1' x2='12' y2='23'></line><path d='M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6'></path></svg>"
+VAR _icoPredio = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M3 21h18'></path><path d='M5 21V7l8-4v18'></path><path d='M19 21V11l-6-4'></path></svg>"
+VAR _icoTag = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z'></path><line x1='7' y1='7' x2='7.01' y2='7'></line></svg>"
+VAR _icoTroca = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='17 1 21 5 17 9'></polyline><path d='M3 11V9a4 4 0 0 1 4-4h14'></path><polyline points='7 23 3 19 7 15'></polyline><path d='M21 13v2a4 4 0 0 1-4 4H3'></path></svg>"
+VAR _icoCaixa = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z'></path><polyline points='3.27 6.96 12 12.01 20.73 6.96'></polyline></svg>"
+VAR _css = "<style>html,body{margin:0;padding:0;height:100%;}.k{font-family:'Segoe UI Semibold','Segoe UI',Arial,sans-serif;font-weight:600;display:flex;flex-direction:row;gap:" & FORMAT(10*_e,"0") & "px;width:100%;height:100%;box-sizing:border-box;}.k .c{position:relative;overflow:hidden;flex:1 1 0;background:#003254;color:#fff;border-radius:" & FORMAT(14*_e,"0") & "px;padding:" & FORMAT(12*_e,"0") & "px " & FORMAT(14*_e,"0") & "px;box-sizing:border-box;}.k .c.g{background:#6B7280;}.k .c.r{background:#8A1C1C;}.k .c.v{background:#00C36B;}.k .ic{position:absolute;top:" & FORMAT(10*_e,"0") & "px;right:" & FORMAT(12*_e,"0") & "px;width:" & FORMAT(28*_e,"0") & "px;height:" & FORMAT(28*_e,"0") & "px;background:rgba(255,255,255,.15);border-radius:" & FORMAT(9*_e,"0") & "px;display:flex;align-items:center;justify-content:center;}.k .ic svg{width:" & FORMAT(16*_e,"0") & "px;height:" & FORMAT(16*_e,"0") & "px;color:#fff;opacity:.95;}.k .l{font-size:" & FORMAT(12*_e,"0") & "px;letter-spacing:.02em;opacity:.9;max-width:72%;text-transform:uppercase;}.k .v{font-size:" & FORMAT(28*_e,"0") & "px;margin-top:" & FORMAT(6*_e,"0") & "px;line-height:1;}.k .v small{font-size:" & FORMAT(14*_e,"0") & "px;}.k .s{font-size:" & FORMAT(11*_e,"0") & "px;opacity:.85;margin-top:" & FORMAT(5*_e,"0") & "px;}</style>"
+RETURN _css & "<div class='k'>" & "<div class='" & _classeMg & "'><div class='ic'>" & _icoMargem & "</div><div class='l'>Margem</div><div class='v'>" & FORMAT ( _margem, "0.0%" ) & "</div><div class='s'>" & IF ( ISBLANK ( _margemViab ), "sem viabilidade", FORMAT ( _delta, "+0.0%;-0.0%;0.0%" ) & " vs viabilidade" ) & "</div></div>" & "<div class='c'><div class='ic'>" & _icoViab & "</div><div class='l'>Margem Viab.</div><div class='v'>" & FORMAT ( _margemViab, "0.0%" ) & "</div><div class='s'>previsto no estudo</div></div>" & "<div class='c'><div class='ic'>" & _icoArea & "</div><div class='l'>Metragem Total</div><div class='v'>" & FORMAT ( _metTotal / 1000, "#,0.0" ) & "<small> k m²</small></div><div class='s'>área privativa do produto</div></div>" & "<div class='c'><div class='ic'>" & _icoVGV & "</div><div class='l'>VGV Projetado</div><div class='v'>" & FORMAT ( _vgvProj / 1000000, "#,0.0" ) & "<small> M</small></div><div class='s'>estoque a tabela + realizado</div></div>" & "<div class='c'><div class='ic'>" & _icoPredio & "</div><div class='l'>Metragem Vend.</div><div class='v'>" & FORMAT ( _metVend / 1000, "#,0.0" ) & "<small> k m²</small></div><div class='s'>já vendida</div></div>" & "<div class='c'><div class='ic'>" & _icoVGV & "</div><div class='l'>VGV Realizado</div><div class='v'>" & FORMAT ( _vgvReal / 1000000, "#,0.0" ) & "<small> M</small></div><div class='s'>valor de contrato</div></div>" & "<div class='c'><div class='ic'>" & _icoTag & "</div><div class='l'>Metragem a Ven.</div><div class='v'>" & FORMAT ( _metAVender / 1000, "#,0.0" ) & "<small> k m²</small></div><div class='s'>em estoque</div></div>" & "<div class='c g'><div class='ic'>" & _icoTroca & "</div><div class='l'>Metragem Per.</div><div class='v'>" & FORMAT ( _metPermuta / 1000, "#,0.0" ) & "<small> k m²</small></div><div class='s'>permuta (não vira receita)</div></div>" & "<div class='c'><div class='ic'>" & _icoCaixa & "</div><div class='l'>VGV Estoque</div><div class='v'>" & FORMAT ( _estoqueVGV / 1000000, "#,0.0" ) & "<small> M</small></div><div class='s'>a preço de tabela</div></div>" & "</div>"
+
+
+// -----------------------------------------------------------------------------
+// 6. VARIANTES POR BLOCO (para a página "Preço por Produto")
+//
+//    Matriz M² Realizado por Bloco HTML
+//    Matriz M² A Realizar por Bloco HTML
+//
+// São cópias EXATAS das medidas 1 e 2 com as duas linhas [GRAO] trocadas pelas
+// versões comentadas (SUMMARIZE com bloco + rótulo "produto - bloco") e o
+// cabeçalho de volta para "PRODUTO / BLOCO". O _CelulasRange também volta a
+// agrupar por bloco, senão o gradiente normaliza numa faixa que não é a exibida.
+//
+// Não estão transcritas aqui de propósito: são ~40 linhas idênticas cada uma e
+// duplicar o CSS no arquivo garante que uma hora as duas versões divergem. As
+// duas já existem no modelo (pasta Preço/HTML) — para recriar do zero, duplique
+// a medida 1/2 no Tabular Editor e troque as linhas [GRAO].
+//
+// Uso:
+//   Página "Carteira"  (sem slicer) -> Matriz M² Realizado HTML / A Realizar HTML
+//   Página "Produto"   (com slicer) -> ...por Bloco HTML

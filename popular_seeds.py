@@ -137,18 +137,30 @@ def _tabela_openpyxl(ws, nome_tabela: str) -> list[dict]:
     return linhas
 
 
-def carregar_estrutura_precos(conn, xlsm: Path) -> int:
+def carregar_estrutura_precos(conn, xlsm: Path, fonte: str = "bi_matriz") -> int:
     """Carrega silver.d_estrutura (matriz de preço/estoque por unidade) das abas
     Matriz_XX de base_precos.xlsm (BI V.2/BI Matriz) — task 6.4 do roadmap. Cada aba
     é 1 empreendimento; a Excel Table tem o mesmo layout em todas (ver
     _bi_ref/M_Empreendimentos.md, TABELA d_estrutura). Dedup por Código Interno
     (ING-08, primeiro-vence, mesmo critério dos demais loaders).
+
+    `fonte` escolhe qual das DUAS matrizes de preço que a empresa mantém (R22):
+      "bi_matriz" (padrão) — `BI V.2/BI Matriz/base_precos.xlsm`, usada desde a 6.4.
+      "legado"            — `Preço/Apoio/Apoio - BI de Preço.xlsm`, a que alimenta
+                            o PBIX "BI Preço". Use esta pro relatório novo bater
+                            com os números que a gestão já conhece.
+    Diferenças de layout do legado tratadas aqui: colunas de posição chamadas
+    `Prumada`/`Frente/Fundo`/`Final` (produtos verticais mais antigos), bloco em
+    `Torre`, e **sem coluna `codigo_cv`** — resolvido pelo nome do produto.
     """
     import openpyxl
     from psycopg import sql
 
+    if fonte not in ("bi_matriz", "legado"):
+        raise ValueError(f"fonte inválida: {fonte!r} (use 'bi_matriz' ou 'legado')")
+
     wb = openpyxl.load_workbook(xlsm, data_only=True)
-    origem_txt = f"SharePoint: {xlsm.name} (abas Matriz_*)"
+    origem_txt = f"SharePoint: {xlsm.name} (abas Matriz_*, fonte={fonte})"
 
     # Tabelas "Matriz_*" com problema conhecido de origem — achado na validação
     # do relatório "Vendas Geral" (ago/2026): a aba QBV2 tem cabeçalhos com erro
@@ -159,7 +171,9 @@ def carregar_estrutura_precos(conn, xlsm: Path) -> int:
     # MESMO produto/codigo_cv, mesma contagem de linhas, com os cabeçalhos certos
     # — é a versão boa. Pular a quebrada evita que o dedup por Código Interno
     # (primeiro-vence, ING-08) fique com a errada por causa da ordem das abas.
-    ABAS_TABELA_IGNORAR = {"Matriz_QBV"}
+    # ⚠️ No arquivo do LEGADO "Matriz_QBV" é a tabela BOA (e única) do produto —
+    # ignorá-la lá derrubaria Quinta da Boa Vista inteira.
+    ABAS_TABELA_IGNORAR = {"Matriz_QBV"} if fonte == "bi_matriz" else set()
 
     # Variação de nome de coluna entre abas do mesmo workbook (cada produto foi
     # montado por cópia manual da matriz e divergiu um pouco) — normaliza pro
@@ -172,7 +186,27 @@ def carregar_estrutura_precos(conn, xlsm: Path) -> int:
         "Tipologi": "CONFIG_1",
         "Tipologia": "CONFIG_1",
         "CONFIG 1": "CONFIG_1",
+        # layout do arquivo legado (produtos verticais mais antigos)
+        "Prumada": "CONFIG_1",
+        "Frente/Fundo": "CONFIG_2",
+        "Final": "CONFIG_3",
+        "Torre": "Bloco",
     }
+
+    # Erros de digitação no VALOR das colunas de posição (CONFIG_1/2/3) — mesma
+    # família do R19, cada aba foi montada por cópia manual. Não são cosméticos:
+    # na matriz do BI de Preço cada grafia vira uma COLUNA SEPARADA, com 1-2
+    # unidades cada, empurrando as colunas boas para fora da tela. Levantado em
+    # 13/ago/2026 sobre as 79 combinações distintas de config_* da gold.
+    ALIAS_VALOR_CONFIG = {
+        "LOTE MISTO (GURIT E COMERCIL)": "LOTE MISTO (GUARITA E COMERCIAL)",  # faltam letras
+        "OTE MISTO":                     "LOTE MISTO",                        # falta o L
+        "Muro lateral":                  "Muro Lateral",                      # caixa divergente
+    }
+    # NÃO incluído de propósito: config_3 = "Lateral" (1 unidade em Villas do Pq.
+    # Lotes Mistos). É provável que seja "Muro Lateral" abreviado, mas "Lateral"
+    # também é um valor LEGÍTIMO de config_2 (face, em Parc das Artes) — juntar
+    # sem confirmar seria inventar dado. Confirmar com o backoffice.
 
     def _num(v):
         try:
@@ -181,10 +215,17 @@ def carregar_estrutura_precos(conn, xlsm: Path) -> int:
             return None  # ex.: '#N/A' / '#DIV/0!' de fórmula quebrada na planilha
 
     def _txt(v):
+        """Texto normalizado: colapsa espaços repetidos (a origem tem
+        '154  e 155 (PCD)' com espaço duplo, que também virava coluna própria)."""
         if v is None:
             return None
-        s = str(v).strip()
+        s = re.sub(r"\s+", " ", str(v)).strip()
         return s or None
+
+    def _cfg(v):
+        """_txt + de-para de erro de digitação, para as colunas de posição."""
+        s = _txt(v)
+        return ALIAS_VALOR_CONFIG.get(s, s)
 
     registros: dict[str, tuple] = {}
     n_abas = 0
@@ -194,7 +235,17 @@ def carregar_estrutura_precos(conn, xlsm: Path) -> int:
                 continue
             n_abas += 1
             for r_bruto in _tabela_openpyxl(ws, nome_tabela):
-                r = {ALIAS_COLUNA.get(k, k): v for k, v in r_bruto.items()}
+                # Renomeia pelos alias SEM sobrescrever: duas colunas da mesma aba
+                # podem cair no mesmo nome canônico (a aba QBV tem "Tipologia" E
+                # "CONFIG 1"; o legado tem "Prumada" em algumas e "CONFIG_1" em
+                # outras). Vale o primeiro valor NÃO VAZIO — antes o último vencia
+                # e, quando ele era o vazio, perdia-se a coluna inteira.
+                r: dict = {}
+                for k, v in r_bruto.items():
+                    alvo = ALIAS_COLUNA.get(k, k)
+                    if r.get(alvo) in (None, "") or alvo not in r:
+                        if not (v in (None, "") and alvo in r):
+                            r[alvo] = v
                 cod_interno = _txt(r.get("Código Interno"))
                 if not cod_interno or cod_interno in registros:
                     continue
@@ -206,9 +257,9 @@ def carregar_estrutura_precos(conn, xlsm: Path) -> int:
                     _txt(r.get("Unidade")),
                     _txt(r.get("ID_Preço")),
                     _num(r.get("Área Privativa")),
-                    _txt(r.get("CONFIG_1")),
-                    _txt(r.get("CONFIG_2")),
-                    _txt(r.get("CONFIG_3")),
+                    _cfg(r.get("CONFIG_1")),
+                    _cfg(r.get("CONFIG_2")),
+                    _cfg(r.get("CONFIG_3")),
                     (r.get("Permuta") == "Permuta"),
                     _num(r.get("Preço")),
                     _num(r.get("Preço M²")),
@@ -225,7 +276,29 @@ def carregar_estrutura_precos(conn, xlsm: Path) -> int:
                         "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING"),
                 reg + (origem_txt,),
             )
-    log.info("  silver.%-24s <- %4d linhas (%d abas Matriz_*)", "d_estrutura", len(registros), n_abas)
+        if fonte == "legado":
+            # O arquivo do legado não tem coluna codigo_cv — resolve pelo NOME do
+            # produto, conformado dos dois lados pela mesma função que a gold usa
+            # (absorve "FIUSA 016" x "Fiusa 016", acento, caixa).
+            cur.execute("""
+                UPDATE silver.d_estrutura e
+                   SET codigo_cv = d.codigo_interno_empreendimento
+                  FROM gold.dim_empreendimento d
+                 WHERE e.codigo_cv IS NULL
+                   AND d.codigo_interno_empreendimento IS NOT NULL
+                   AND lower(btrim(d.empreendimento_conformado COLLATE "und-x-icu")) =
+                       lower(btrim(silver.conformar_empreendimento(e.produto) COLLATE "und-x-icu"))
+            """)
+            cur.execute("SELECT count(*) FROM silver.d_estrutura WHERE codigo_cv IS NULL")
+            sem_cv = cur.fetchone()[0]
+            if sem_cv:
+                cur.execute("""SELECT DISTINCT produto FROM silver.d_estrutura
+                                WHERE codigo_cv IS NULL ORDER BY 1""")
+                nomes = ", ".join(p for (p,) in cur.fetchall())
+                log.warning("  %d unidades sem codigo_cv (produto sem match em "
+                            "dim_empreendimento): %s", sem_cv, nomes)
+    log.info("  silver.%-24s <- %4d linhas (%d abas Matriz_*, fonte=%s)",
+             "d_estrutura", len(registros), n_abas, fonte)
     return len(registros)
 
 
@@ -905,9 +978,14 @@ def main() -> int:
     ap.add_argument("--credito-manual", help="caminho de relatorios_precadastro.xlsx (recarrega "
                                           "precadastros_credito_manual: Aprovação de crédito/Encaminhado ao CCA). "
                                           "Default: PRECADASTRO_CREDITO_XLSX do .env")
-    ap.add_argument("--estrutura-precos", help="caminho de base_precos.xlsm (recarrega silver.d_estrutura, "
-                                          "matriz de preço/estoque por unidade — task 6.4). "
+    ap.add_argument("--estrutura-precos", help="caminho da matriz de preço/estoque por unidade "
+                                          "(recarrega silver.d_estrutura — task 6.4). "
                                           "Default: ESTRUTURA_PRECOS_XLSM do .env")
+    ap.add_argument("--estrutura-fonte", choices=("bi_matriz", "legado"), default=None,
+                    help="qual das duas matrizes de preço da empresa usar (R22): 'bi_matriz' = "
+                         "base_precos.xlsm (BI V.2); 'legado' = Apoio - BI de Preço.xlsm, a que "
+                         "alimenta o PBIX BI Preço. Default: ESTRUTURA_PRECOS_FONTE do .env, "
+                         "ou 'legado' quando o arquivo se chama 'Apoio - BI de Preço.xlsm'.")
     ap.add_argument("--metas-empreendimentos", help="caminho de Meta.xlsx (recarrega "
                                           "silver.d_metas_empreendimentos — task 6.4). "
                                           "Default: METAS_EMPREENDIMENTOS_XLSX do .env")
@@ -926,6 +1004,12 @@ def main() -> int:
     etapa_precadastro_path = args.etapa_precadastro or os.getenv("ETAPA_PRECADASTRO_XLSM")
     credito_manual_path = args.credito_manual or os.getenv("PRECADASTRO_CREDITO_XLSX")
     estrutura_precos_path = args.estrutura_precos or os.getenv("ESTRUTURA_PRECOS_XLSM")
+    # fonte da matriz de preço (R22): explícita > .env > deduzida do nome do arquivo
+    estrutura_fonte = (args.estrutura_fonte or os.getenv("ESTRUTURA_PRECOS_FONTE") or "").strip()
+    if not estrutura_fonte:
+        estrutura_fonte = ("legado"
+                           if estrutura_precos_path and "apoio" in Path(estrutura_precos_path).name.lower()
+                           else "bi_matriz")
     metas_empreendimentos_path = args.metas_empreendimentos or os.getenv("METAS_EMPREENDIMENTOS_XLSX")
     viabilidade_path = args.viabilidade or os.getenv("VIABILIDADE_XLSX")
     distratos_2025_path = args.distratos_2025 or os.getenv("DISTRATOS_2025_XLSX")
@@ -999,7 +1083,7 @@ def main() -> int:
         if estrutura_precos_path:
             ep2 = Path(estrutura_precos_path)
             if ep2.exists():
-                total += carregar_estrutura_precos(conn, ep2)
+                total += carregar_estrutura_precos(conn, ep2, fonte=estrutura_fonte)
                 n_seeds += 1
             else:
                 log.warning("  estrutura-precos xlsm não encontrado (%s) — d_estrutura mantida como está.", ep2)

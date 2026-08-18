@@ -168,6 +168,87 @@ LEFT JOIN silver.dpara_corretor_headcount hc
 -- DROP CASCADE: a fato mudou de colunas (Phase 2) e o CREATE OR REPLACE não dropa
 -- colunas; a CASCADE também remove qualquer view legada que ainda dependa da fato
 -- (rankings, esteira, funis) e que não é mais recriada aqui.
+-- PONTE reserva -> unidade da matriz de preço (task 6.5). Fonte única do match
+-- usado por gold.fato_reservas (FK codigo_estrutura) E por gold.dim_estrutura
+-- (status da unidade) — antes cada uma fazia o seu, com risco de divergirem.
+--
+-- Por que existe: sem ligar a reserva à unidade da matriz não dá pra quebrar
+-- VGV/M² praticado por prumada/posição/final, que são as duas matrizes no coração
+-- do BI de Preço legado. Lá a relação vinha pronta pelo "Código interno da
+-- unidade" do CSV; a API CVDW não expõe esse código (R17), então casamos por
+-- (codigo_cv, bloco, unidade) normalizado com silver.chave_bloco/chave_unidade.
+--
+-- 3 passadas em vez de um join com OR: o OR entre colunas diferentes força nested
+-- loop (3,4k x 3,5k avaliações de string_to_array — 60s+ por query na fato). Aqui
+-- cada passada é igualdade pura (hash join) e a fuzzy só roda no resto:
+--   1. exata      — bloco e unidade normalizados iguais;
+--   2. fallback A — unidade da matriz é UM dos tokens da unidade da reserva
+--                   (ex.: matriz "281", reserva "L 30 - CASA Nº 281" -> "30 281");
+--   3. fallback B — o inverso (reserva com 1 número, matriz com lote+casa).
+-- A exata tem prioridade (as fallbacks só olham o que sobrou).
+--
+-- Validado em 12/ago/2026 sobre 3.473 vendas/distratos: 3.140 unidades casadas,
+-- 2 sem match (Parc Sul Uberaba), 6 ambíguas (Residencial Quinta dos Ventos —
+-- desempate determinístico por min(codigo_interno)) e 331 reservas em produtos que
+-- simplesmente não têm matriz de preço em base_precos.xlsm (ex.: Parc Paineira).
+DROP VIEW IF EXISTS gold.dpara_reserva_estrutura CASCADE;
+CREATE VIEW gold.dpara_reserva_estrutura AS
+WITH est AS MATERIALIZED (
+    -- '~' no lugar de NULL: IS NOT DISTINCT FROM também impede hash join.
+    SELECT codigo_interno,
+           codigo_cv,
+           coalesce(silver.chave_bloco(bloco, produto), '~') AS bloco_norm,
+           silver.chave_unidade(unidade)                     AS unidade_norm
+    FROM silver.d_estrutura
+),
+res AS MATERIALIZED (
+    SELECT id_reserva,
+           codigo_interno_empreendimento                          AS codigo_cv,
+           coalesce(silver.chave_bloco(bloco, empreendimento), '~') AS bloco_norm,
+           silver.chave_unidade(unidade)                          AS unidade_norm
+    FROM silver.reservas
+    WHERE eh_venda_ou_distrato
+),
+exata AS (
+    SELECT r.id_reserva, min(e.codigo_interno) AS codigo_estrutura
+    FROM res r
+    JOIN est e ON e.codigo_cv = r.codigo_cv
+              AND e.bloco_norm = r.bloco_norm
+              AND e.unidade_norm = r.unidade_norm
+    GROUP BY 1
+),
+resto AS (
+    SELECT r.* FROM res r
+    WHERE NOT EXISTS (SELECT 1 FROM exata x WHERE x.id_reserva = r.id_reserva)
+),
+fallback_a AS (
+    SELECT r.id_reserva, min(e.codigo_interno) AS codigo_estrutura
+    FROM (SELECT id_reserva, codigo_cv, bloco_norm,
+                 unnest(string_to_array(unidade_norm, ' ')) AS token
+          FROM resto) r
+    JOIN est e ON e.codigo_cv = r.codigo_cv
+              AND e.bloco_norm = r.bloco_norm
+              AND e.unidade_norm = r.token
+    GROUP BY 1
+),
+fallback_b AS (
+    SELECT r.id_reserva, min(e.codigo_interno) AS codigo_estrutura
+    FROM resto r
+    JOIN (SELECT codigo_interno, codigo_cv, bloco_norm,
+                 unnest(string_to_array(unidade_norm, ' ')) AS token
+          FROM est) e
+      ON e.codigo_cv = r.codigo_cv
+     AND e.bloco_norm = r.bloco_norm
+     AND e.token = r.unidade_norm
+    GROUP BY 1
+)
+SELECT id_reserva, min(codigo_estrutura) AS codigo_estrutura
+FROM (SELECT * FROM exata
+      UNION ALL SELECT * FROM fallback_a
+      UNION ALL SELECT * FROM fallback_b) u
+GROUP BY id_reserva;
+
+
 DROP VIEW IF EXISTS gold.fato_reservas CASCADE;
 CREATE OR REPLACE VIEW gold.fato_reservas AS
 SELECT
@@ -219,7 +300,13 @@ SELECT
     r.descricao_motivo_cancelamento,
     -- liga de volta ao pré-cadastro que originou a reserva (funil de crédito ->
     -- reserva). Usado por gold.fato_precadastros p/ "situação da reserva".
-    r.id_precadastro
+    r.id_precadastro,
+    -- FK p/ gold.dim_estrutura[codigo_interno] (matriz de preço). Só preenchido em
+    -- venda/distrato — reserva em andamento não ocupa unidade na matriz.
+    re.codigo_estrutura,
+    -- "M² Praticado" do BI de Preço legado: preço por m² efetivamente praticado na
+    -- venda (contrato / área da unidade), contra o preco_m2 de TABELA da matriz.
+    round(r.valor_contrato / nullif(u.area_privativa, 0), 2)  AS m2_praticado
 FROM silver.reservas r
 LEFT JOIN LATERAL (
     -- 1 distrato por reserva (o mais recente)
@@ -233,7 +320,8 @@ LEFT JOIN LATERAL (
 LEFT JOIN silver.dpara_empreendimento_regional er
        ON er.codigo_interno_empreendimento = r.codigo_interno_empreendimento
 LEFT JOIN silver.dpara_situacao_esteira se ON se.situacao = r.situacao
-LEFT JOIN silver.unidades u ON u.id_unidade = r.id_unidade;
+LEFT JOIN silver.unidades u ON u.id_unidade = r.id_unidade
+LEFT JOIN gold.dpara_reserva_estrutura re ON re.id_reserva = r.id_reserva;
 
 
 -- ===========================================================================
@@ -632,15 +720,46 @@ LEFT JOIN LATERAL (
 --      truque de gold.dim_distratos_2025.
 -- Comparação de bloco é NULL-safe (IS NOT DISTINCT FROM) pra não perder produto
 -- sem bloco.
+-- ⚠️ DEFINIÇÃO DE "REALIZADO" (mudou em ago/2026, task 6.5 — replicar o BI de Preço):
+-- `status_unidade` conta como Realizado só a VENDA VIVA (`eh_venda`), ou seja,
+-- unidade distratada VOLTA PRO ESTOQUE. É a definição do BI de Preço legado (as
+-- planilhas `Preço/Vendas/<Produto> - Resumo.xlsm` que alimentavam o PBIX só têm
+-- linhas com Situação = "Vendida" — conferido no modelo vivo em 12/ago/2026) e é
+-- também a leitura física correta de estoque: unidade distratada está disponível
+-- pra vender de novo. Até a task 6.4 usava `eh_venda_ou_distrato`, o que
+-- SUBESTIMAVA o estoque. A regra antiga continua exposta em
+-- `status_unidade_c_distrato` (não some nada); qual das duas é a autoritativa é
+-- decisão da gestão, mesma natureza de R1.
 DROP VIEW IF EXISTS gold.dim_estrutura CASCADE;
 CREATE VIEW gold.dim_estrutura AS
-WITH vendidas AS (
-    SELECT DISTINCT
-           r.codigo_interno_empreendimento,
-           silver.chave_bloco(r.bloco, r.empreendimento) AS bloco_norm,
-           silver.chave_unidade(r.unidade) AS unidade_norm
-    FROM silver.reservas r
-    WHERE r.eh_venda_ou_distrato
+WITH ocupacao AS (
+    -- Situação da unidade pela ponte única (gold.dpara_reserva_estrutura): uma
+    -- unidade pode ter mais de uma reserva ao longo do tempo (vendeu, distratou,
+    -- vendeu de novo) — bool_or resolve.
+    SELECT b.codigo_estrutura,
+           bool_or(r.eh_venda)             AS tem_venda_viva,
+           bool_or(r.eh_venda_ou_distrato) AS tem_venda_ou_distrato
+    FROM gold.dpara_reserva_estrutura b
+    JOIN silver.reservas r ON r.id_reserva = b.id_reserva
+    GROUP BY 1
+),
+venda_viva AS (
+    -- A venda VIVA da unidade (a mais recente, se a unidade vendeu > 1 vez depois
+    -- de distrato). Traz o realizado pro grão da unidade: é o que permite montar a
+    -- matriz "Realizado" (M² praticado por prumada x posição x final) SEM criar
+    -- relacionamento dim_estrutura -> fato_reservas no modelo — esse
+    -- relacionamento fecharia um losango com dim_empreendimento (dois caminhos de
+    -- filtro E->F direto e E->S->F) e o Power BI recusaria. Mesmo desenho do
+    -- legado, onde Matriz e Vendas eram duas tabelas por produto.
+    SELECT DISTINCT ON (b.codigo_estrutura)
+           b.codigo_estrutura,
+           r.id_reserva,
+           r.valor_contrato,
+           r.data_venda::date AS data_venda
+    FROM gold.dpara_reserva_estrutura b
+    JOIN silver.reservas r ON r.id_reserva = b.id_reserva
+    WHERE r.eh_venda
+    ORDER BY b.codigo_estrutura, r.data_venda DESC NULLS LAST, r.id_reserva DESC
 )
 SELECT
     e.codigo_interno,
@@ -655,17 +774,33 @@ SELECT
     e.preco,
     e.preco_m2,
     CASE
-        WHEN e.permuta THEN 'Permuta'
-        WHEN v.codigo_interno_empreendimento IS NOT NULL THEN 'Realizado'
+        WHEN e.permuta                         THEN 'Permuta'
+        WHEN coalesce(o.tem_venda_viva, false) THEN 'Realizado'
         ELSE 'Estoque'
-    END AS status_unidade
+    END AS status_unidade,
+    -- regra da task 6.4 (distrato continua contando como vendido) — mantida pra
+    -- comparação/auditoria; não usar nos visuais de estoque.
+    CASE
+        WHEN e.permuta                                 THEN 'Permuta'
+        WHEN coalesce(o.tem_venda_ou_distrato, false)  THEN 'Realizado'
+        ELSE 'Estoque'
+    END AS status_unidade_c_distrato,
+    -- ---- realizado no grão da unidade (task 6.5) ----------------------------
+    v.id_reserva                                       AS id_reserva_venda,
+    v.valor_contrato                                   AS vgv_realizado,
+    v.data_venda,
+    extract(year FROM v.data_venda)::int                AS ano_venda,
+    -- "M² Praticado" do legado, mas dividido pela área da MATRIZ (não pela área
+    -- que vem do CVDW) — mantém a coerência com preco_m2 da própria linha. A
+    -- versão com a área do CRM está em gold.fato_reservas[m2_praticado].
+    round(v.valor_contrato / nullif(e.area_privativa, 0), 2) AS m2_praticado,
+    -- ágio (+) / deságio (-) do contrato sobre o preço de tabela da unidade.
+    -- Insight que o BI legado não tinha e é a pergunta natural de quem olha
+    -- matriz de preço: "onde estamos dando desconto?".
+    round(v.valor_contrato / nullif(e.preco, 0) - 1, 4) AS agio_pct
 FROM silver.d_estrutura e
-LEFT JOIN vendidas v
-       ON v.codigo_interno_empreendimento = e.codigo_cv
-      AND v.bloco_norm IS NOT DISTINCT FROM silver.chave_bloco(e.bloco, e.produto)
-      AND (v.unidade_norm = silver.chave_unidade(e.unidade)
-           OR silver.chave_unidade(e.unidade) = ANY(string_to_array(v.unidade_norm, ' '))
-           OR v.unidade_norm = ANY(string_to_array(silver.chave_unidade(e.unidade), ' ')));
+LEFT JOIN ocupacao o    ON o.codigo_estrutura = e.codigo_interno
+LEFT JOIN venda_viva v  ON v.codigo_estrutura = e.codigo_interno;
 
 
 -- Metas/forecast mensais por empreendimento (Meta.xlsx). Grão = codigo_cv x mês x
@@ -695,22 +830,59 @@ LEFT JOIN gold.dim_empreendimento de
 -- Resolve R4: no legado eram ~12 conjuntos de constantes coladas no DAX (uma
 -- "Margem"/"MargemViab" por empreendimento); aqui viram 1 linha parametrizável,
 -- consumida por 1 única medida DAX (ver powerbi/MEDIDAS_ESTOQUE_PRECO.dax).
+-- ⚠️ O rótulo do parâmetro VARIA entre empreendimentos na planilha de origem (foi
+-- digitado à mão, um bloco por produto): Parc das Orquídeas usa "Receitas Brutas"/
+-- "Receitas Líquidas"/"Resultado Líquido" (plural e com acento) onde os demais usam
+-- "Receita Bruta"/"Receita Liquida"/"Resultado Liquido". Com match por string exata
+-- o produto inteiro saía sem receita_bruta e a MargemViab ficava vazia — parecia
+-- planilha em branco, mas o dado estava lá. `chave` normaliza (minúscula, sem
+-- acento, singular) antes de pivotar. Achado em 12/ago/2026 (task 6.5).
 DROP VIEW IF EXISTS gold.dim_viabilidade CASCADE;
 CREATE VIEW gold.dim_viabilidade AS
+WITH norm AS (
+    SELECT codigo_cv, valor, percentual,
+           regexp_replace(
+               translate(lower(btrim(tipo)), 'áàâãéêíóôõúüç', 'aaaaeeiooouuc'),
+               's\s*$', ''                      -- "receitas brutas" -> "receitas bruta"
+           ) AS chave
+    FROM silver.d_viabilidade
+),
+padr AS (
+    SELECT codigo_cv, valor, percentual,
+           CASE
+               WHEN chave LIKE 'receita%bruta'    THEN 'receita bruta'
+               WHEN chave LIKE 'receita%liquida'  THEN 'receita liquida'
+               WHEN chave LIKE 'resultado%liquid%' THEN 'resultado liquido'
+               WHEN chave LIKE 'deduc%'           THEN 'deducoes'
+               WHEN chave LIKE 'custos%despesa%'  THEN 'custos e despesas'
+               WHEN chave LIKE 'despesa%'         THEN 'despesas'
+               WHEN chave LIKE 'terreno%'         THEN 'terreno'
+               WHEN chave LIKE 'construca%'       THEN 'construcao'
+               ELSE chave
+           END AS tipo_padrao
+    FROM norm
+)
 SELECT
     codigo_cv,
-    max(valor)      FILTER (WHERE tipo = 'Receita Bruta')                    AS receita_bruta,
-    max(valor)      FILTER (WHERE tipo = 'Deduções')                         AS deducoes_valor,
-    max(percentual) FILTER (WHERE tipo = 'Deduções')                         AS deducoes_pct,
-    max(valor)      FILTER (WHERE tipo = 'Receita Liquida')                  AS receita_liquida,
-    max(valor)      FILTER (WHERE tipo = 'Custos e Despesas')                AS custos_despesas,
-    max(valor)      FILTER (WHERE tipo = 'Terreno')                         AS terreno_valor,
-    max(percentual) FILTER (WHERE tipo = 'Terreno')                         AS terreno_pct,
-    max(valor)      FILTER (WHERE tipo = 'Construção')                       AS construcao_valor,
-    max(percentual) FILTER (WHERE tipo = 'Construção')                       AS construcao_pct,
-    max(valor)      FILTER (WHERE tipo = 'Despesas')                         AS despesas_valor,
-    max(percentual) FILTER (WHERE tipo = 'Despesas')                         AS despesas_pct
-FROM silver.d_viabilidade
+    max(valor)      FILTER (WHERE tipo_padrao = 'receita bruta')      AS receita_bruta,
+    max(valor)      FILTER (WHERE tipo_padrao = 'deducoes')           AS deducoes_valor,
+    max(percentual) FILTER (WHERE tipo_padrao = 'deducoes')           AS deducoes_pct,
+    max(valor)      FILTER (WHERE tipo_padrao = 'receita liquida')    AS receita_liquida,
+    max(valor)      FILTER (WHERE tipo_padrao = 'custos e despesas')  AS custos_despesas,
+    max(valor)      FILTER (WHERE tipo_padrao = 'terreno')            AS terreno_valor,
+    max(percentual) FILTER (WHERE tipo_padrao = 'terreno')            AS terreno_pct,
+    max(valor)      FILTER (WHERE tipo_padrao = 'construcao')         AS construcao_valor,
+    max(percentual) FILTER (WHERE tipo_padrao = 'construcao')         AS construcao_pct,
+    max(valor)      FILTER (WHERE tipo_padrao = 'despesas')           AS despesas_valor,
+    max(percentual) FILTER (WHERE tipo_padrao = 'despesas')           AS despesas_pct,
+    -- Custo de obra já resolvido: nos empreendimentos preenchidos a partir das
+    -- constantes do DAX legado (task 6.5) só se conhece o custo TOTAL, então
+    -- "Terreno" fica em branco e o valor inteiro está em "Construção". Em SQL
+    -- NULL + valor = NULL, o que zerava a margem — daí o coalesce aqui, uma vez,
+    -- em vez de espalhar pelas medidas.
+    -( coalesce(max(valor) FILTER (WHERE tipo_padrao = 'terreno'), 0)
+     + coalesce(max(valor) FILTER (WHERE tipo_padrao = 'construcao'), 0) ) AS custo_obra
+FROM padr
 GROUP BY codigo_cv;
 
 

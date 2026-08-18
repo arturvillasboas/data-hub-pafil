@@ -159,6 +159,16 @@ ALTER TABLE silver.dpara_empreendimento ADD COLUMN IF NOT EXISTS ep text;
 CREATE INDEX IF NOT EXISTS ix_dpara_empreend_norm
     ON silver.dpara_empreendimento (upper(btrim(nome_origem)));
 
+-- Apelidos curtos usados na matriz de preço do BI de Preço legado
+-- ("Apoio - BI de Preço.xlsm"), que a aba DE_PARA_PRODUTOS não cobre — sem isso o
+-- produto entra sem codigo_cv e some do relatório (task 6.5, 12/ago/2026).
+-- ON CONFLICT DO NOTHING: se a aba passar a trazer o nome, ela ganha.
+INSERT INTO silver.dpara_empreendimento (nome_origem, nome_conformado, codigo_cv, _origem) VALUES
+    ('Primaveras', 'Parc das Primaveras', 12565, 'apelido da matriz de preço legada (task 6.5)'),
+    ('Tríade',     'Tríade Fiúsa',         7915, 'apelido da matriz de preço legada (task 6.5)'),
+    ('Triade',     'Tríade Fiúsa',         7915, 'apelido da matriz de preço legada (task 6.5)')
+ON CONFLICT (nome_origem) DO NOTHING;
+
 -- Conforma o nome do empreendimento case-insensitive (fallback = nome com trim).
 CREATE OR REPLACE FUNCTION silver.conformar_empreendimento(nome text)
 RETURNS text AS $$

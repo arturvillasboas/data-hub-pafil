@@ -74,6 +74,13 @@ NÃO usar Neon/Supabase/VPS pessoal (PII/LGPD). dbt Core adiado até o schema es
   Logo em seguida (mesmo dia) somou `dim_distratos_2025` — detalhe financeiro de distrato
   (multa/pago/devolução/parcelas) de `relatorio_distratos.xlsx`, que a API também não tem;
   ainda sem chave pra relacionar à `fato_reservas` (ver R2/nota na view).
+  **Task 6.5** (12/ago/2026) replicou o BI de Preço: `gold.dpara_reserva_estrutura` (ponte
+  reserva↔unidade da matriz, 3.140 ligações) + `dim_estrutura` enriquecida com o realizado no
+  grão da unidade + `fato_reservas.codigo_estrutura`/`m2_praticado`. `status_unidade` mudou:
+  unidade distratada **volta pro estoque** (regra do legado; a antiga fica em
+  `status_unidade_c_distrato`). Especificação das páginas em `powerbi/PAGINA_PRECO.md`,
+  reconciliação contra o PBIX legado em `reconciliacao/preco_legado_vs_gold.md` (achados
+  R20/R21/R22: viabilidade vazia na origem, Villa Manacás 1000x, duas matrizes de preço).
 - **Orquestrador**: `aplicar_tudo.py` (silver→gold→seeds num comando).
 - **Power BI**: `powerbi/` (.pbids de conexão + `MEDIDAS_GOLD.dax` + guia). O `.pbix` em si
   ainda **não foi montado** (passo manual no Desktop).

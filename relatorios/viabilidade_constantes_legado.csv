@@ -1,0 +1,13 @@
+prefixo_legado;produto;codigo_cv;receita_bruta_viab;custo_obra;deducoes_pct;despesas_pct;pct_receita_liquida_legado;margem_viab_legado;observacao
+PA;Parc das Artes;10093;79657315,50;48265889;0,0859997911302948;0,0773998120172654;0,914000208869705;0,2523864803985154;unico produto que ja esta preenchido em tab_viabil_padrao (bate com o DAX ao centavo)
+TR;Triade;7915;115395201;77180419;0,09;0,069;0,91;0,1891916435707118;DAX subtraia 0,04+0,05+0,069; deducoes=1-denominador=0,09 -> despesas=0,159-0,09=0,069
+PSU;Parc Sul Uberaba;13331;79467449;55979003;0,085242029097977;0,0664245057665051;0,914757970902023;0,1573166258939611;
+PCJ;Parc Cidade Jardim;14993;57810660;43433585;0,0846406942940973;0,0695934597529245;0,915359305705903;0,1031925944776223;
+ARB;Arboretto;9743;91137967,65;63162654;0,0782290601144429;0,0599756127544062;0,92177094;0,1830725670273802;
+PO;Parc das Orquideas;13998;42481026;31200727;0,09;0,0849423727989809;0,91;0,0995549182079185;origem ja tem terreno+construcao (-30.669.428) que difere do DAX (-31.200.727) em ~531k: conferir qual e o estudo vigente
+PR;Primaveras;12565;52943843;34101343;0,09;0,0788814711655896;0,91;0,2055104308071569;PR_Margem usava 0,079 e PR_MargemViab 0,0788814711655896 (o DAX divergia de si mesmo)
+F16;Fiusa 016;15840;151264211,688;93711127;0,097;0,082;0,903299695374273;0,2230494628573061;denominador implica deducoes=0,0967003 mas a subtracao usava 0,097
+QBV;Quinta da Boa Vista;13146;40655948;28580522;0,113;0,074;0,887;0,1240304287248176;
+VM;Villa Manacas;20587;43463136;29156901;0,09;0,054;0,91;0,2034702305718737;DAX subtraia 0,035+0,048+0,061 (MargemViab) e 0,038+0,048+0,061 (Margem) - decomposto como deducoes=0,09 + despesas=0,054
+VLPQ;Villas do Parque;8883;149014650;96481346;0,0767407;0,0814495;0,9232593;0,2105016952320883;o legado tratava Casas+Lotes Mistos como UM produto; na gold sao 2 codigo_cv (8883 Casas / 5958 Lotes) - a gestao precisa dizer como ratear
+PPN;Parc Paineira;;42481026;31200727;0,09;0,0849423727989809;0,91;0,0995549182079185;constantes IDENTICAS as de Parc das Orquideas - copiar/colar nao corrigido no legado; produto nao tem matriz em base_precos.xlsm

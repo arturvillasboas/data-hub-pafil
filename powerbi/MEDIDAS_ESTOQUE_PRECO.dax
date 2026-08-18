@@ -1,74 +1,139 @@
 // =============================================================================
-// Medidas DAX — Estoque / Preço / VSO / Margem (task 6.4 do roadmap).
+// Medidas DAX — Estoque / Preço / VSO / Margem  (BI de Preço, tasks 6.4 e 6.5).
 //
 // Reimplementação parametrizada do modelo "Preço" legado (KPI-11..17 do
-// REGRAS_NEGOCIO.md, seção 4.2): no legado eram ~8 medidas REPETIDAS por
+// REGRAS_NEGOCIO.md, seção 4.2): no legado eram ~9 medidas REPETIDAS por
 // empreendimento (PA_, TR_, PSU_, PCJ_, ARB_, PO_, PR_, F16_, QBV_, VM_, PPN_,
-// VLPQ_ — 12 conjuntos) com constantes de margem coladas no DAX. Aqui é 1
-// conjunto só, parametrizado por gold.dim_estrutura (status da unidade) e
-// gold.dim_viabilidade (parâmetros de margem por codigo_cv) — filtra por
-// empreendimento com o slicer, não precisa duplicar medida (resolve R4).
+// VLPQ_ — 12 conjuntos, 21 páginas) com constantes de margem coladas no DAX.
+// Aqui é 1 conjunto só, parametrizado por gold.dim_estrutura (status da unidade)
+// e gold.dim_viabilidade (parâmetros de margem por codigo_cv) — filtra por
+// empreendimento com o slicer, não precisa duplicar medida nem página (resolve
+// R4). Ver powerbi/PAGINA_PRECO.md para o mapa visual-a-visual do legado.
 //
-// Tabelas (importadas do schema gold): dim_estrutura, dim_viabilidade,
-// dim_empreendimento — relacione dim_estrutura[codigo_cv] e
-// dim_viabilidade[codigo_cv] a dim_empreendimento[codigo_interno_empreendimento].
-// Colunas-chave de dim_estrutura: preco, preco_m2, area_privativa, status_unidade
-// ('Estoque'/'Realizado'/'Permuta'), codigo_cv.
-// Colunas-chave de dim_viabilidade (1 linha por codigo_cv): receita_bruta,
-// deducoes_pct, despesas_pct, terreno_valor, construcao_valor.
+// TABELAS (importadas do schema gold) e RELACIONAMENTOS necessários:
+//   dim_estrutura[codigo_cv]     -> dim_empreendimento[codigo_interno_empreendimento]
+//   dim_viabilidade[codigo_cv]   -> dim_empreendimento[codigo_interno_empreendimento]
+//   dim_estrutura[codigo_interno] 1 -> * fato_reservas[codigo_estrutura]   <-- NOVO (task 6.5)
+//   dim_ivv_padrao[codigo_cv]    -> dim_empreendimento[codigo_interno_empreendimento]
+//
+// A relação dim_estrutura -> fato_reservas é o que faz as MATRIZES de posição
+// funcionarem (VGV/M² praticado quebrado por prumada x posição x final). No
+// legado ela vinha pronta pelo "Código interno da unidade" do CSV; a API CVDW não
+// expõe esse código (R17), então a gold monta a ponte por (codigo_cv, bloco,
+// unidade) normalizado em gold.dpara_reserva_estrutura — 3.140 vendas/distratos
+// ligados (12/ago/2026).
 //
 // ⚠️ Margem/MargemViab só fazem sentido com o relatório filtrado a UM
 // empreendimento por vez (slicer) — dim_viabilidade tem parâmetros por produto;
-// somar vários empreendimentos numa célula sem filtro dá um número sem sentido
-// (mistura margens de produtos diferentes). Mesma limitação do modelo legado
-// (cada medida XX_Margem já era implicitamente 1 empreendimento).
+// somar vários empreendimentos numa célula sem filtro dá um número sem sentido.
+// Mesma limitação do modelo legado (cada medida XX_Margem já era 1 empreendimento).
 //
-// ⚠️ Status da unidade (Estoque/Realizado) usa join (codigo_cv, bloco, unidade)
-// contra fato_reservas — a API CVDW não expõe o mesmo código de unidade que o
-// CSV legado tinha. Validar taxa de match antes de confiar cegamente no VSO.
-//
-// Cole numa tabela de medidas no Power BI. Meta VGV/Meta QTD/Forecast (Empreend.
-// x Meta) já estão em powerbi/MEDIDAS_GOLD.dax, sobre dim_metas_empreendimentos.
+// ⚠️ As medidas sobre fato_reservas ([VGV Realizado], [Metragem Vendida], ...)
+// contam TODA venda viva no contexto do filtro. Num visual cujas linhas vêm de
+// dim_estrutura, o filtro propaga pela relação e só entram as unidades da matriz;
+// num card solto, sem slicer de empreendimento, entram também os 331 registros de
+// produtos que não têm matriz de preço em base_precos.xlsm (ex.: Parc Paineira).
+// Sempre use com o slicer de empreendimento, como no legado.
 // =============================================================================
 
-// ---- Estoque (KPI-11, 12, 14) ----
+
+// ---- Estoque (KPI-11, 12, 14) ----------------------------------------------
+// "Estoque" = unidade não vendida e não permuta. Desde ago/2026 (task 6.5)
+// unidade DISTRATADA volta pro estoque — é a regra do BI de Preço legado (as
+// planilhas <Produto> - Resumo.xlsm só listam Situação="Vendida") e a leitura
+// física correta. Ver gold.dim_estrutura[status_unidade].
 EstoqueVGV =                                     // KPI-11
 CALCULATE ( SUM ( dim_estrutura[preco] ), dim_estrutura[status_unidade] = "Estoque" )
+
+// Réplica exata do card do legado (XX_EstoqueVGV): lá o VGV do estoque NÃO
+// filtrava permuta, embora Estoque_Qtd e MetragemAVender filtrassem. Ou seja, o
+// card "VGV Estoque" do BI de Preço soma unidades de permuta que nunca vão virar
+// receita — inconsistência do legado, não da migração (é a diferença de
+// R$ 16,6 mi no Arboretto, R$ 15,1 mi no Parc Sul). Mantida só para reconciliar;
+// nos visuais novos use [EstoqueVGV].
+EstoqueVGV (legado, c/ permuta) =
+CALCULATE ( SUM ( dim_estrutura[preco] ), dim_estrutura[status_unidade] <> "Realizado" )
 
 Estoque Qtd =                                    // KPI-12
 CALCULATE ( COUNTROWS ( dim_estrutura ), dim_estrutura[status_unidade] = "Estoque" )
 
-MetragemAVender =                                // KPI-14
-CALCULATE ( SUM ( dim_estrutura[area_privativa] ), dim_estrutura[status_unidade] = "Estoque" )
+Unidades Totais = COUNTROWS ( dim_estrutura )
 
+Ticket Médio Estoque = DIVIDE ( [EstoqueVGV], [Estoque Qtd] )
+
+
+// ---- Realizado — vem da FATO, não da matriz (correção da task 6.5) ----------
+// O legado somava o VALOR DE CONTRATO das vendas (XX_Vendas[Valor do contrato]),
+// não o preço de tabela da matriz. A versão anterior desta medida usava
+// SUM(dim_estrutura[preco]) das unidades "Realizado", o que ignora desconto e
+// ágio — dá um VGV realizado fictício. Agora sai da fato, igual ao legado.
 VGV Realizado =
-CALCULATE ( SUM ( dim_estrutura[preco] ), dim_estrutura[status_unidade] = "Realizado" )
+CALCULATE ( SUM ( fato_reservas[valor_contrato] ), fato_reservas[eh_venda] = TRUE () )
+
+Qtd Vendida =
+CALCULATE ( COUNTROWS ( fato_reservas ), fato_reservas[eh_venda] = TRUE () )
 
 ProjetadoVGV = [EstoqueVGV] + [VGV Realizado]    // KPI-13
 
-// ---- Preço médio / velocidade de vendas (KPI-15, KPI-16) ----
-M² Médio Realizado =                             // KPI-15
+
+// ---- Metragem (KPI-14) ------------------------------------------------------
+Metragem Total = SUM ( dim_estrutura[area_privativa] )
+
+MetragemAVender =                                // KPI-14
+CALCULATE ( SUM ( dim_estrutura[area_privativa] ), dim_estrutura[status_unidade] = "Estoque" )
+
+Metragem Permuta =
+CALCULATE ( SUM ( dim_estrutura[area_privativa] ), dim_estrutura[status_unidade] = "Permuta" )
+
+Metragem Vendida =
+CALCULATE ( SUM ( fato_reservas[m2_unidade] ), fato_reservas[eh_venda] = TRUE () )
+
+
+// ---- Preço por m² (KPI-15) --------------------------------------------------
+// M² a Realizar = preço de TABELA do estoque por m² (o que ainda vai ser vendido).
+M²ARealizar = DIVIDE ( [EstoqueVGV], [MetragemAVender] )        // KPI-15
+
+// M² Praticado PONDERADO — VGV realizado / metragem vendida. É o número certo pra
+// totalizar e pra célula de matriz com várias unidades.
+M² Praticado = DIVIDE ( [VGV Realizado], [Metragem Vendida] )
+
+// Média SIMPLES do preço/m² por venda — equivale ao XX_M²Médio do legado
+// (AVERAGE(XX_Vendas[M² Praticado])). Difere do ponderado quando as áreas variam
+// muito; mantido para bater com o card antigo. Calculado na hora pra não depender
+// de coluna nova; gold.fato_reservas[m2_praticado] já traz o mesmo valor pronto.
+M² Médio Realizado =                             // KPI-15 (definição legada)
+CALCULATE (
+    AVERAGEX ( fato_reservas, DIVIDE ( fato_reservas[valor_contrato], fato_reservas[m2_unidade] ) ),
+    fato_reservas[eh_venda] = TRUE ()
+)
+
+// Preço de tabela médio das unidades já vendidas — base pra comparar com o
+// praticado (o legado só tinha isso no card HTML do F16).
+M² Tabela Realizado =
 CALCULATE ( AVERAGE ( dim_estrutura[preco_m2] ), dim_estrutura[status_unidade] = "Realizado" )
 
-M²ARealizar = DIVIDE ( [EstoqueVGV], [MetragemAVender] )    // KPI-15
+// Ágio (+) / deságio (-) do preço praticado sobre a tabela. Insight novo, barato:
+// responde "estamos vendendo acima ou abaixo da tabela?" por prumada/posição.
+Δ Praticado x Tabela % = DIVIDE ( [M² Praticado] - [M² Tabela Realizado], [M² Tabela Realizado] )
 
-VSO =                                            // KPI-16 — velocidade de vendas sobre oferta
+
+// ---- VSO / IVV Padrão x Realizado (visual "IVV x Empreendimento") ------------
+VSO =                                            // KPI-16 — vendas sobre oferta
 VAR _total     = COUNTROWS ( dim_estrutura )
 VAR _realizado = CALCULATE ( COUNTROWS ( dim_estrutura ), dim_estrutura[status_unidade] = "Realizado" )
 RETURN DIVIDE ( _realizado, _total )
 
-// ---- IVV Padrão x Realizado (visual "IVV x Empreendimento" do BI legado) ----
 // dim_ivv_padrao já vem com eh_mes_atual calculado ao vivo (idade do produto em
-// meses, comparada à curva de 36 meses) — não precisa de coluna calculada nem
-// de relacionamento com data de lançamento no Power BI, diferente do legado
-// (m_ivv_padrao = CALCULATE(SUM(d_ivv[%IVV]), d_ivv[validacao]="sim")).
-// Empreendimento mais antigo que 36 meses de lançamento "trava" no valor do
-// último mês da curva (100%, meta atingida) em vez de ficar sem valor — pedido
-// do dev (ago/2026), pra o visual mostrar as 2 barras em TODOS os empreendimentos.
-// dim_ivv_padrao[curva_extrapolada] marca quando isso acontece, se quiser
-// diferenciar visualmente (ex.: rótulo "meta atingida" nesses casos).
+// meses, comparada à curva de 36 meses) — não precisa de coluna calculada nem de
+// relacionamento com data de lançamento, diferente do legado (m_ivv_padrao =
+// CALCULATE(SUM(d_ivv[%IVV]), d_ivv[validacao]="sim")). Empreendimento com mais de
+// 36 meses "trava" no último mês da curva (100%) em vez de ficar sem valor —
+// dim_ivv_padrao[curva_extrapolada] marca esses casos.
+// ⚠️ No modelo "Esteira de reservas" a tabela se chama `dim_ivv` (mas a partição
+// aponta pra gold.dim_ivv_padrao — o nome curto é anterior à view). Use o nome da
+// TABELA DO MODELO na medida, não o da view.
 % IVV Padrão =                                    // equivalente a m_ivv_padrao do legado
-CALCULATE ( SUM ( dim_ivv_padrao[pct_ivv] ), dim_ivv_padrao[eh_mes_atual] = TRUE () )
+CALCULATE ( SUM ( dim_ivv[pct_ivv] ), dim_ivv[eh_mes_atual] = TRUE () )
 
 Diferença IVV x Padrão = [VSO] - [% IVV Padrão]   // >0 = vendendo acima do ritmo padrão
 
@@ -82,7 +147,7 @@ Diferença IVV x Padrão = [VSO] - [% IVV Padrão]   // >0 = vendendo acima do r
 // (Ex.: Arboretto aparecia 1,33% = 2 vendas de 2026 ÷ 150 unidades, mesmo tendo
 // 60 vendas somando todos os anos → o correto é 40%.)
 // REMOVEFILTERS no calendário/ano faz a contagem virar acumulada (desde sempre),
-// alinhando as duas barras. Use ESTA no lugar da m_percentual_vendido antiga.
+// alinhando as duas barras.
 % Vendido Acumulado =
 VAR _vendidas =
     CALCULATE (
@@ -94,7 +159,16 @@ VAR _vendidas =
 VAR _estrutura = COUNT ( dim_estrutura[codigo_interno] )
 RETURN DIVIDE ( _vendidas, _estrutura, 0 )
 
+
 // ---- Margem (KPI-17) — parametrizada por dim_viabilidade -------------------
+// ⚠️ PRÉ-REQUISITO: a tabela `dim_viabilidade` (gold) precisa estar no modelo.
+// Adicione pela UI do Desktop (Obter dados → PostgreSQL), NÃO por XMLA/TOM:
+// tabela criada por fora entra como consulta que o editor do Power Query não
+// authorou, e o Desktop trava ao aplicar com "Coleção foi modificada; talvez a
+// operação de enumeração não seja executada" — o que impede salvar o .pbix
+// (aconteceu 12/ago/2026 e custou todo o trabalho de modelo da sessão).
+// Depois de adicionar, relacione dim_viabilidade[codigo_cv] (muitos) ->
+// dim_empreendimento[codigo_interno_empreendimento] (um).
 // CustoObra = |Terreno + Construção| (fixo, não escala com o VGV realizado/
 // projetado); Deduções/Despesas escalam com a receita (impostos, comissão,
 // opex comercial). Fórmula validada batendo com PA_Margem/PA_MargemViab do
@@ -125,3 +199,39 @@ DIVIDE (
     _vgv - _custoObra - _vgv * _deducoesPct - _vgv * _despesasPct,
     _vgv * [% Receita Líquida]
 )
+
+// Insight que o legado não tinha: quanto a margem realizada está acima/abaixo da
+// margem prevista na viabilidade. É a leitura que a diretoria pede quando compara
+// "o que prometemos" com "o que está saindo".
+Δ Margem x Viabilidade = [Margem] - [MargemViab]
+
+
+// =============================================================================
+// BLOCO B — medidas da MATRIZ "REALIZADO" (por prumada x posição x final)
+//
+// Estas leem o realizado no grão da UNIDADE, colunas que a gold.dim_estrutura
+// passou a expor em 12/ago/2026 (vgv_realizado, m2_praticado, agio_pct,
+// ano_venda). São o único jeito de a matriz de posição mostrar valor de venda:
+// as medidas do bloco A leem fato_reservas, que NÃO é filtrada pelas linhas da
+// matriz (não existe relacionamento dim_estrutura -> fato_reservas, e criá-lo
+// fecharia um losango com dim_empreendimento — o Power BI recusa).
+//
+// ⚠️ Só criar DEPOIS de reabrir o Power BI Desktop e atualizar dim_estrutura: o
+// Power Query cacheia o schema da view por sessão, então colunas novas só
+// aparecem em sessão nova (bateu nisso em 12/ago/2026).
+// =============================================================================
+
+VGV Realizado (matriz) = SUM ( dim_estrutura[vgv_realizado] )
+
+M² Praticado (matriz) =
+DIVIDE (
+    SUM ( dim_estrutura[vgv_realizado] ),
+    CALCULATE ( SUM ( dim_estrutura[area_privativa] ), dim_estrutura[status_unidade] = "Realizado" )
+)
+
+M² Médio Realizado (matriz) = AVERAGE ( dim_estrutura[m2_praticado] )
+
+// ⚠️ Ágio/deságio compara o contrato ASSINADO (2020..2026) com o preço de tabela
+// de HOJE — em produto antigo o número embute o reajuste da tabela, não só
+// desconto. Leitura confiável = vendas recentes (filtre ano_venda).
+Ágio x Tabela % = AVERAGE ( dim_estrutura[agio_pct] )
