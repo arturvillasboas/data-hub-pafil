@@ -43,8 +43,16 @@ if ($svcInfo.PathName -notmatch '-D\s+"([^"]+)"') {
     throw "Nao consegui deduzir o data dir a partir do comando do servico ($($svcInfo.PathName)). Edite o script e informe `$DataDir manualmente."
 }
 $DataDir = $Matches[1]
-$PgBin   = Split-Path (Split-Path $svcInfo.PathName.Trim('"').Split(' ')[0])
-$Psql    = Join-Path $PgBin "psql.exe"
+
+# O caminho do executavel vem entre aspas no comando do servico (ex.:
+# "C:\Program Files\PostgreSQL\16\bin\pg_ctl.exe" runservice ...). Extrair
+# pelo conteudo entre aspas, nao por Split(' '), porque "Program Files" tem
+# espaco e quebraria um split ingenuo no meio do caminho.
+if ($svcInfo.PathName -notmatch '^"([^"]+)"') {
+    throw "Nao consegui deduzir o caminho do executavel a partir do comando do servico ($($svcInfo.PathName)). Edite o script e informe `$PgBin manualmente."
+}
+$PgBin = Split-Path $Matches[1]
+$Psql  = Join-Path $PgBin "psql.exe"
 Log "Data dir: $DataDir"
 Log "Binarios: $PgBin"
 
