@@ -75,6 +75,17 @@ Não há uma preferência técnica forte da nossa parte: a escolha deve seguir o
 já usado pela casa. O script de provisionamento já cobre os dois casos. Só preciso
 saber qual escolher, para fixar isso no runbook.
 
+> **Resolvido em 20 de agosto de 2026, mas não como pedido aqui:** a EC2 nunca
+> foi provisionada. A TI passou credenciais de RDP para uma **máquina Windows
+> 10 Pro física ou local** e confirmou que essa é a decisão definitiva (não é
+> uma instância AWS: o teste do endereço de metadados da AWS deu timeout
+> nela). O runbook de execução passou a ser
+> [`RUNBOOK_WINDOWS.md`](RUNBOOK_WINDOWS.md), que resolve como consequência
+> direta o item (c) abaixo (o gateway do Power BI já tem onde morar, na
+> mesma máquina), mas também significa que boa parte da seção 3 deste
+> documento (Security Group, EBS) não se aplica mais: ver a seção 7 do
+> `RUNBOOK_WINDOWS.md` para o que protege a rede nesta configuração.
+
 **(b) Forma de acesso administrativo: SSM Session Manager ou SSH por chave?**
 A recomendação é o SSM, por dispensar a porta 22 aberta e ser auditado por IAM.
 Isso exige que a instância tenha um IAM Instance Profile com a policy gerenciada

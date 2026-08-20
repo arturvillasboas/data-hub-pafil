@@ -1,13 +1,20 @@
-# Runbook da infraestrutura de produção (Fase 7)
+# Runbook da infraestrutura de produção (Fase 7): versão Linux (histórico)
+
+> **Atualização de 20 de agosto de 2026:** a EC2 Linux deste documento nunca
+> chegou a ser provisionada. A TI liberou, em vez disso, credenciais de RDP
+> para uma **máquina Windows 10 Pro física ou local** (confirmado por teste:
+> o endereço de metadados da AWS deu timeout nela, então não é sequer uma
+> instância AWS de qualquer sistema operacional). O runbook que reflete o que
+> existe de verdade agora é [`RUNBOOK_WINDOWS.md`](RUNBOOK_WINDOWS.md); a
+> linha do tempo completa da decisão está na memória "hospedagem-producao".
+> Este arquivo continua aqui como referência: se a empresa algum dia migrar o
+> banco para uma instância Linux de verdade, os scripts `.sh` e `systemd/`
+> abaixo voltam a valer sem alteração.
 
 Este é o passo a passo para sair do estado "nada provisionado" até chegar a "Power
 BI lendo a camada gold no servidor da empresa". Ele cobre as etapas 7.2 a 7.5 do
 `Roadmap_Projeto_Gestao.xlsx`. A etapa 7.1, que é pedir a instância, está descrita
 no documento [`PEDIDO_TI.md`](PEDIDO_TI.md).
-
-**Estado em 12 de agosto de 2026:** a instância ainda não foi provisionada. Tudo
-neste documento está escrito para ser executado, não para ser apenas planejado.
-Quando a EC2 existir, basta seguir as seções de cima para baixo.
 
 ## O que tem nesta pasta
 
