@@ -300,18 +300,23 @@ Agora registre as duas tarefas, ambas como `SYSTEM` (por isso rodam mesmo com
 ninguém logado):
 
 ```powershell
-schtasks /Create /TN "PafilDW - Backup diario" /RU SYSTEM /RL HIGHEST /SC DAILY /ST 02:30 /F `
+schtasks /Create /TN "PafilDW - Backup diario" /RU SYSTEM /RL HIGHEST /SC DAILY /ST 05:00 /F `
   /TR "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\pafil\app\infra\backup_pg.ps1"
 
-schtasks /Create /TN "PafilDW - Ingestao diaria" /RU SYSTEM /RL HIGHEST /SC DAILY /ST 03:00 /F `
+schtasks /Create /TN "PafilDW - Ingestao diaria" /RU SYSTEM /RL HIGHEST /SC DAILY /ST 06:00 /RI 60 /DU 0012:01 /F `
   /TR "cmd /c C:\pafil\app\.venv\Scripts\python.exe C:\pafil\app\ingestao.py --incremental >> C:\pafil\logs\ingestao.log 2>&1"
 ```
 
-Os horários replicam a versão Linux: backup às 02:30, ingestão às 03:00 (dá
-30 minutos de folga entre um e outro), sempre horário de Brasília, porque é o
-fuso configurado no Windows desta máquina (confirme com `Get-TimeZone`; se
-não for `E. South America Standard Time`, ajuste com `Set-TimeZone` ou os
-horários acima vão disparar na hora errada).
+Diferente da versão Linux (um disparo só, de madrugada): aqui o backup roda
+uma vez por dia, às 05h, e a ingestão roda de hora em hora, das 06h às 18h
+(decisão do dev, 20/ago/2026, pensada pro horário comercial: os dados ficam
+frescos ao longo do dia de trabalho, não só na manhã seguinte). `/RI 60` é o
+intervalo de repetição em minutos, `/DU 0012:01` é por quanto tempo essa
+repetição continua a partir do `/ST` (12h01min cobre até as 18h certinho).
+Sempre horário de Brasília, porque é o fuso configurado no Windows desta
+máquina (confirme com `Get-TimeZone`; se não for `E. South America Standard
+Time`, ajuste com `Set-TimeZone` ou os horários acima vão disparar na hora
+errada).
 
 Para conferir que funcionou:
 
