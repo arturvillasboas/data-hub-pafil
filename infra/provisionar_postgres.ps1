@@ -111,33 +111,50 @@ function New-SenhaForte {
 function Existe-Role([string]$nome) { (Psql-Root "SELECT 1 FROM pg_roles WHERE rolname='$nome'") -eq "1" }
 function Existe-Db([string]$nome)   { (Psql-Root "SELECT 1 FROM pg_database WHERE datname='$nome'") -eq "1" }
 
+# Sempre sincroniza a senha do banco com a que vai pro arquivo de
+# credenciais, reaproveitando a senha existente se o arquivo ja estiver la,
+# ou gerando uma nova senao. Nao basta "CREATE ROLE so se nao existir": numa
+# maquina reaproveitada (ou apos uma tentativa anterior que falhou no meio do
+# caminho), o role pode ja existir com uma senha diferente da que o arquivo
+# registra, e so um ALTER ROLE incondicional garante as duas coisas iguais.
+# Foi exatamente essa divergencia que aconteceu na maquina de producao
+# (20/ago/2026): o arquivo tinha uma senha que nunca tinha sido aplicada.
 if (Test-Path $ArqCred) {
-    Aviso "$ArqCred ja existe -- mantendo as senhas atuais (nao regenero)."
-    # O arquivo existir nao prova que os roles existem de verdade: se uma
-    # rodada anterior escreveu o arquivo mas falhou antes de confirmar a
-    # criacao (ex.: senha errada do superusuario), essa suposicao fica falsa.
-    if (-not (Existe-Role $RoleApp) -or -not (Existe-Role $RoleBi)) {
-        throw "$ArqCred existe, mas os roles $RoleApp/$RoleBi nao estao no banco. Uma rodada anterior deve ter falhado no meio do caminho. Apague $ArqCred (Remove-Item $ArqCred) e rode o script de novo para gerar credenciais novas."
+    Aviso "$ArqCred ja existe -- reaproveitando as senhas dele."
+    $conteudoCred = Get-Content $ArqCred
+    $SenhaApp = (($conteudoCred | Select-String "^$RoleApp=") -split "=", 2)[1]
+    $SenhaBi  = (($conteudoCred | Select-String "^$RoleBi=")  -split "=", 2)[1]
+    if (-not $SenhaApp -or -not $SenhaBi) {
+        throw "$ArqCred existe mas nao tem as linhas $RoleApp=... / $RoleBi=... esperadas. Apague o arquivo (Remove-Item $ArqCred) e rode o script de novo para gerar credenciais novas."
     }
 } else {
-    Log "Gerando senhas e criando roles"
+    Log "Gerando senhas novas"
     $SenhaApp = New-SenhaForte
     $SenhaBi  = New-SenhaForte
-    New-Item -ItemType Directory -Force -Path $CredDir | Out-Null
+}
 
-    if (-not (Existe-Role $RoleApp)) { Psql-Root "CREATE ROLE $RoleApp LOGIN PASSWORD '$SenhaApp'" | Out-Null }
-    if (-not (Existe-Role $RoleBi))  { Psql-Root "CREATE ROLE $RoleBi LOGIN PASSWORD '$SenhaBi'" | Out-Null }
+Log "Sincronizando roles com as senhas do arquivo de credenciais"
+if (Existe-Role $RoleApp) {
+    Psql-Root "ALTER ROLE $RoleApp WITH PASSWORD '$SenhaApp'" | Out-Null
+} else {
+    Psql-Root "CREATE ROLE $RoleApp LOGIN PASSWORD '$SenhaApp'" | Out-Null
+}
+if (Existe-Role $RoleBi) {
+    Psql-Root "ALTER ROLE $RoleBi WITH PASSWORD '$SenhaBi'" | Out-Null
+} else {
+    Psql-Root "CREATE ROLE $RoleBi LOGIN PASSWORD '$SenhaBi'" | Out-Null
+}
 
-    @"
-# Credenciais do Pafil DW -- geradas por provisionar_postgres.ps1 em $(Get-Date -Format o)
+New-Item -ItemType Directory -Force -Path $CredDir | Out-Null
+@"
+# Credenciais do Pafil DW -- geradas/confirmadas por provisionar_postgres.ps1 em $(Get-Date -Format o)
 # Copie para o .env da maquina do analista. NAO versionar. NAO colar em chat/e-mail.
 $RoleApp=$SenhaApp
 $RoleBi=$SenhaBi
 "@ | Set-Content -Path $ArqCred -Encoding ascii
 
-    icacls $ArqCred /inheritance:r | Out-Null
-    icacls $ArqCred /grant:r "*S-1-5-32-544:(R,W)" | Out-Null  # grupo Administrators, por SID (independe do idioma do SO)
-}
+icacls $ArqCred /inheritance:r | Out-Null
+icacls $ArqCred /grant:r "*S-1-5-32-544:(R,W)" | Out-Null  # grupo Administrators, por SID (independe do idioma do SO)
 
 if (-not (Existe-Db $DbNome)) {
     Psql-Root "CREATE DATABASE $DbNome OWNER $RoleApp ENCODING 'UTF8' TEMPLATE template0" | Out-Null
