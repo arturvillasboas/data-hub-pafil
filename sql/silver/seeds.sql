@@ -328,6 +328,36 @@ CREATE TABLE IF NOT EXISTS silver.d_metas_empreendimentos (
     PRIMARY KEY (codigo_cv, data, status_meta)
 );
 
+-- d_metas_performance_digital — metas mensais de Leads/MQL/Vendas Marketing/Vendas
+-- Digital por empreendimento (Metas Performance Digital.xlsx, aba Planilha1). Fonte
+-- do time de marketing, separada do Meta.xlsx (que só cobre metas de venda/House) —
+-- alimenta a página "Marketing N1" do legado. codigo_cv não vem no arquivo (só o
+-- nome do empreendimento, já com os apelidos aplicados na própria planilha, via
+-- Power Query no legado); resolvido depois do load por conformar_empreendimento(),
+-- igual ao silver.d_estrutura (ver popular_seeds.py).
+CREATE TABLE IF NOT EXISTS silver.d_metas_performance_digital (
+    codigo_cv               int,
+    empreendimento           text,
+    status                   text,
+    regional                 text,
+    data                     date,
+    lead                     numeric,
+    mql                      numeric,
+    pct_mql                  numeric,
+    meta_vendas_house        numeric,
+    meta_vendas_digital      numeric,
+    meta_vendas_mkt          numeric,
+    pct_meta_venda_house     numeric,
+    pct_meta_venda_digital   numeric,
+    pct_meta_venda_mkt       numeric,
+    cpl                      int,
+    investimento             numeric,
+    pct_vendas               numeric,
+    meta_vendas              int,
+    _origem                  text DEFAULT 'SharePoint: BI Matriz/Metas Performance Digital.xlsx (aba Planilha1)',
+    PRIMARY KEY (empreendimento, data)
+);
+
 -- d_viabilidade — parâmetros de margem por empreendimento, formato EAV (d_para
 -- empreendimentos.xlsx, aba viabil_padrão, tabela tab_viabil_padrão). Resolve R4: no
 -- legado eram ~12 conjuntos de constantes coladas em DAX; aqui viram dado consultável.

@@ -54,7 +54,12 @@ SELECT DISTINCT ON (u.id_empreendimento)
     r.regiao,
     silver.conformar_empreendimento(u.empreendimento) AS empreendimento_conformado,
     u.codigo_interno_empreendimento,
-    er.regional
+    er.regional,
+    -- Assinatura (RPO/URA/SCA/MTO etc.) — atributo de planejamento que já
+    -- vinha em silver.d_empreendimento_legado (d_para empreendimentos.xlsx,
+    -- aba d_para empreendimentos) só pra alimentar dim_ivv_padrao. Também é
+    -- usado como slicer na página "Marketing N1" do legado (task de ago/2026).
+    el.assinatura
 FROM silver.unidades u
 LEFT JOIN LATERAL (
     SELECT regiao FROM silver.reservas r
@@ -63,6 +68,8 @@ LEFT JOIN LATERAL (
 ) r ON true
 LEFT JOIN silver.dpara_empreendimento_regional er
        ON er.codigo_interno_empreendimento = u.codigo_interno_empreendimento
+LEFT JOIN silver.d_empreendimento_legado el
+       ON el.codigo_cv = u.codigo_interno_empreendimento
 WHERE u.id_empreendimento IS NOT NULL
 ORDER BY u.id_empreendimento, u.empreendimento;
 
@@ -822,6 +829,28 @@ SELECT
     m.meta_digital_rpo, m.meta_digital_regional, m.meta_digital,
     m.qtd_apresentacao, m.vgv_apresentacao
 FROM silver.d_metas_empreendimentos m
+LEFT JOIN gold.dim_empreendimento de
+       ON de.codigo_interno_empreendimento = m.codigo_cv;
+
+
+-- Metas mensais de Leads/MQL/Vendas Marketing/Vendas Digital por empreendimento
+-- (Metas Performance Digital.xlsx). Grão = codigo_cv x mês. Fonte separada do
+-- Meta.xlsx acima (aquele só cobre venda/House) — alimenta a página "Marketing
+-- N1" do legado.
+DROP VIEW IF EXISTS gold.dim_metas_performance_digital CASCADE;
+CREATE VIEW gold.dim_metas_performance_digital AS
+SELECT
+    m.codigo_cv,
+    de.id_empreendimento,
+    coalesce(de.empreendimento_conformado, m.empreendimento) AS empreendimento,
+    m.data,
+    coalesce(m.regional, de.regional)                        AS regional,
+    m.status,
+    m.lead, m.mql, m.pct_mql,
+    m.meta_vendas_house, m.meta_vendas_digital, m.meta_vendas_mkt,
+    m.pct_meta_venda_house, m.pct_meta_venda_digital, m.pct_meta_venda_mkt,
+    m.cpl, m.investimento, m.pct_vendas, m.meta_vendas
+FROM silver.d_metas_performance_digital m
 LEFT JOIN gold.dim_empreendimento de
        ON de.codigo_interno_empreendimento = m.codigo_cv;
 

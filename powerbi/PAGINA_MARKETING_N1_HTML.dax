@@ -1,0 +1,372 @@
+// =============================================================================
+// PÁGINA "MARKETING N1" — réplica da página homônima do BI Matriz legado
+// (BI V.2\BI Matriz\BI Matriz.pbix). Ago/2026.
+//
+// Estrutura decodificada direto do Report/Layout do .pbix legado (zip + JSON
+// UTF-16) + DAX das 26 medidas originais puxado ao vivo via powerbi-mcp
+// (measure_operations Get), NÃO adivinhado a partir do nome. Ver
+// powerbi/PAGINA_MARKETING_N1.md para o layout visual completo (slicers,
+// posições, checklist de montagem no Desktop).
+//
+// FONTE DE META NOVA: dim_metas_performace_digital (SIC — a tabela entrou no
+// modelo com esse nome, faltando o "n" de "performance"; manter esse nome em
+// TODAS as referências abaixo, senão as medidas quebram). Carrega
+// gold.dim_metas_performance_digital (view SQL, nome correto), alimentada por
+// silver.d_metas_performance_digital <- Metas Performance Digital.xlsx (aba
+// Planilha1, SharePoint BI V.2\BI Matriz\), grão empreendimento x mês. Loader:
+// popular_seeds.py --metas-performance-digital (env METAS_PERFORMANCE_DIGITAL_XLSX).
+// Separada do Meta.xlsx/dim_metas_empreendimentos (que só cobre venda/House) —
+// essa aqui cobre Lead/MQL/Vendas Marketing/Vendas Digital.
+//
+// ⚠️ NOMENCLATURA: NÃO reusar as medidas [Qtd Lead Quali] / [Tx_Qualif_Leads]
+// já existentes na pasta "Leads" — foram redefinidas em 23/jul/2026 para a
+// lógica por ETAPA da esteira (ver memória kpis-leads-html-taxa-qualificacao),
+// não são mais MQL. As medidas desta página usam a definição MQL ORIGINAL do
+// legado (fato_leads["MQL 2"]="SIM"), com nomes próprios "(Mkt N1)" para não
+// colidir.
+//
+// ⚠️ DUAS TAXONOMIAS DE "SHARE" (o legado também tem isso, não é bug nosso):
+//   - fato_reservas[Share] — classificação oficial da VENDA (Vendas
+//     Consolidadas, mesclada por proposta). Valores: "House RP", "House
+//     Regional", "Parcerias RP", "Parcerias Regional", "Pafil House", "Pafil
+//     Parcerias", "Parcerias", "Diretoria", "Pafil Diretoria".
+//   - depara_corretor_headcount[share] — escritório do CORRETOR (headcount do
+//     backoffice). Valores: "House RPO", "House URA", "House SCA", "House MTO".
+//   Cada medida abaixo usa a taxonomia que o legado usava na mesma posição —
+//   não são intercambiáveis.
+// =============================================================================
+
+
+// -----------------------------------------------------------------------------
+// 1. REALIZADO — 9 medidas, uma por card do topo
+// -----------------------------------------------------------------------------
+
+Qtd MQL (Mkt N1) =
+CALCULATE(
+    DISTINCTCOUNT ( fato_leads[id_lead] ),
+    fato_leads[canal 2.0] = "Lead",
+    fato_leads[MQL 2] = "SIM"
+)
+// MQL original do legado. Diferente de [Qtd Lead Quali], redefinido em
+// 23/jul/2026 p/ etapa da esteira.
+
+Tx MQL (Mkt N1) =
+DIVIDE ( [Qtd MQL (Mkt N1)], [Qtd Lead] )
+// Taxa de MQL original do legado (Tx_Qualif_Leads de antes de 23/jul/2026).
+
+Qtd Vendas House (Mkt N1) =
+CALCULATE(
+    COUNTROWS ( fato_reservas ),
+    fato_reservas[eh_venda_ou_distrato] = TRUE (),
+    KEEPFILTERS ( fato_reservas[Share] IN { "House RP", "House Regional" } )
+)
+
+VGV Vendas House (Mkt N1) =
+CALCULATE(
+    SUM ( fato_reservas[valor_contrato] ),
+    fato_reservas[eh_venda_ou_distrato] = TRUE (),
+    KEEPFILTERS ( fato_reservas[Share] IN { "House RP", "House Regional" } )
+)
+// KEEPFILTERS (19/ago/2026): sem isso, um visual agrupado por Share (ou Canal,
+// nas medidas de Marketing abaixo) fica com TODAS as fatias mostrando o mesmo
+// total — o filtro do CALCULATE substitui o contexto do próprio eixo em vez
+// de cruzar com ele. Achado ao ligar o donut "Canal x Leads" a
+// [Qtd Vendas Marketing (Mkt N1)] agrupado por fato_reservas[Canal].
+// Denominador dos % da página (Vendas Mkt House %, % Vendas Digitais House).
+
+Qtd Vendas Marketing (Mkt N1) =
+CALCULATE(
+    COUNTROWS ( fato_reservas ),
+    fato_reservas[eh_venda_ou_distrato] = TRUE (),
+    KEEPFILTERS ( fato_reservas[Canal] IN { "Lead", "Stand de Vendas", "Ligação", "Ação Externa" } ),
+    KEEPFILTERS ( fato_reservas[Mídia] <> "Ação - Corujão Imobs" )
+)
+
+VGV Vendas Marketing (Mkt N1) =
+CALCULATE(
+    SUM ( fato_reservas[valor_contrato] ),
+    fato_reservas[eh_venda_ou_distrato] = TRUE (),
+    KEEPFILTERS ( fato_reservas[Canal] IN { "Lead", "Stand de Vendas", "Ligação", "Ação Externa" } ),
+    KEEPFILTERS ( fato_reservas[Mídia] <> "Ação - Corujão Imobs" )
+)
+// Também é o card "VGV" da página (mesma medida do legado, reusada).
+
+Qtd Vendas Digital (Mkt N1) =
+CALCULATE(
+    COUNTROWS ( fato_reservas ),
+    fato_reservas[eh_venda_ou_distrato] = TRUE (),
+    KEEPFILTERS ( fato_reservas[Canal] = "Lead" )
+)
+// Subconjunto Digital de Vendas Marketing (só Canal=Lead, sem Stand/Ligação/Ação Externa).
+
+Vendas Marketing House % (Mkt N1) =
+DIVIDE ( [VGV Vendas Marketing (Mkt N1)], [VGV Vendas House (Mkt N1)] )
+
+% Vendas Digitais House (Mkt N1) =
+VAR _vgvLeadHouse =
+    CALCULATE(
+        SUM ( fato_reservas[valor_contrato] ),
+        fato_reservas[eh_venda_ou_distrato] = TRUE (),
+        KEEPFILTERS ( fato_reservas[Canal] = "Lead" ),
+        KEEPFILTERS ( depara_corretor_headcount[share] IN { "House RPO", "House URA", "House SCA", "House MTO" } )
+    )
+RETURN
+    DIVIDE ( _vgvLeadHouse, [VGV Vendas House (Mkt N1)] )
+// Taxonomia de Share do CORRETOR (headcount), não a de fato_reservas[Share] —
+// igual ao legado, que usava dpara_gerentes[Share] aqui e f_vendas_consolidadas[Share]
+// em "Qtd Vendas House".
+
+
+// -----------------------------------------------------------------------------
+// 2. QUEBRA DO HOVER (House x Parcerias) — só para os cards Vendas Marketing e
+//    VGV, que compartilham a mesma medida-base. Ver §4 do PAGINA_MARKETING_N1.md
+//    sobre por que os outros 7 cards não ganharam essa quebra.
+// -----------------------------------------------------------------------------
+
+Qtd Vendas Marketing House (Mkt N1) =
+CALCULATE ( [Qtd Vendas Marketing (Mkt N1)], fato_reservas[Share] IN { "House RP", "House Regional", "Pafil House" } )
+
+Qtd Vendas Marketing Parcerias (Mkt N1) =
+CALCULATE ( [Qtd Vendas Marketing (Mkt N1)], fato_reservas[Share] IN { "Parcerias RP", "Parcerias Regional", "Pafil Parcerias", "Parcerias" } )
+
+VGV Vendas Marketing House (Mkt N1) =
+CALCULATE ( [VGV Vendas Marketing (Mkt N1)], fato_reservas[Share] IN { "House RP", "House Regional", "Pafil House" } )
+
+VGV Vendas Marketing Parcerias (Mkt N1) =
+CALCULATE ( [VGV Vendas Marketing (Mkt N1)], fato_reservas[Share] IN { "Parcerias RP", "Parcerias Regional", "Pafil Parcerias", "Parcerias" } )
+
+
+// -----------------------------------------------------------------------------
+// 3. META / ÍCONE — 17 medidas, tradução 1:1 do DAX legado (SUM/AVERAGE sobre
+//    dim_metas_performace_digital em vez de 'Metas Performance Digital').
+//    Padrão de ícone: ▲ acima da meta, ▼ abaixo, = ou ≡ na igualdade exata
+//    (os dois "≡" abaixo são fiéis ao legado, que comparava contagem em vez
+//    de razão nesses dois casos específicos).
+// -----------------------------------------------------------------------------
+
+Meta Lead (Mkt N1) =
+DIVIDE ( [Qtd Lead], SUM ( dim_metas_performace_digital[lead] ) )
+
+Meta Lead Icone (Mkt N1) =
+IF ( [Meta Lead (Mkt N1)] > 1, UNICHAR ( 9650 ), IF ( [Meta Lead (Mkt N1)] = 1, "=", UNICHAR ( 9660 ) ) )
+
+Meta MQL (Mkt N1) =
+DIVIDE ( [Qtd MQL (Mkt N1)], SUM ( dim_metas_performace_digital[mql] ) )
+
+Meta MQL Icone (Mkt N1) =
+IF ( [Meta MQL (Mkt N1)] > 1, UNICHAR ( 9650 ), IF ( [Meta MQL (Mkt N1)] = 1, "=", UNICHAR ( 9660 ) ) )
+
+Meta Qualificação (Mkt N1) =
+DIVIDE ( [Tx MQL (Mkt N1)], AVERAGE ( dim_metas_performace_digital[pct_mql] ) )
+
+Meta Qualificação Icone (Mkt N1) =
+IF ( [Meta Qualificação (Mkt N1)] > 1, UNICHAR ( 9650 ), IF ( [Meta Qualificação (Mkt N1)] = 1, "=", UNICHAR ( 9660 ) ) )
+
+Meta Vendas House (Mkt N1) =
+DIVIDE ( [Qtd Vendas House (Mkt N1)], SUM ( dim_metas_performace_digital[meta_vendas_house] ) )
+
+Meta Vendas House Icone (Mkt N1) =
+IF ( [Meta Vendas House (Mkt N1)] > 1, UNICHAR ( 9650 ), IF ( [Meta Vendas House (Mkt N1)] = 1, "=", UNICHAR ( 9660 ) ) )
+
+Meta Venda Marketing (Mkt N1) =
+DIVIDE ( [Qtd Vendas Marketing (Mkt N1)], SUM ( dim_metas_performace_digital[meta_vendas_mkt] ) )
+
+Meta Venda Marketing Icone (Mkt N1) =
+VAR _ref = SUM ( dim_metas_performace_digital[meta_vendas_mkt] )
+RETURN IF ( [Qtd Vendas Marketing (Mkt N1)] > _ref, UNICHAR ( 9650 ), IF ( [Qtd Vendas Marketing (Mkt N1)] = _ref, UNICHAR ( 8801 ), UNICHAR ( 9660 ) ) )
+
+Meta VGV Marketing (Mkt N1) =
+VAR _mediaVGV = AVERAGEX ( VALUES ( fato_reservas[id_reserva] ), [VGV Vendas Marketing (Mkt N1)] )
+VAR _somaMeta = SUM ( dim_metas_performace_digital[meta_vendas_mkt] )
+RETURN _mediaVGV * _somaMeta
+// Fórmula exata do legado (VGV Vendas Marketing / Reserva médio * meta de
+// contagem) — mantida como está mesmo parecendo pouco intuitiva, pra bater
+// com o número que a gestão já conhece.
+
+Meta Vendas Marketing House % (Mkt N1) =
+DIVIDE ( [Vendas Marketing House % (Mkt N1)], AVERAGE ( dim_metas_performace_digital[pct_meta_venda_mkt] ) )
+
+Meta Vendas Marketing House Icone (Mkt N1) =
+IF ( [Meta Vendas Marketing House % (Mkt N1)] > 1, UNICHAR ( 9650 ), IF ( [Meta Vendas Marketing House % (Mkt N1)] = 1, "=", UNICHAR ( 9660 ) ) )
+
+Meta Venda Digital (Mkt N1) =
+DIVIDE ( [Qtd Vendas Digital (Mkt N1)], SUM ( dim_metas_performace_digital[meta_vendas_digital] ) )
+
+Meta Venda Digital Icone (Mkt N1) =
+VAR _ref = SUM ( dim_metas_performace_digital[meta_vendas_digital] )
+RETURN IF ( [Qtd Vendas Digital (Mkt N1)] > _ref, UNICHAR ( 9650 ), IF ( [Qtd Vendas Digital (Mkt N1)] = _ref, UNICHAR ( 8801 ), UNICHAR ( 9660 ) ) )
+
+Meta Share Digital House (Mkt N1) =
+DIVIDE ( [% Vendas Digitais House (Mkt N1)], AVERAGE ( dim_metas_performace_digital[pct_meta_venda_digital] ) )
+
+Meta Vendas Digital House Icone (Mkt N1) =
+IF ( [Meta Share Digital House (Mkt N1)] > 1, UNICHAR ( 9650 ), IF ( [Meta Share Digital House (Mkt N1)] = 1, "=", UNICHAR ( 9660 ) ) )
+
+
+// -----------------------------------------------------------------------------
+// 4. KPIs Marketing N1 HTML — os 9 cards do topo, visual HTML Content.
+//    Mesmo design system das outras *_HTML (fundo #003254, fonte Segoe UI
+//    Semibold). Diferença nova: linha "vs Meta" com seta colorida (verde
+//    #3DDC84 acima da meta, vermelho #FF6B6B abaixo) + popup de hover CSS-only
+//    (House x Parcerias) nos cards Vendas Marketing e VGV.
+//
+//    Popup: painel absoluto ancorado acima do card (`.pop`), oculto por
+//    opacity/visibility e revelado em `.c:hover .pop` — puro CSS, sem
+//    <script> (o visual HTML Content não garante suporte a JS). Não segue o
+//    cursor como o tooltip nativo do legado; fica preso à posição do card.
+// -----------------------------------------------------------------------------
+KPIs Marketing N1 HTML =
+VAR _leads = [Qtd Lead]
+VAR _metaLeads = [Meta Lead (Mkt N1)]
+VAR _metaLeadsIcone = [Meta Lead Icone (Mkt N1)]
+VAR _metaLeadsRaw = SUM ( dim_metas_performace_digital[lead] )
+
+VAR _mql = [Qtd MQL (Mkt N1)]
+VAR _metaMql = [Meta MQL (Mkt N1)]
+VAR _metaMqlIcone = [Meta MQL Icone (Mkt N1)]
+VAR _metaMqlRaw = SUM ( dim_metas_performace_digital[mql] )
+
+VAR _quali = [Tx MQL (Mkt N1)]
+VAR _metaQuali = [Meta Qualificação (Mkt N1)]
+VAR _metaQualiIcone = [Meta Qualificação Icone (Mkt N1)]
+VAR _metaQualiRaw = AVERAGE ( dim_metas_performace_digital[pct_mql] )
+
+VAR _vendasHouse = [Qtd Vendas House (Mkt N1)]
+VAR _metaVendasHouse = [Meta Vendas House (Mkt N1)]
+VAR _metaVendasHouseIcone = [Meta Vendas House Icone (Mkt N1)]
+VAR _metaVendasHouseRaw = SUM ( dim_metas_performace_digital[meta_vendas_house] )
+
+VAR _vendasMkt = [Qtd Vendas Marketing (Mkt N1)]
+VAR _metaVendasMkt = [Meta Venda Marketing (Mkt N1)]
+VAR _metaVendasMktIcone = [Meta Venda Marketing Icone (Mkt N1)]
+VAR _metaVendasMktRaw = SUM ( dim_metas_performace_digital[meta_vendas_mkt] )
+VAR _vendasMktHouse = [Qtd Vendas Marketing House (Mkt N1)]
+VAR _vendasMktParc = [Qtd Vendas Marketing Parcerias (Mkt N1)]
+VAR _vgvMktHouse = [VGV Vendas Marketing House (Mkt N1)]
+VAR _vgvMktParc = [VGV Vendas Marketing Parcerias (Mkt N1)]
+
+VAR _shareMktHouse = [Vendas Marketing House % (Mkt N1)]
+VAR _metaShareMktHouse = [Meta Vendas Marketing House % (Mkt N1)]
+VAR _metaShareMktHouseIcone = [Meta Vendas Marketing House Icone (Mkt N1)]
+VAR _metaShareMktHouseRaw = AVERAGE ( dim_metas_performace_digital[pct_meta_venda_mkt] )
+
+VAR _vendasDigital = [Qtd Vendas Digital (Mkt N1)]
+VAR _metaVendasDigital = [Meta Venda Digital (Mkt N1)]
+VAR _metaVendasDigitalIcone = [Meta Venda Digital Icone (Mkt N1)]
+VAR _metaVendasDigitalRaw = SUM ( dim_metas_performace_digital[meta_vendas_digital] )
+
+VAR _shareDigitalHouse = [% Vendas Digitais House (Mkt N1)]
+VAR _metaShareDigitalHouse = [Meta Share Digital House (Mkt N1)]
+VAR _metaShareDigitalHouseIcone = [Meta Vendas Digital House Icone (Mkt N1)]
+VAR _metaShareDigitalHouseRaw = AVERAGE ( dim_metas_performace_digital[pct_meta_venda_digital] )
+
+VAR _vgv = [VGV Vendas Marketing (Mkt N1)]
+VAR _metaVgv = [Meta VGV Marketing (Mkt N1)]
+VAR _metaVgvIcone = _metaVendasMktIcone
+// reaproveita o ícone de Vendas Marketing (mesma base de comparação: Qtd vs Meta Qtd)
+
+VAR _css =
+    "<style>" &
+    "html,body{margin:0;padding:0;height:100%;}" &
+    ".k{font-family:'Segoe UI Semibold','Segoe UI',Arial,sans-serif;font-weight:600;display:flex;flex-direction:row;gap:14px;width:100%;height:100%;box-sizing:border-box;}" &
+    ".k .c{position:relative;overflow:visible;flex:1 1 0;background:#003254;color:#fff;border-radius:18px;padding:16px 20px;box-sizing:border-box;display:flex;flex-direction:column;justify-content:center;}" &
+    ".k .l{font-size:26px;letter-spacing:.02em;opacity:.85;text-transform:uppercase;}" &
+    ".k .v{font-size:60px;margin-top:6px;line-height:1;}" &
+    ".k .meta{display:flex;align-items:center;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid rgba(255,255,255,.18);}" &
+    ".k .arrow{font-size:26px;}" &
+    ".k .up{color:#3DDC84;}" &
+    ".k .down{color:#FF6B6B;}" &
+    ".k .metatxt{display:flex;flex-direction:column;line-height:1.25;}" &
+    ".k .pct{font-size:22px;font-weight:700;}" &
+    ".k .vslabel{font-size:16px;opacity:.75;}" &
+    ".k .metaval{font-size:16px;opacity:.55;margin-left:auto;align-self:flex-end;}" &
+    ".k .pop{position:absolute;bottom:100%;left:50%;transform:translateX(-50%) translateY(-8px);opacity:0;visibility:hidden;pointer-events:none;transition:opacity .15s ease,transform .15s ease;background:#fff;color:#0F1E27;border-radius:10px;padding:16px 20px;box-shadow:0 10px 30px rgba(0,0,0,.3);white-space:nowrap;z-index:20;font-weight:600;}" &
+    ".k .c:hover .pop{opacity:1;visibility:visible;transform:translateX(-50%) translateY(-14px);}" &
+    ".k .pop .poptitle{font-size:15px;letter-spacing:.05em;opacity:.55;text-transform:uppercase;margin-bottom:8px;}" &
+    ".k .pop .poprow{display:flex;align-items:center;gap:10px;font-size:18px;margin-top:6px;}" &
+    ".k .pop .popdot{width:11px;height:11px;border-radius:50%;flex:0 0 auto;}" &
+    ".k .pop .popbar{width:100px;height:8px;background:#EEE;border-radius:4px;overflow:hidden;}" &
+    ".k .pop .popbarfill{height:100%;border-radius:4px;}" &
+    ".k .pop .popval{margin-left:auto;font-weight:700;}" &
+    "</style>"
+
+VAR _clsLead = IF ( _metaLeadsIcone = UNICHAR ( 9650 ), "up", IF ( _metaLeadsIcone = UNICHAR ( 9660 ), "down", "" ) )
+VAR _clsMql = IF ( _metaMqlIcone = UNICHAR ( 9650 ), "up", IF ( _metaMqlIcone = UNICHAR ( 9660 ), "down", "" ) )
+VAR _clsQuali = IF ( _metaQualiIcone = UNICHAR ( 9650 ), "up", IF ( _metaQualiIcone = UNICHAR ( 9660 ), "down", "" ) )
+VAR _clsVendasHouse = IF ( _metaVendasHouseIcone = UNICHAR ( 9650 ), "up", IF ( _metaVendasHouseIcone = UNICHAR ( 9660 ), "down", "" ) )
+VAR _clsVendasMkt = IF ( _metaVendasMktIcone = UNICHAR ( 9650 ), "up", IF ( _metaVendasMktIcone = UNICHAR ( 9660 ), "down", "" ) )
+VAR _clsShareMktHouse = IF ( _metaShareMktHouseIcone = UNICHAR ( 9650 ), "up", IF ( _metaShareMktHouseIcone = UNICHAR ( 9660 ), "down", "" ) )
+VAR _clsVendasDigital = IF ( _metaVendasDigitalIcone = UNICHAR ( 9650 ), "up", IF ( _metaVendasDigitalIcone = UNICHAR ( 9660 ), "down", "" ) )
+VAR _clsShareDigitalHouse = IF ( _metaShareDigitalHouseIcone = UNICHAR ( 9650 ), "up", IF ( _metaShareDigitalHouseIcone = UNICHAR ( 9660 ), "down", "" ) )
+VAR _clsVgv = _clsVendasMkt
+
+VAR _pctHouseMkt = DIVIDE ( _vendasMktHouse, _vendasMktHouse + _vendasMktParc )
+VAR _pctParcMkt = 1 - _pctHouseMkt
+
+VAR _popVendas =
+    "<div class='pop'>" &
+        "<div class='poptitle'>Vendas — House x Parcerias</div>" &
+        "<div class='poprow'><span class='popdot' style='background:#00C36B'></span>House<div class='popbar'><div class='popbarfill' style='width:" & FORMAT ( _pctHouseMkt * 100, "0" ) & "%;background:#00C36B'></div></div><span class='popval'>" & _vendasMktHouse & "</span></div>" &
+        "<div class='poprow'><span class='popdot' style='background:#8AB6D6'></span>Parcerias<div class='popbar'><div class='popbarfill' style='width:" & FORMAT ( _pctParcMkt * 100, "0" ) & "%;background:#8AB6D6'></div></div><span class='popval'>" & _vendasMktParc & "</span></div>" &
+    "</div>"
+
+VAR _popVgv =
+    "<div class='pop'>" &
+        "<div class='poptitle'>VGV — House x Parcerias</div>" &
+        "<div class='poprow'><span class='popdot' style='background:#00C36B'></span>House<span class='popval'>R$ " & FORMAT ( _vgvMktHouse, "#,0" ) & "</span></div>" &
+        "<div class='poprow'><span class='popdot' style='background:#8AB6D6'></span>Parcerias<span class='popval'>R$ " & FORMAT ( _vgvMktParc, "#,0" ) & "</span></div>" &
+    "</div>"
+
+RETURN
+_css &
+"<div class='k'>" &
+
+    "<div class='c'><div class='l'>QTD LEADS</div><div class='v'>" & FORMAT ( _leads, "#,0" ) & "</div>" &
+    "<div class='meta'><span class='arrow " & _clsLead & "'>" & _metaLeadsIcone & "</span><div class='metatxt'><span class='pct " & _clsLead & "'>" & FORMAT ( _metaLeads - 1, "+0%;-0%;0%" ) & "</span><span class='vslabel'>vs Meta " & FORMAT ( _metaLeadsRaw, "#,0" ) & "</span></div></div></div>" &
+
+    "<div class='c'><div class='l'>MQL</div><div class='v'>" & FORMAT ( _mql, "#,0" ) & "</div>" &
+    "<div class='meta'><span class='arrow " & _clsMql & "'>" & _metaMqlIcone & "</span><div class='metatxt'><span class='pct " & _clsMql & "'>" & FORMAT ( _metaMql - 1, "+0%;-0%;0%" ) & "</span><span class='vslabel'>vs Meta " & FORMAT ( _metaMqlRaw, "#,0" ) & "</span></div></div></div>" &
+
+    "<div class='c'><div class='l'>% QUALIFICAÇÃO</div><div class='v'>" & FORMAT ( _quali, "0%" ) & "</div>" &
+    "<div class='meta'><span class='arrow " & _clsQuali & "'>" & _metaQualiIcone & "</span><div class='metatxt'><span class='pct " & _clsQuali & "'>" & FORMAT ( _metaQuali - 1, "+0%;-0%;0%" ) & "</span><span class='vslabel'>vs Meta " & FORMAT ( _metaQualiRaw, "0%" ) & "</span></div></div></div>" &
+
+    "<div class='c'><div class='l'>VENDAS HOUSE</div><div class='v'>" & FORMAT ( _vendasHouse, "#,0" ) & "</div>" &
+    "<div class='meta'><span class='arrow " & _clsVendasHouse & "'>" & _metaVendasHouseIcone & "</span><div class='metatxt'><span class='pct " & _clsVendasHouse & "'>" & FORMAT ( _metaVendasHouse - 1, "+0%;-0%;0%" ) & "</span><span class='vslabel'>vs Meta " & FORMAT ( _metaVendasHouseRaw, "#,0" ) & "</span></div></div></div>" &
+
+    "<div class='c'><div class='l'>VENDAS MARKETING</div><div class='v'>" & FORMAT ( _vendasMkt, "#,0" ) & "</div>" &
+    "<div class='meta'><span class='arrow " & _clsVendasMkt & "'>" & _metaVendasMktIcone & "</span><div class='metatxt'><span class='pct " & _clsVendasMkt & "'>" & FORMAT ( _metaVendasMkt - 1, "+0%;-0%;0%" ) & "</span><span class='vslabel'>vs Meta " & FORMAT ( _metaVendasMktRaw, "#,0" ) & "</span></div></div>" & _popVendas & "</div>" &
+
+    "<div class='c'><div class='l'>VENDAS MKT HOUSE %</div><div class='v'>" & FORMAT ( _shareMktHouse, "0.00%" ) & "</div>" &
+    "<div class='meta'><span class='arrow " & _clsShareMktHouse & "'>" & _metaShareMktHouseIcone & "</span><div class='metatxt'><span class='pct " & _clsShareMktHouse & "'>" & FORMAT ( _metaShareMktHouse - 1, "+0%;-0%;0%" ) & "</span><span class='vslabel'>vs Meta " & FORMAT ( _metaShareMktHouseRaw, "0%" ) & "</span></div></div></div>" &
+
+    "<div class='c'><div class='l'>VENDAS DIGITAIS</div><div class='v'>" & FORMAT ( _vendasDigital, "#,0" ) & "</div>" &
+    "<div class='meta'><span class='arrow " & _clsVendasDigital & "'>" & _metaVendasDigitalIcone & "</span><div class='metatxt'><span class='pct " & _clsVendasDigital & "'>" & FORMAT ( _metaVendasDigital - 1, "+0%;-0%;0%" ) & "</span><span class='vslabel'>vs Meta " & FORMAT ( _metaVendasDigitalRaw, "#,0" ) & "</span></div></div></div>" &
+
+    "<div class='c'><div class='l'>% VENDAS DIGITAIS HOUSE</div><div class='v'>" & FORMAT ( _shareDigitalHouse, "0.00%" ) & "</div>" &
+    "<div class='meta'><span class='arrow " & _clsShareDigitalHouse & "'>" & _metaShareDigitalHouseIcone & "</span><div class='metatxt'><span class='pct " & _clsShareDigitalHouse & "'>" & FORMAT ( _metaShareDigitalHouse - 1, "+0%;-0%;0%" ) & "</span><span class='vslabel'>vs Meta " & FORMAT ( _metaShareDigitalHouseRaw, "0%" ) & "</span></div></div></div>" &
+
+    "<div class='c'><div class='l'>VGV</div><div class='v'>" & "R$ " & FORMAT ( _vgv / 1000000, "#,0.00" ) & " Mi</div>" &
+    "<div class='meta'><span class='arrow " & _clsVgv & "'>" & _metaVgvIcone & "</span><div class='metatxt'><span class='pct " & _clsVgv & "'>" & FORMAT ( _metaVendasMkt - 1, "+0%;-0%;0%" ) & "</span><span class='vslabel'>vs Meta R$ " & FORMAT ( _metaVgv / 1000000, "#,0.00" ) & " Mi</span></div></div>" & _popVgv & "</div>" &
+
+"</div>"
+
+
+// -----------------------------------------------------------------------------
+// 5. AINDA NÃO IMPLEMENTADO NESTE LOTE (fica pra próxima etapa — montagem no
+//    Desktop é passo manual, ver PAGINA_MARKETING_N1.md):
+//
+//    - Slicers: Empreendimento/Regional/Assinatura/Share (dropdown) + Mês
+//      (tile, seleção única, dim_calendario[mes_nome] ordenado por mes).
+//    - "VGV por Empreendimento" — combo chart nativo (barras=VGV, linha=Qtd),
+//      eixo empreendimento_conformado, medidas [Qtd Vendas Marketing (Mkt N1)]
+//      e [VGV Vendas Marketing (Mkt N1)].
+//    - "Canal da Venda" (donut nativo): eixo fato_reservas[Canal], valor
+//      [Qtd Vendas Marketing (Mkt N1)].
+//    - "Pago x Orgânico" (donut nativo): eixo fato_reservas[Pago ou Orgânico],
+//      mesmo valor.
+//    - "Meta x Realizado Marketing/Digital" (2 gráficos de colunas nativos por
+//      mês): coluna 1 = SUM(dim_metas_performace_digital[meta_vendas_mkt/digital]),
+//      coluna 2 = [Qtd Vendas Marketing/Digital (Mkt N1)], eixo dim_calendario[mes_abrev].
+//    - "Leads, MQL e Vendas por Mês" (área empilhada nativa): [Qtd Lead],
+//      [Qtd MQL (Mkt N1)], [Qtd Vendas Marketing (Mkt N1)], eixo dim_calendario[mes_abrev].
+// -----------------------------------------------------------------------------

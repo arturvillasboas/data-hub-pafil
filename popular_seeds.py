@@ -374,6 +374,102 @@ def carregar_metas_empreendimentos(conn, xlsx: Path) -> int:
     return len(registros)
 
 
+def carregar_metas_performance_digital(conn, xlsx: Path) -> int:
+    """Carrega silver.d_metas_performance_digital (metas mensais de Leads/MQL/Vendas
+    Marketing/Vendas Digital, aba Planilha1 — sem tabela nomeada, cabeçalho na linha
+    1, igual ao relatorios_precadastro.xlsx). Fonte do time de marketing, separada do
+    Meta.xlsx; task da página "Marketing N1". Resolve codigo_cv pelo nome do
+    empreendimento (a própria planilha já traz os apelidos conformados), igual ao
+    silver.d_estrutura.
+    """
+    import openpyxl
+    from psycopg import sql
+
+    wb = openpyxl.load_workbook(xlsx, read_only=True, data_only=True)
+    ws = wb["Planilha1"]
+    linhas = ws.iter_rows(values_only=True)
+    hdr = [str(h).strip() if h is not None else "" for h in next(linhas)]
+    idx = {h: i for i, h in enumerate(hdr)}
+    origem_txt = f"SharePoint: {xlsx.name} (aba Planilha1)"
+
+    def _get(r, col):
+        i = idx.get(col)
+        return r[i] if i is not None and i < len(r) else None
+
+    def _num(v):
+        try:
+            return float(v) if v not in (None, "") else None
+        except (TypeError, ValueError):
+            return None
+
+    def _int(v):
+        try:
+            return int(v) if v not in (None, "") else None
+        except (TypeError, ValueError):
+            return None
+
+    def _data(v):
+        return v.date() if hasattr(v, "date") else v
+
+    registros = []
+    vistos: set[tuple] = set()
+    for r in linhas:
+        empreendimento = _get(r, "Empreendimento")
+        data = _data(_get(r, "data"))
+        if not empreendimento or data is None:
+            continue
+        chave = (empreendimento, data)
+        if chave in vistos:
+            continue
+        vistos.add(chave)
+        registros.append((
+            empreendimento, _get(r, "Status"), _get(r, "Regional"), data,
+            _num(_get(r, "lead")), _num(_get(r, "mql")), _num(_get(r, "% mql")),
+            _num(_get(r, "meta vendas house")), _num(_get(r, "meta vendas digital")),
+            _num(_get(r, "meta vendas mkt")), _num(_get(r, "% meta venda house")),
+            _num(_get(r, "% meta venda digital")), _num(_get(r, "% meta venda mkt")),
+            _int(_get(r, "cpl")), _num(_get(r, "investimento")),
+            _num(_get(r, "% vendas")), _int(_get(r, "meta vendas")),
+        ))
+    wb.close()
+
+    with conn.cursor() as cur:
+        cur.execute("TRUNCATE silver.d_metas_performance_digital")
+        for reg in registros:
+            cur.execute(
+                sql.SQL("INSERT INTO silver.d_metas_performance_digital "
+                        "(empreendimento, status, regional, data, lead, mql, pct_mql, "
+                        "meta_vendas_house, meta_vendas_digital, meta_vendas_mkt, "
+                        "pct_meta_venda_house, pct_meta_venda_digital, pct_meta_venda_mkt, "
+                        "cpl, investimento, pct_vendas, meta_vendas, _origem) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+                        "ON CONFLICT DO NOTHING"),
+                reg + (origem_txt,),
+            )
+        # codigo_cv não vem no arquivo — resolve pelo nome já conformado (mesma
+        # lógica do silver.d_estrutura em carregar_estrutura_precos).
+        cur.execute("""
+            UPDATE silver.d_metas_performance_digital m
+               SET codigo_cv = d.codigo_interno_empreendimento
+              FROM gold.dim_empreendimento d
+             WHERE m.codigo_cv IS NULL
+               AND d.codigo_interno_empreendimento IS NOT NULL
+               AND lower(btrim(d.empreendimento_conformado COLLATE "und-x-icu")) =
+                   lower(btrim(silver.conformar_empreendimento(m.empreendimento) COLLATE "und-x-icu"))
+        """)
+        cur.execute("SELECT count(*) FROM silver.d_metas_performance_digital WHERE codigo_cv IS NULL")
+        sem_cv = cur.fetchone()[0]
+        if sem_cv:
+            cur.execute("""SELECT DISTINCT empreendimento FROM silver.d_metas_performance_digital
+                            WHERE codigo_cv IS NULL ORDER BY 1""")
+            nomes = ", ".join(p for (p,) in cur.fetchall())
+            log.warning("  %d linhas sem codigo_cv (empreendimento sem match em "
+                        "dim_empreendimento): %s", sem_cv, nomes)
+    log.info("  silver.%-24s <- %4d linhas (aba Planilha1)",
+              "d_metas_performance_digital", len(registros))
+    return len(registros)
+
+
 def carregar_viabilidade(conn, xlsx: Path) -> int:
     """Carrega silver.d_viabilidade (parâmetros de margem por empreendimento, EAV) da
     tabela tab_viabil_padrão (d_para empreendimentos.xlsx, aba viabil_padrão) — task
@@ -989,6 +1085,10 @@ def main() -> int:
     ap.add_argument("--metas-empreendimentos", help="caminho de Meta.xlsx (recarrega "
                                           "silver.d_metas_empreendimentos — task 6.4). "
                                           "Default: METAS_EMPREENDIMENTOS_XLSX do .env")
+    ap.add_argument("--metas-performance-digital", help="caminho de Metas Performance Digital.xlsx "
+                                          "(recarrega silver.d_metas_performance_digital — metas de "
+                                          "Leads/MQL/Vendas Marketing/Vendas Digital, página Marketing N1). "
+                                          "Default: METAS_PERFORMANCE_DIGITAL_XLSX do .env")
     ap.add_argument("--viabilidade", help="caminho de d_para empreendimentos.xlsx (recarrega "
                                           "silver.d_viabilidade, parâmetros de margem — task 6.4). "
                                           "Default: VIABILIDADE_XLSX do .env")
@@ -1011,6 +1111,8 @@ def main() -> int:
                            if estrutura_precos_path and "apoio" in Path(estrutura_precos_path).name.lower()
                            else "bi_matriz")
     metas_empreendimentos_path = args.metas_empreendimentos or os.getenv("METAS_EMPREENDIMENTOS_XLSX")
+    metas_performance_digital_path = (args.metas_performance_digital
+                                       or os.getenv("METAS_PERFORMANCE_DIGITAL_XLSX"))
     viabilidade_path = args.viabilidade or os.getenv("VIABILIDADE_XLSX")
     distratos_2025_path = args.distratos_2025 or os.getenv("DISTRATOS_2025_XLSX")
 
@@ -1094,6 +1196,14 @@ def main() -> int:
                 n_seeds += 1
             else:
                 log.warning("  metas-empreendimentos xlsx não encontrado (%s) — d_metas_empreendimentos mantida como está.", me)
+        if metas_performance_digital_path:
+            mpd = Path(metas_performance_digital_path)
+            if mpd.exists():
+                total += carregar_metas_performance_digital(conn, mpd)
+                n_seeds += 1
+            else:
+                log.warning("  metas-performance-digital xlsx não encontrado (%s) — "
+                            "d_metas_performance_digital mantida como está.", mpd)
         if viabilidade_path:
             vb = Path(viabilidade_path)
             if vb.exists():
