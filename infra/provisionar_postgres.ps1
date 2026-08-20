@@ -68,7 +68,16 @@ if (-not $env:PGPASSWORD) {
 }
 
 function Psql-Root([string]$sql) {
-    & $Psql -U postgres -h 127.0.0.1 -p 5432 -v ON_ERROR_STOP=1 -tAc $sql
+    $saida = & $Psql -U postgres -h 127.0.0.1 -p 5432 -v ON_ERROR_STOP=1 -tAc $sql 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        # Falha alto e imediato: sem isto, um psql que nao conecta (ex.: senha
+        # errada) faz cada chamada seguinte falhar em silencio, e o script
+        # termina imprimindo um resumo de "Pronto" que nao aconteceu de
+        # verdade -- foi exatamente o que aconteceu na primeira tentativa
+        # nesta maquina (20/ago/2026), com 8 falhas de autenticacao seguidas.
+        throw "psql falhou (codigo $LASTEXITCODE) rodando: $sql`n$saida`n`nSe for erro de autenticacao, a senha em `$env:PGPASSWORD provavelmente esta errada (pode ter ficado de uma tentativa anterior nesta mesma janela). Rode 'Remove-Item Env:\PGPASSWORD' e execute o script de novo."
+    }
+    return $saida
 }
 
 # --- 2. Aplica a configuracao do projeto (drop-in em conf.d) ------------------
@@ -104,6 +113,12 @@ function Existe-Db([string]$nome)   { (Psql-Root "SELECT 1 FROM pg_database WHER
 
 if (Test-Path $ArqCred) {
     Aviso "$ArqCred ja existe -- mantendo as senhas atuais (nao regenero)."
+    # O arquivo existir nao prova que os roles existem de verdade: se uma
+    # rodada anterior escreveu o arquivo mas falhou antes de confirmar a
+    # criacao (ex.: senha errada do superusuario), essa suposicao fica falsa.
+    if (-not (Existe-Role $RoleApp) -or -not (Existe-Role $RoleBi)) {
+        throw "$ArqCred existe, mas os roles $RoleApp/$RoleBi nao estao no banco. Uma rodada anterior deve ter falhado no meio do caminho. Apague $ArqCred (Remove-Item $ArqCred) e rode o script de novo para gerar credenciais novas."
+    }
 } else {
     Log "Gerando senhas e criando roles"
     $SenhaApp = New-SenhaForte
