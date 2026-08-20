@@ -35,7 +35,10 @@ $DirBackup    = "C:\pafil\backups"
 $RetencaoDias = 7
 # Destino externo mais simples: uma pasta ja sincronizada nesta maquina (ex.:
 # OneDrive/SharePoint do projeto, ver .env.example). Deixe vazio para pular.
-$PastaExterna = ""
+# Caminho fixo (nao $env:OneDrive) de proposito: quem roda este script e a
+# conta SYSTEM via Tarefa Agendada, que nao tem a sessao/perfil do OneDrive
+# do usuario interativo, entao a variavel de ambiente nao existiria pra ela.
+$PastaExterna = "C:\Users\rpa02\OneDrive - Pafil Construtora e Empreendimentos Imobiliarios\PafilDW-Backups"
 # Alternativa mais robusta: um bucket S3 (requer AWS CLI instalada e
 # credenciais configuradas nesta maquina via "aws configure" -- como nao e
 # EC2, nao existe IAM role automatica). Deixe vazio para pular.
