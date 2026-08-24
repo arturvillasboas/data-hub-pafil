@@ -859,6 +859,299 @@ def carregar_headcount_corretores(conn, xlsx: Path) -> int:
     return len(regs)
 
 
+def carregar_profissoes(conn, xlsx: Path) -> int:
+    """Carrega silver.dpara_profissoes (DP-07) da aba única de de_para profissões.xlsx
+    (3 colunas: Original/Micro/Macro, sem Excel Table nomeada — mesmo padrão de leitura
+    de carregar_metas_performance_digital). Usado no perfil de cliente (DP-15) para
+    classificar a Profissão (Selecionado) livre em duas granularidades.
+
+    Dedup por lower(btrim(Original)): a planilha já traz variantes de caixa como
+    linhas curadas separadas (ex.: "ADMINISTRADOR" e "administração" ambas mapeando
+    pra "Administrador (Administrativo)") — aqui só evita duplicata EXATA, não
+    reescreve a curadoria.
+    """
+    import openpyxl
+    from psycopg import sql
+
+    wb = openpyxl.load_workbook(xlsx, read_only=True, data_only=True)
+    ws = wb["Planilha1"]
+    linhas = list(ws.iter_rows(values_only=True))
+    wb.close()
+    origem_txt = f"SharePoint: {xlsx.name} (aba Planilha1)"
+
+    def _txt(v):
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
+
+    regs, vistos = [], set()
+    for r in linhas[1:]:  # linha 0 = cabeçalho (Original, Micro, Macro)
+        original = _txt(r[0]) if len(r) > 0 else None
+        if not original or original.lower() in vistos:
+            continue
+        vistos.add(original.lower())
+        regs.append((original, _txt(r[1]) if len(r) > 1 else None, _txt(r[2]) if len(r) > 2 else None))
+
+    with conn.cursor() as cur:
+        cur.execute("TRUNCATE silver.dpara_profissoes")
+        for original, micro, macro in regs:
+            cur.execute(
+                sql.SQL("INSERT INTO silver.dpara_profissoes (original, micro, macro, _origem) "
+                        "VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING"),
+                (original, micro, macro, origem_txt),
+            )
+    log.info("  silver.%-24s <- %4d linhas (de %d na planilha)", "dpara_profissoes", len(regs), len(linhas) - 1)
+    return len(regs)
+
+
+# Escopo de colunas do perfil de cliente (DP-15): das 148 colunas do CSV legado,
+# só as de valor analítico real e proporcional ao risco de LGPD (ver plano/decisão
+# registrada em REGRAS_NEGOCIO.md DP-15). EXCLUÍDO de propósito: nome, e-mail,
+# telefone, RG/RNE/CNH/passaporte/PIS, filiação (mãe/pai), endereço completo
+# (rua/número), as 9 colunas "Banco - *" (0,2% preenchido — chave PIX, conta,
+# titular), as ~25 colunas de finanças de PJ, e os dados identificadores de
+# terceiros no bloco PPE (nome/CPF/nascimento do parente exposto — mantém só o
+# flag e o cargo do próprio titular). `documento` entra só como chave técnica de
+# join (nunca exposto na gold — mesmo tratamento de documento_cliente em
+# fato_reservas, ver MODELO_SEMANTICO.md).
+_PERFIL_CLIENTE_COLUNAS = {
+    "n": "N.",
+    "documento": "Documento",
+    "cod_cliente": "Cod. Cliente",
+    "empreendimento": "Empreendimento",
+    "unidade": "Unidade",
+    "data_cadastro": "Data de Cadastro",
+    "estado_civil": "Estado Civil",
+    "nascimento": "Nascimento",
+    "idade": "Idade",
+    "sexo": "Gênero",
+    "nacionalidade": "Nacionalidade",
+    "naturalidade": "Naturalidade",
+    "cep": "Cep",
+    "bairro": "Bairro",
+    "cidade": "Cidade",
+    "estado": "Estado",
+    "profissao_selecionado": "Profissão (Selecionado)",
+    "profissao_preenchido": "Profissão (Preenchido)",
+    "renda": "Renda",
+    "sinalizador_juridico": "Sinalizador jurídico",
+    "pessoa_politicamente_exposta": "Pessoa politicamente exposta – COAF/COFECI",
+    "pessoa_lista_suspeitos": ("Pessoa contemplada na lista de indivíduos suspeitos/envolvidos "
+                                "em lavagem de dinheiro e financiamento ao terrorismo"),
+    "residente_municipio_fronteira": "Pessoa residente em município de faixa de fronteira",
+    "dependentes": "Dependentes",
+    "grau_instrucao": "Grau de instrução",
+    "tipo_residencia": "Tipo de residência",
+    "com_quem_reside": "Com quem reside",
+    "empresa_onde_trabalha": "Empresa onde trabalha",
+    "cargo_empresa": "Cargo - Empresa onde trabalha",
+    "valor_aluguel": "Valor do aluguel",
+    "tempo_residencia": "Tempo de residencia",
+    "classificacao": "Classificação",
+    "ppe_cargo": "PPE - Cargo",
+    "tag_pessoa": "Tag Pessoa",
+}
+
+
+def _ler_perfil_cliente_csv(caminho: Path) -> list[dict]:
+    """Lê um dos CSVs de perfil de cliente (precadastro ou reserva — mesmo layout de
+    148 colunas, `;`-delimitado). Achados desta sessão sobre o formato real do
+    arquivo (não confiar só no que o Power Query legado declarava):
+      - encoding é cp1252 NA MAIORIA, mas o arquivo mistura campo a campo com UTF-8
+        mal salvo por algum editor no meio do caminho (achado desta sessão: célula
+        a célula, não coluna a coluna — "MANUTENÇÃO" em uma linha e cp1252 puro na
+        de baixo). `_corrige_mojibake()` desfaz isso via round-trip (cp1252 encode
+        + utf-8 decode, só aplica se não der erro): validado, foi de 73% pra 88%
+        de match no de-para de profissões (DP-07) depois do conserto. Residual
+        conhecido: quando o byte UTF-8 cai numa posição INDEFINIDA do cp1252 (ex.:
+        0x81, que seria "Á"), o `errors='replace'` da abertura do arquivo já vira
+        um "�" antes do conserto rodar, e a string inteira (não só o caractere)
+        fica sem reparo — ~1 em 15 no valor livre de profissão testado. É uma
+        inconsistência real do arquivo de origem, não um bug daqui: documentar e
+        seguir (mesmo espírito das notas R19/R23 do REGRAS_NEGOCIO.md sobre erro de
+        digitação em planilha de origem);
+      - usar csv.reader (não split manual): perfil_cliente_reserva.csv tem campos
+        entre aspas, perfil_cliente_precadastro.csv não;
+      - nem `Documento` nem `N.` são únicos no arquivo (a mesma pessoa/negociação
+        aparece mais de uma vez — 874 valores de `N.` repetidos em 7.805 linhas,
+        achado desta sessão) — por isso a chave técnica da tabela silver é gerada
+        (`_id_tecnico`), e nem `n` nem `documento` viram PK;
+      - `Renda` vem em formato BR ("3.100,00") e usa '0' em vez de vazio quando não
+        preenchida (mesmo problema já documentado para precadastros.renda_total).
+
+    Retorna uma lista de dicts já com as chaves de _PERFIL_CLIENTE_COLUNAS (nomes
+    curtos), tipados (numeric/int como número ou None, datas como date ou None).
+    """
+    import csv
+
+    def _num_br(v):
+        if v is None:
+            return None
+        s = str(v).strip()
+        if not s:
+            return None
+        try:
+            return float(s.replace(".", "").replace(",", "."))
+        except ValueError:
+            return None
+
+    def _int(v):
+        n = _num_br(v)
+        return int(n) if n is not None else None
+
+    def _data(v):
+        s = (v or "").strip() if v else ""
+        if not s:
+            return None
+        # "Data de Cadastro" vem com sufixo de hora em português, ex.:
+        # "20/08/2024 às 11h28" — pega só os 10 primeiros caracteres (DD/MM/AAAA).
+        s = s[:10]
+        for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
+            try:
+                from datetime import datetime
+                return datetime.strptime(s, fmt).date()
+            except ValueError:
+                continue
+        return None
+
+    def _corrige_mojibake(s: str) -> str:
+        """Conserta texto que era UTF-8 mas o arquivo foi lido como cp1252 (achado
+        desta sessão: o CSV mistura, campo a campo, cp1252 puro com UTF-8 — ex.:
+        'MANUTENÇÃO' vira 'MANUTENÃ‡ÃƒO'). Tenta desfazer: reencodifica como cp1252
+        (recupera os bytes originais) e decodifica como UTF-8; só usa o resultado
+        se o round-trip funcionar sem erro (texto genuinamente cp1252 quase sempre
+        falha nesse round-trip, porque os bytes acentuados do cp1252 parecem bytes
+        de ABERTURA de sequência UTF-8 multi-byte sem a continuação certa depois —
+        por isso é seguro tentar em cima de qualquer string, não só nas suspeitas)."""
+        try:
+            arrumado = s.encode("cp1252").decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            return s
+        return arrumado
+
+    def _txt(v):
+        if v is None:
+            return None
+        s = _corrige_mojibake(str(v).strip())
+        return s or None
+
+    def _digitos(v):
+        s = _txt(v)
+        return re.sub(r"\D", "", s) if s else None
+
+    def _chave_col(s: str) -> str:
+        """Chave de comparação tolerante a mojibake: o arquivo mistura, na mesma
+        linha de cabeçalho, colunas em cp1252 puro com colunas que eram UTF-8 e
+        foram decodificadas como cp1252 por engano (ex.: "Gênero" vira "GÃªnero" —
+        confirmado nesta investigação: 'ê' em UTF-8 são os bytes C3 AA, que cp1252
+        lê como 'Ã' + 'ª'). Removendo tudo que não é letra ASCII/dígito, qualquer
+        acento — decodificado certo ou não — vira não-ASCII e some, então as duas
+        variantes (e o BOM UTF-8 do início do arquivo, que também vira lixo
+        cp1252) colapsam pra mesma chave."""
+        return re.sub(r"[^A-Za-z0-9]", "", s).lower()
+
+    with open(caminho, encoding="cp1252", errors="replace", newline="") as f:
+        reader = csv.reader(f, delimiter=";")
+        header_bruto = next(reader)
+        idx = {_chave_col(h): i for i, h in enumerate(header_bruto)}
+
+        faltando = [orig for orig in _PERFIL_CLIENTE_COLUNAS.values() if _chave_col(orig) not in idx]
+        if faltando:
+            log.warning("  %s: %d coluna(s) esperada(s) não encontrada(s) no cabeçalho: %s",
+                        caminho.name, len(faltando), faltando)
+
+        def g(row, nome_origem):
+            i = idx.get(_chave_col(nome_origem))
+            return row[i] if i is not None and i < len(row) else None
+
+        registros = []
+        for row in reader:
+            if not row or all(not (c or "").strip() for c in row):
+                continue
+            reg = {
+                "n": _int(g(row, "N.")),
+                "documento": _digitos(g(row, "Documento")),
+                "cod_cliente": _int(g(row, "Cod. Cliente")),
+                "empreendimento": _txt(g(row, "Empreendimento")),
+                "unidade": _txt(g(row, "Unidade")),
+                "data_cadastro": _data(g(row, "Data de Cadastro")),
+                "estado_civil": _txt(g(row, "Estado Civil")),
+                "nascimento": _data(g(row, "Nascimento")),
+                "idade": _int(g(row, "Idade")),
+                "sexo": _txt(g(row, "Gênero")),
+                "nacionalidade": _txt(g(row, "Nacionalidade")),
+                "naturalidade": _txt(g(row, "Naturalidade")),
+                "cep": _txt(g(row, "Cep")),
+                "bairro": _txt(g(row, "Bairro")),
+                "cidade": _txt(g(row, "Cidade")),
+                "estado": _txt(g(row, "Estado")),
+                "profissao_selecionado": _txt(g(row, "Profissão (Selecionado)")),
+                "profissao_preenchido": _txt(g(row, "Profissão (Preenchido)")),
+                "renda": _num_br(g(row, "Renda")),
+                "sinalizador_juridico": _txt(g(row, "Sinalizador jurídico")),
+                "pessoa_politicamente_exposta": _txt(g(row, "Pessoa politicamente exposta – COAF/COFECI")),
+                "pessoa_lista_suspeitos": _txt(g(row, _PERFIL_CLIENTE_COLUNAS["pessoa_lista_suspeitos"])),
+                "residente_municipio_fronteira": _txt(g(row, "Pessoa residente em município de faixa de fronteira")),
+                "dependentes": _txt(g(row, "Dependentes")),
+                "grau_instrucao": _txt(g(row, "Grau de instrução")),
+                "tipo_residencia": _txt(g(row, "Tipo de residência")),
+                "com_quem_reside": _txt(g(row, "Com quem reside")),
+                "empresa_onde_trabalha": _txt(g(row, "Empresa onde trabalha")),
+                "cargo_empresa": _txt(g(row, "Cargo - Empresa onde trabalha")),
+                "valor_aluguel": _num_br(g(row, "Valor do aluguel")),
+                "tempo_residencia": _int(g(row, "Tempo de residencia")),
+                "classificacao": _txt(g(row, "Classificação")),
+                "ppe_cargo": _txt(g(row, "PPE - Cargo")),
+                "tag_pessoa": _txt(g(row, "Tag Pessoa")),
+            }
+            if reg["n"] is None:
+                continue
+            registros.append(reg)
+        return registros
+
+
+def _carregar_perfil_cliente(conn, csv_path: Path, tabela: str) -> int:
+    """Insere os registros lidos de um CSV de perfil de cliente na tabela silver
+    indicada (perfil_cliente_precadastro ou perfil_cliente_reserva — mesmo layout,
+    grãos diferentes). PK técnica = _id_tecnico (IDENTITY, gerada pelo banco):
+    nem `n` nem `documento` são únicos no arquivo (a mesma pessoa/negociação
+    aparece mais de uma vez — achado desta sessão, 874 valores de N. repetidos em
+    7.805 linhas), então não há ON CONFLICT — cada linha do CSV vira 1 linha nova,
+    mesmo padrão de carregar_distratos_2025."""
+    from psycopg import sql
+
+    registros = _ler_perfil_cliente_csv(csv_path)
+    origem_txt = f"SharePoint: {csv_path.name}"
+    colunas = list(_PERFIL_CLIENTE_COLUNAS.keys())
+
+    with conn.cursor() as cur:
+        cur.execute(sql.SQL("TRUNCATE silver.{}").format(sql.Identifier(tabela)))
+        consulta = sql.SQL(
+            "INSERT INTO silver.{tab} ({cols}, _origem) VALUES ({ph}, %s)"
+        ).format(
+            tab=sql.Identifier(tabela),
+            cols=sql.SQL(", ").join(map(sql.Identifier, colunas)),
+            ph=sql.SQL(", ").join(sql.Placeholder() for _ in colunas),
+        )
+        for reg in registros:
+            cur.execute(consulta, [reg[c] for c in colunas] + [origem_txt])
+    log.info("  silver.%-28s <- %5d linhas (de %d no CSV)", tabela, len(registros), len(registros))
+    return len(registros)
+
+
+def carregar_perfil_cliente_precadastro(conn, csv_path: Path) -> int:
+    """silver.perfil_cliente_precadastro (DP-15) — grão pré-cadastro, a fonte mais
+    completa (é o formulário de KYC/análise de crédito). Ver _PERFIL_CLIENTE_COLUNAS."""
+    return _carregar_perfil_cliente(conn, csv_path, "perfil_cliente_precadastro")
+
+
+def carregar_perfil_cliente_reserva(conn, csv_path: Path) -> int:
+    """silver.perfil_cliente_reserva (DP-15) — grão reserva, complementar ao de
+    pré-cadastro (cobre cliente que reservou sem passar pelo fluxo de crédito)."""
+    return _carregar_perfil_cliente(conn, csv_path, "perfil_cliente_reserva")
+
+
 def _bloco_apoio(linhas: list, hdr_idx: int, ancora: str, offsets: dict[str, int]) -> list[dict]:
     """Extrai um "bloco" de de-para da aba Apoio (vários de-paras lado a lado).
 
@@ -1095,6 +1388,15 @@ def main() -> int:
     ap.add_argument("--distratos-2025", help="caminho de relatorio_distratos.xlsx (recarrega "
                                           "silver.distratos_2025, detalhe financeiro de distrato). "
                                           "Default: DISTRATOS_2025_XLSX do .env")
+    ap.add_argument("--profissoes", help="caminho de 'de_para profissões.xlsx' (recarrega "
+                                          "silver.dpara_profissoes, DP-07). "
+                                          "Default: DEPARA_PROFISSOES_XLSX do .env")
+    ap.add_argument("--perfil-cliente-precadastro", help="caminho de perfil_cliente_precadastro.csv "
+                                          "(recarrega silver.perfil_cliente_precadastro, DP-15). "
+                                          "Default: PERFIL_CLIENTE_PRECADASTRO_CSV do .env")
+    ap.add_argument("--perfil-cliente-reserva", help="caminho de perfil_cliente_reserva.csv "
+                                          "(recarrega silver.perfil_cliente_reserva, DP-15). "
+                                          "Default: PERFIL_CLIENTE_RESERVA_CSV do .env")
     args = ap.parse_args()
 
     # Fonte autoritativa dos gerentes: arg explícito ou o xlsx sincronizado (via .env).
@@ -1115,6 +1417,10 @@ def main() -> int:
                                        or os.getenv("METAS_PERFORMANCE_DIGITAL_XLSX"))
     viabilidade_path = args.viabilidade or os.getenv("VIABILIDADE_XLSX")
     distratos_2025_path = args.distratos_2025 or os.getenv("DISTRATOS_2025_XLSX")
+    profissoes_path = args.profissoes or os.getenv("DEPARA_PROFISSOES_XLSX")
+    perfil_precadastro_path = (args.perfil_cliente_precadastro
+                                or os.getenv("PERFIL_CLIENTE_PRECADASTRO_CSV"))
+    perfil_reserva_path = args.perfil_cliente_reserva or os.getenv("PERFIL_CLIENTE_RESERVA_CSV")
 
     configurar_logging(False)
     if not MD_LEGADO.exists():
@@ -1222,9 +1528,32 @@ def main() -> int:
                 n_seeds += 1
             else:
                 log.warning("  distratos-2025 xlsx não encontrado (%s) — distratos_2025 mantida como está.", d25)
+        if profissoes_path:
+            pf = Path(profissoes_path)
+            if pf.exists():
+                total += carregar_profissoes(conn, pf)
+                n_seeds += 1
+            else:
+                log.warning("  profissoes xlsx não encontrado (%s) — dpara_profissoes mantida como está.", pf)
+        if perfil_precadastro_path:
+            pp = Path(perfil_precadastro_path)
+            if pp.exists():
+                total += carregar_perfil_cliente_precadastro(conn, pp)
+                n_seeds += 1
+            else:
+                log.warning("  perfil-cliente-precadastro csv não encontrado (%s) — "
+                            "perfil_cliente_precadastro mantida como está.", pp)
+        if perfil_reserva_path:
+            pr = Path(perfil_reserva_path)
+            if pr.exists():
+                total += carregar_perfil_cliente_reserva(conn, pr)
+                n_seeds += 1
+            else:
+                log.warning("  perfil-cliente-reserva csv não encontrado (%s) — "
+                            "perfil_cliente_reserva mantida como está.", pr)
         conn.commit()
     log.info("Concluído: %d linhas carregadas em %d seeds.", total, n_seeds)
-    log.info("Pendentes (SharePoint): feriados, profissões, equipe_corretor (superada por dim_corretor).")
+    log.info("Pendentes (SharePoint): feriados, equipe_corretor (superada por dim_corretor).")
     return 0
 
 

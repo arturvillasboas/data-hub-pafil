@@ -277,6 +277,10 @@ SELECT
     -- headcount manual do backoffice), igual ao par já usado em fato_leads/
     -- fato_pre_cadastros. Ocultar no modelo; exibir "corretor".
     silver.chave_nome(r.corretor)                         AS corretor_chave,
+    -- chave de relacionamento com gold.dim_perfil_cliente[documento_chave] (DP-15).
+    -- documento_cliente em si NÃO entra na fato (PII — ver MODELO_SEMANTICO.md);
+    -- só a chave hasheada, oculta no modelo.
+    silver.chave_documento(r.documento_cliente)           AS documento_chave,
     r.imobiliaria, r.situacao, r.tipo_venda, r.midia, r.campanha,
     r.valor_contrato,
     r.valor_liquido_com_juros,
@@ -666,6 +670,7 @@ SELECT
     p.valor_fgts,
     p.valor_total,
     p.saldo_devedor,
+    p.valor_prestacao,
     p.renda_cliente_principal,
     p.renda_total,
     p.eh_aprovado,
@@ -683,7 +688,12 @@ SELECT
     resv.situacao_tratada                                 AS situacao_reserva,
     resv.situacao_ordem                                    AS situacao_reserva_ordem,
     resv.eh_venda                                          AS eh_venda_reserva,
-    resv.eh_distrato                                        AS eh_distrato_reserva
+    resv.eh_distrato                                        AS eh_distrato_reserva,
+    -- chave de relacionamento com gold.dim_perfil_cliente[documento_chave] (DP-15).
+    -- id_pessoa não tem "documento" na silver (a view é conformação pura, sem PII
+    -- de propósito — ver comentário no topo de silver.leads); busca-se o CPF direto
+    -- na bronze só pra derivar a chave hasheada, que é o único dado que sai daqui.
+    silver.chave_documento(silver.id_texto(px.documento))  AS documento_chave
 FROM silver.precadastros p
 LEFT JOIN silver.dpara_etapa_precadastro ep
        ON ep.etapa_wkf = p.situacao
@@ -691,6 +701,8 @@ LEFT JOIN silver.precadastros_credito_manual cm
        ON cm.id_precadastro = p.id_precadastro
 LEFT JOIN gold.fato_leads l
        ON l.id_lead = p.id_lead
+LEFT JOIN bronze.pessoas px
+       ON px.idpessoa = p.id_pessoa
 LEFT JOIN LATERAL (
     SELECT fr.id_reserva, fr.situacao_tratada, fr.situacao_ordem, fr.eh_venda, fr.eh_distrato
     FROM gold.fato_reservas fr
@@ -1057,3 +1069,167 @@ LEFT JOIN silver.dpara_gerente_contexto ctx
        ON lower(btrim(ctx.gerente_responsavel) COLLATE "und-x-icu") =
           lower(btrim(d.gerente_responsavel) COLLATE "und-x-icu")
 LEFT JOIN match m ON m._id_tecnico = d._id_tecnico;
+
+
+-- ===========================================================================
+-- PERFIL DE CLIENTE (DP-15) — profissão, renda, PPE, demografia.
+--
+-- Reescrito em 24/ago/2026: a fonte PRIMÁRIA agora é a própria API CVDW —
+-- `bronze.pessoas` (demografia/PPE/endereço) ⨝ `bronze.pessoas_profissional`
+-- (profissão/emprego/renda, endpoint `pessoas/profissional`, 1:1 por idpessoa).
+-- Achado que motivou a virada: `pessoas/profissional.profissao` está preenchida em
+-- 65,7% dos 8.465 registros (medido ao vivo, carga completa) — MELHOR que os 47%
+-- do CSV manual usado antes, e sem o problema de estar parado no tempo (o CSV
+-- travava em 22/ago/2025; a API atualiza a cada ingestão). `profissao_select`/
+-- `profissao` mapeiam 1:1 pro par "Profissão (Selecionado)"/"Profissão
+-- (Preenchido)" que o CSV também tinha — o join com DP-07 continua igual.
+--
+-- O CSV manual (`silver.perfil_cliente_precadastro`/`_reserva`) NÃO foi
+-- descartado: continua como FALLBACK, usado só para `documento_chave` que não
+-- tem nenhuma linha em `bronze.pessoas` (raro — checar REGRAS_NEGOCIO.md DP-15
+-- para o tamanho real dessa lacuna após a virada).
+--
+-- Grão: 1 linha por documento_chave (CPF hasheado — nunca o CPF em claro, ver
+-- silver.chave_documento). `cod_cliente`/`empreendimento`/`unidade` que existiam
+-- na versão CSV (grão por negociação) saíram: a API é por PESSOA, não por
+-- negociação, e esse contexto já vem de `fato_reservas`/`fato_precadastros` no
+-- relacionamento — duplicá-lo aqui violaria o grão da dimensão.
+--
+-- RENDA: coalesce(remuneracao_bruta, renda_familiar) — prioriza o salário
+-- específico do emprego atual (pessoas_profissional, 14,6% preenchido) sobre a
+-- renda familiar declarada (pessoas.renda_familiar, texto BR, convertido via
+-- silver.tentar_numeric). Mesmo problema de sempre: os dois campos usam 0 em vez
+-- de NULL quando vazios — sempre filtrar renda > 0 / tem_renda_informada e usar
+-- mediana, nunca média crua.
+--
+-- profissao_micro/profissao_macro: join vivo com silver.dpara_profissoes (DP-07),
+-- case-insensitive, tentando profissao_selecionado e caindo para
+-- profissao_preenchido quando o primeiro não bate.
+--
+-- faixa_etaria/faixa_renda_mcmv: buckets replicados do relatório ad-hoc já
+-- validado (relatorios/perfil_cliente_quinta_dos_ventos_2026.sql).
+DROP VIEW IF EXISTS gold.dim_perfil_cliente CASCADE;
+CREATE VIEW gold.dim_perfil_cliente AS
+WITH api_base AS (
+    SELECT
+        silver.chave_documento(silver.id_texto(p.documento)) AS documento_chave,
+        'api'                                                  AS fonte_perfil,
+        p.data_cad::date                                       AS data_cadastro,
+        p.estado_civil,
+        p.data_nasc                                            AS nascimento,
+        CASE WHEN p.data_nasc IS NOT NULL
+             THEN extract(year FROM age(current_date, p.data_nasc))::int END AS idade,
+        p.sexo,
+        p.pais                                                 AS nacionalidade,
+        p.naturalidade,
+        silver.id_texto(p.cep)                                 AS cep,
+        p.bairro, p.cidade, p.estado,
+        pp.profissao_select                                    AS profissao_selecionado,
+        pp.profissao                                           AS profissao_preenchido,
+        coalesce(nullif(pp.remuneracao_bruta, 0),
+                 silver.tentar_numeric_flexivel(p.renda_familiar)) AS renda,
+        p.grau_instrucao,
+        p.quantidade_dependentes                                AS dependentes,
+        p.tipo_residencia,
+        p.reside_com                                            AS com_quem_reside,
+        p.tempo_residencia::int                                 AS tempo_residencia,
+        silver.tentar_numeric_flexivel(p.valor_aluguel)         AS valor_aluguel,
+        pp.trabalho_nome_empresa                                AS empresa_onde_trabalha,
+        pp.trabalho_cargo                                       AS cargo_empresa,
+        CASE WHEN p.documento_tipo = 'CNPJ' THEN 'Sim' ELSE 'Não' END AS sinalizador_juridico,
+        p.politicamente_exposta                                 AS pessoa_politicamente_exposta,
+        p.ppe_cargo,
+        p.suspeito                                              AS pessoa_lista_suspeitos,
+        p.residente_municipio_fronteira,
+        p.classificacao,
+        NULL::text                                              AS tag_pessoa
+    FROM bronze.pessoas p
+    LEFT JOIN bronze.pessoas_profissional pp ON pp.idpessoa = p.idpessoa
+    WHERE silver.chave_documento(silver.id_texto(p.documento)) IS NOT NULL
+),
+csv_unificado AS (
+    SELECT 1 AS prioridade_fonte, 'precadastro' AS fonte, c.* FROM silver.perfil_cliente_precadastro c
+    UNION ALL
+    SELECT 2 AS prioridade_fonte, 'reserva'     AS fonte, c.* FROM silver.perfil_cliente_reserva c
+),
+csv_dedup AS (
+    SELECT DISTINCT ON (silver.chave_documento(documento))
+        silver.chave_documento(documento) AS documento_chave,
+        fonte                                                   AS fonte_perfil,
+        data_cadastro, estado_civil, nascimento, idade, sexo, nacionalidade, naturalidade,
+        cep, bairro, cidade, estado,
+        profissao_selecionado, profissao_preenchido, renda,
+        grau_instrucao, dependentes, tipo_residencia, com_quem_reside, tempo_residencia,
+        valor_aluguel, empresa_onde_trabalha, cargo_empresa, sinalizador_juridico,
+        pessoa_politicamente_exposta, ppe_cargo, pessoa_lista_suspeitos,
+        residente_municipio_fronteira, classificacao, tag_pessoa
+    FROM csv_unificado
+    WHERE silver.chave_documento(documento) IS NOT NULL
+    ORDER BY silver.chave_documento(documento), prioridade_fonte, data_cadastro DESC NULLS LAST, n DESC
+),
+-- API manda sempre que existir; o CSV só entra pra documento_chave sem NENHUMA
+-- linha em bronze.pessoas (fallback documentado, não descartado).
+unificado_final AS (
+    SELECT * FROM api_base
+    UNION ALL
+    SELECT c.* FROM csv_dedup c
+    WHERE NOT EXISTS (SELECT 1 FROM api_base a WHERE a.documento_chave = c.documento_chave)
+)
+SELECT
+    u.documento_chave,
+    u.fonte_perfil,
+    u.data_cadastro,
+    u.estado_civil,
+    u.nascimento,
+    u.idade,
+    u.sexo,
+    u.nacionalidade,
+    u.naturalidade,
+    u.cep,
+    u.bairro,
+    u.cidade,
+    u.estado,
+    u.profissao_selecionado,
+    u.profissao_preenchido,
+    coalesce(dp.macro, dp2.macro)                         AS profissao_macro,
+    coalesce(dp.micro, dp2.micro)                         AS profissao_micro,
+    u.renda,
+    (u.renda > 0)                                         AS tem_renda_informada,
+    u.grau_instrucao,
+    u.dependentes,
+    u.tipo_residencia,
+    u.com_quem_reside,
+    u.tempo_residencia,
+    u.valor_aluguel,
+    u.empresa_onde_trabalha,
+    u.cargo_empresa,
+    u.sinalizador_juridico,
+    u.pessoa_politicamente_exposta,
+    (lower(btrim(coalesce(u.pessoa_politicamente_exposta,''))) IN ('sim','s','true','1')) AS eh_ppe,
+    u.ppe_cargo,
+    u.pessoa_lista_suspeitos,
+    u.residente_municipio_fronteira,
+    u.classificacao,
+    u.tag_pessoa,
+    CASE WHEN u.idade IS NULL OR u.idade <= 0 THEN NULL
+         WHEN u.idade < 25  THEN '01 - Até 24'
+         WHEN u.idade < 35  THEN '02 - 25 a 34'
+         WHEN u.idade < 45  THEN '03 - 35 a 44'
+         WHEN u.idade < 60  THEN '04 - 45 a 59'
+         ELSE '05 - 60 ou mais'
+    END AS faixa_etaria,
+    -- escada MCMV — mesma faixa usada no relatório ad-hoc já validado
+    CASE WHEN coalesce(u.renda, 0) = 0        THEN NULL
+         WHEN u.renda <=  2160  THEN '01 - Faixa 1 (até 2.160)'
+         WHEN u.renda <=  3200  THEN '02 - Faixa 1 (2.161 a 3.200)'
+         WHEN u.renda <=  4000  THEN '03 - Faixa 2 (3.201 a 4.000)'
+         WHEN u.renda <=  5000  THEN '04 - Faixa 2 (4.001 a 5.000)'
+         WHEN u.renda <=  9600  THEN '05 - Faixa 3 (5.001 a 9.600)'
+         WHEN u.renda <= 13000  THEN '06 - Faixa 4 (9.601 a 13.000)'
+         ELSE '07 - Acima da tabela'
+    END AS faixa_renda_mcmv
+FROM unificado_final u
+LEFT JOIN silver.dpara_profissoes dp
+       ON lower(btrim(dp.original)) = lower(btrim(u.profissao_selecionado))
+LEFT JOIN silver.dpara_profissoes dp2
+       ON lower(btrim(dp2.original)) = lower(btrim(u.profissao_preenchido));

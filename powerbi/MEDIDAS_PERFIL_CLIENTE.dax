@@ -1,0 +1,79 @@
+// =============================================================================
+// Medidas — página "Perfil do Cliente", sobre a GOLD (gold.dim_perfil_cliente,
+// relacionada por documento_chave a gold.fato_reservas e/ou gold.fato_precadastros
+// — ver MODELO_SEMANTICO.md, "evite relacionar às duas fatos ao mesmo tempo").
+//
+// Substitui as 3 páginas do BI Matriz legado ("Perfil do Cliente", "Perfil do
+// Cliente Reserva", "Perfil do Cliente Pré Cadastro"), que liam um CSV manual
+// exportado do CVCRM (perfil_cliente_precadastro.csv/perfil_cliente_reserva.csv,
+// 148 colunas) — não vinham da API CVDW. Ver REGRAS_NEGOCIO.md DP-15 pro
+// levantamento completo (fill rate de cada fonte, escopo de colunas excluídas
+// por LGPD) e powerbi/PAGINA_PERFIL_CLIENTE.md pro desenho da página nova.
+//
+// RENDA: dim_perfil_cliente[renda] usa 0 (não NULL) quando não preenchida no CSV
+// de origem — mesmo problema já documentado pra fato_precadastros[renda_total].
+// SEMPRE filtrar tem_renda_informada = TRUE (ou renda > 0) e usar MEDIANA, nunca
+// média crua, em qualquer visual agregado — a digitação é livre no CVCRM, sem
+// validação, e outliers de teto (ex.: 99.999.999,99) puxam a média pra cima.
+//
+// PROFISSÃO: profissao_macro/profissao_micro vêm de join vivo com DP-07
+// (silver.dpara_profissoes) — cobertura real ~45-47% dos registros (não é falha
+// de relacionamento, é a taxa de preenchimento do formulário de origem).
+// =============================================================================
+
+Perfis Cadastrados =
+DISTINCTCOUNT ( dim_perfil_cliente[documento_chave] )
+
+Renda Mediana =                    // exclui renda=0 (não preenchida) — nunca usar AVERAGE aqui
+CALCULATE (
+    MEDIANX ( dim_perfil_cliente, dim_perfil_cliente[renda] ),
+    dim_perfil_cliente[tem_renda_informada] = TRUE
+)
+
+Renda Média =                      // só pra comparação com o legado; preferir Renda Mediana em visual
+CALCULATE (
+    AVERAGE ( dim_perfil_cliente[renda] ),
+    dim_perfil_cliente[tem_renda_informada] = TRUE
+)
+
+% Com Renda Informada =
+DIVIDE (
+    CALCULATE ( COUNTROWS ( dim_perfil_cliente ), dim_perfil_cliente[tem_renda_informada] = TRUE ),
+    COUNTROWS ( dim_perfil_cliente )
+)
+
+Idade Mediana =
+CALCULATE (
+    MEDIANX ( dim_perfil_cliente, dim_perfil_cliente[idade] ),
+    dim_perfil_cliente[idade] > 0
+)
+
+% Feminino =
+DIVIDE (
+    CALCULATE ( COUNTROWS ( dim_perfil_cliente ), dim_perfil_cliente[sexo] = "Feminino" ),
+    CALCULATE ( COUNTROWS ( dim_perfil_cliente ), NOT ISBLANK ( dim_perfil_cliente[sexo] ) )
+)
+
+% Solteiro =
+DIVIDE (
+    CALCULATE ( COUNTROWS ( dim_perfil_cliente ), dim_perfil_cliente[estado_civil] = "Solteiro(a)" ),
+    CALCULATE ( COUNTROWS ( dim_perfil_cliente ), NOT ISBLANK ( dim_perfil_cliente[estado_civil] ) )
+)
+
+% Com Profissão Identificada =       // cobertura real do de-para DP-07, não confundir com falha de join
+DIVIDE (
+    CALCULATE ( COUNTROWS ( dim_perfil_cliente ), NOT ISBLANK ( dim_perfil_cliente[profissao_macro] ) ),
+    COUNTROWS ( dim_perfil_cliente )
+)
+
+% PPE =                              // pessoa politicamente exposta — compliance, cobertura baixa é esperada
+DIVIDE (
+    CALCULATE ( COUNTROWS ( dim_perfil_cliente ), dim_perfil_cliente[eh_ppe] = TRUE ),
+    COUNTROWS ( dim_perfil_cliente )
+)
+
+Comprometimento de Renda =          // valor da parcela aprovada / renda — só faz sentido pelo lado pré-cadastro
+DIVIDE (
+    CALCULATE ( SUM ( fato_precadastros[valor_prestacao] ) ),
+    CALCULATE ( SUM ( dim_perfil_cliente[renda] ), dim_perfil_cliente[tem_renda_informada] = TRUE )
+)

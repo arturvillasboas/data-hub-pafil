@@ -33,4 +33,5 @@ objetos:
   - { nome_logico: corretores,                      path: corretores,                     id: auto }
   - { nome_logico: imobiliarias,                    path: imobiliarias,                   id: auto }
   - { nome_logico: pessoas,                         path: pessoas,                        id: auto }
+  - { nome_logico: pessoas_profissional,            path: pessoas/profissional,           id: auto }
   - { nome_logico: campos_adicionais,               path: campos_adicionais,              id: auto }

@@ -22,6 +22,32 @@ EXCEPTION WHEN others THEN RETURN NULL;
 END;
 $$ LANGUAGE plpgsql IMMUTABLE;
 
+-- Mesma tolerância de silver.tentar_numeric, mas decide o separador decimal em vez
+-- de assumir BR sempre — achado em 24/ago/2026 (DP-15): campos texto que vêm DIRETO
+-- da API (ex.: bronze.pessoas.renda_familiar) usam ponto decimal puro ("4181.82"),
+-- diferente dos que vêm de planilha/CSV exportado em pt-BR ("1.234,56"). Aplicar
+-- tentar_numeric() num valor "4181.82" dava 418182 (100x errado) — o ponto era
+-- removido como se fosse separador de milhar. Mesma lógica de decisão já usada em
+-- Python na ingestão (cvdw/tipos.py:parse_numero): vírgula presente -> BR (ponto=
+-- milhar, vírgula=decimal); mais de um ponto sem vírgula -> pontos são milhar;
+-- senão -> um ponto isolado já É o separador decimal, cast direto.
+CREATE OR REPLACE FUNCTION silver.tentar_numeric_flexivel(t text)
+RETURNS numeric AS $$
+DECLARE
+    v text;
+BEGIN
+    IF t IS NULL OR btrim(t) = '' THEN RETURN NULL; END IF;
+    v := btrim(t);
+    IF v LIKE '%,%' THEN
+        v := replace(replace(v, '.', ''), ',', '.');              -- BR: 1.234,56
+    ELSIF (length(v) - length(replace(v, '.', ''))) > 1 THEN
+        v := replace(v, '.', '');                                  -- vários pontos = milhar
+    END IF;                                                        -- senão: ponto único já é decimal
+    RETURN v::numeric;
+EXCEPTION WHEN others THEN RETURN NULL;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
 -- numeric → texto sem ".0" (CNPJ/RG vieram numeric na bronze mas são identificadores).
 CREATE OR REPLACE FUNCTION silver.id_texto(v numeric)
 RETURNS text AS $$
@@ -87,6 +113,20 @@ RETURNS text AS $$
             ) COLLATE "und-x-icu"
         ), '');
 $$ LANGUAGE sql STABLE;
+
+
+-- Chave de junção por documento (CPF/CNPJ) — usada para relacionar gold.fato_reservas
+-- e gold.fato_precadastros com gold.dim_perfil_cliente (DP-15). Normaliza pra só
+-- dígitos e aplica hash: um CPF só de dígitos ainda é o próprio CPF (identificador
+-- direto de pessoa), então nunca entra cru no modelo do Power BI — mesmo tratamento
+-- que já vale para documento_cliente (ver MODELO_SEMANTICO.md, "identificadores
+-- pessoais não entram na fato"). O hash preserva a igualdade determinística (dois
+-- documentos iguais sempre geram a mesma chave) sem deixar o CPF visível no relatório.
+CREATE OR REPLACE FUNCTION silver.chave_documento(doc text) RETURNS text AS $$
+    SELECT CASE WHEN nullif(regexp_replace(coalesce(doc, ''), '\D', '', 'g'), '') IS NOT NULL
+                THEN md5(regexp_replace(doc, '\D', '', 'g'))
+           END;
+$$ LANGUAGE sql IMMUTABLE;
 
 
 CREATE OR REPLACE VIEW silver.reservas AS

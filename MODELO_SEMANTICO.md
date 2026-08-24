@@ -71,6 +71,7 @@ montar medidas:
 | `dim_empreendimento` | derivada de `unidades` (e também de `reservas`) | `idempreendimento` | nome do empreendimento, região, tipo de empreendimento |
 | `dim_corretor` | `corretores` | `idcorretor` | nome, imobiliária, CRECI, se está ativo, categoria, nível |
 | `dim_calendario` | gerada dentro do próprio Power BI (DAX ou Power Query) | `Data` | ano, mês, trimestre, nome do mês, ano-mês |
+| `dim_perfil_cliente` | `pessoas` ⨝ `pessoas/profissional` (API CVDW); CSV manual só como fallback | `documento_chave` | profissão (macro/micro), renda, faixa etária, faixa de renda MCMV, PPE, grau de instrução, tempo de residência — ver DP-15 em `REGRAS_NEGOCIO.md` |
 
 **`dim_empreendimento`** não tem um objeto próprio na API: ela é derivada da
 entidade `unidades`, e já está pronta como `gold.dim_empreendimento`.
@@ -80,11 +81,30 @@ nome da imobiliária já vem embutido tanto em `fato_reservas[imobiliaria]` quan
 `dim_corretor[imobiliaria]`, e uma dimensão dedicada só para isso não agregaria
 valor à apresentação.
 
-**Uma `dim_cliente` foi adiada de propósito.** Os campos de cliente mais usados já
-vêm embutidos direto em `reservas` (nome do cliente, cidade, sexo, idade, estado
-civil, renda). Trazer o objeto `pessoas` inteiro, que tem cerca de 98 colunas e
-concentra muito dado pessoal sensível (CPF, RG, CNH), não compensa neste momento do
-projeto.
+**Uma `dim_cliente` cheia (dump de `pessoas`) continua adiada de propósito.** Os
+campos de cliente mais usados já vêm embutidos direto em `reservas` (nome do
+cliente, cidade, sexo, idade, estado civil, renda). Trazer o objeto `pessoas`
+inteiro, que tem cerca de 98 colunas e concentra muito dado pessoal sensível (CPF,
+RG, CNH), não compensa neste momento do projeto.
+
+**`dim_perfil_cliente` (DP-15, agosto de 2026) não é essa `dim_cliente` adiada — é
+um recorte deliberadamente menor.** Traz profissão, renda, PPE e demografia,
+curados por LGPD — não os ~98 campos crus de `pessoas`. Fonte primária: a própria
+API CVDW, `bronze.pessoas` ⨝ `bronze.pessoas_profissional` (endpoint
+`pessoas/profissional`, um objeto novo, fora dos 19 originalmente descobertos —
+achado só depois de duas rodadas de investigação com amostra pequena terem
+concluído erradamente que profissão/renda não existiam na API; ver o histórico
+completo em `REGRAS_NEGOCIO.md` DP-15). Um CSV manual do CVCRM continua no repo
+como *fallback* (`silver.perfil_cliente_precadastro`/`_reserva`), usado só para
+`documento_chave` sem nenhuma linha em `bronze.pessoas`. Ficam de fora as colunas
+mais sensíveis (dados bancários, finanças de PJ, documentos como RG/RNE/CNH/PIS,
+filiação, e os dados de terceiros no bloco PPE) — ver o detalhe completo em
+`REGRAS_NEGOCIO.md` DP-15. Grão: 1 linha por `documento_chave` (CPF hasheado via
+`silver.chave_documento()`, nunca exposto em claro). Relaciona com `fato_reservas`
+e `fato_precadastros` pela mesma chave (ambas ganharam a coluna `documento_chave`
+para isso). `profissao_micro`/
+`profissao_macro` vêm de um join vivo com `dpara_profissoes` (DP-07), não de valor
+congelado importado do CSV legado.
 
 **`dim_estrutura`, `dim_metas_empreendimentos` e `dim_viabilidade`** entraram no
 modelo na task 6.4, em agosto de 2026. Juntas, cobrem a matriz de preço e estoque
@@ -141,7 +161,14 @@ dim_calendario[Date] ──1:*── fato_reservas[data_venda]   (ativo)
 dim_unidade[idunidade] ──1:*── fato_reservas[idunidade]
 dim_corretor[idcorretor] ──1:*── fato_reservas[idcorretor]
 dim_empreendimento[idempreendimento] ──1:*── fato_reservas[idempreendimento]
+dim_perfil_cliente[documento_chave] ──1:*── fato_reservas[documento_chave]      (opcional)
 ```
+
+- `dim_perfil_cliente` também relaciona com `fato_precadastros` pela mesma
+  `documento_chave` (não desenhado no diagrama acima por já ter cliente
+  fato_reservas/fato_precadastros ligados entre si por `id_precadastro`; evite
+  relacionar `dim_perfil_cliente` às duas fatos ao mesmo tempo, para não formar um
+  losango de filtro — prefira relacionar só à fato que a página realmente usa).
 
 - A fato tem várias colunas de data (`data_cad`, `data_venda`, `data_cancelamento`,
   entre outras). A recomendação é deixar apenas um relacionamento ativo com

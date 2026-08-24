@@ -438,6 +438,111 @@ CREATE TABLE IF NOT EXISTS silver.distratos_2025 (
 );
 CREATE INDEX IF NOT EXISTS ix_distratos_2025_contrato ON silver.distratos_2025 (contrato);
 
+-- ---------------------------------------------------------------------------------
+-- DP-15 — Perfil de cliente (profissão, renda, PPE, demografia). Não vem da API
+-- CVDW (checado ao vivo: nem em campo próprio, nem dentro de campos_adicionais) —
+-- só existe no relatório/export manual do CVCRM, hoje CSV no SharePoint (BI V.2/
+-- BI Matriz/perfil_cliente_precadastro.csv e perfil_cliente_reserva.csv, 148
+-- colunas cada). Trazido aqui um subconjunto curado (~28 colunas, não as 148): ver
+-- REGRAS_NEGOCIO.md DP-15 para a lista completa do que foi excluído por LGPD
+-- (banco, PJ, documentos, terceiros PPE) e por que.
+--
+-- PK técnica gerada (_id_tecnico): nem `n` (o "N." do CSV) nem `documento` são
+-- únicos no arquivo — a mesma pessoa/negociação aparece mais de uma vez (874
+-- valores de N. repetidos na carga de 24/ago/2026). `documento` fica só como
+-- chave de JOIN (dígitos do CPF); nunca é exposto
+-- diretamente na gold — mesmo tratamento já dado a documento_cliente em
+-- fato_reservas (ver MODELO_SEMANTICO.md).
+-- ---------------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS silver.perfil_cliente_precadastro (
+    -- PK técnica: "N." do CSV NÃO é único (874 valores repetidos na carga de
+    -- 24/ago/2026 — mesmo padrão de duplicação de `documento`; N. é um número de
+    -- cliente/negociação, não um id de linha). Mesmo tratamento de
+    -- silver.distratos_2025._id_tecnico: gera a própria chave, guarda `n` como
+    -- coluna comum (auditoria/rastreio até a linha de origem, sem garantir
+    -- unicidade).
+    _id_tecnico                    bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    n                              bigint,
+    documento                      text,
+    cod_cliente                    bigint,
+    empreendimento                 text,
+    unidade                        text,
+    data_cadastro                  date,
+    estado_civil                   text,
+    nascimento                     date,
+    idade                          int,
+    sexo                           text,
+    nacionalidade                  text,
+    naturalidade                   text,
+    cep                            text,
+    bairro                         text,
+    cidade                         text,
+    estado                         text,
+    profissao_selecionado          text,
+    profissao_preenchido           text,
+    renda                          numeric,
+    sinalizador_juridico           text,
+    pessoa_politicamente_exposta   text,
+    pessoa_lista_suspeitos         text,
+    residente_municipio_fronteira  text,
+    dependentes                    text,
+    grau_instrucao                 text,
+    tipo_residencia                text,
+    com_quem_reside                text,
+    empresa_onde_trabalha          text,
+    cargo_empresa                  text,
+    valor_aluguel                  numeric,
+    tempo_residencia               int,
+    classificacao                  text,
+    ppe_cargo                      text,
+    tag_pessoa                     text,
+    _origem                        text DEFAULT 'SharePoint: BI Matriz/perfil_cliente_precadastro.csv'
+);
+CREATE INDEX IF NOT EXISTS ix_perfil_cliente_precadastro_doc ON silver.perfil_cliente_precadastro (documento);
+
+-- Mesmo layout, grão reserva (complementa quem reservou sem passar pelo fluxo de
+-- crédito do pré-cadastro).
+CREATE TABLE IF NOT EXISTS silver.perfil_cliente_reserva (
+    _id_tecnico                    bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    n                              bigint,
+    documento                      text,
+    cod_cliente                    bigint,
+    empreendimento                 text,
+    unidade                        text,
+    data_cadastro                  date,
+    estado_civil                   text,
+    nascimento                     date,
+    idade                          int,
+    sexo                           text,
+    nacionalidade                  text,
+    naturalidade                   text,
+    cep                            text,
+    bairro                         text,
+    cidade                         text,
+    estado                         text,
+    profissao_selecionado          text,
+    profissao_preenchido           text,
+    renda                          numeric,
+    sinalizador_juridico           text,
+    pessoa_politicamente_exposta   text,
+    pessoa_lista_suspeitos         text,
+    residente_municipio_fronteira  text,
+    dependentes                    text,
+    grau_instrucao                 text,
+    tipo_residencia                text,
+    com_quem_reside                text,
+    empresa_onde_trabalha          text,
+    cargo_empresa                  text,
+    valor_aluguel                  numeric,
+    tempo_residencia               int,
+    classificacao                  text,
+    ppe_cargo                      text,
+    tag_pessoa                     text,
+    _origem                        text DEFAULT 'SharePoint: BI Matriz/perfil_cliente_reserva.csv'
+);
+CREATE INDEX IF NOT EXISTS ix_perfil_cliente_reserva_doc ON silver.perfil_cliente_reserva (documento);
+
 -- Situação da reserva → ordem do funil da esteira (1..13 pipeline aberto; 14..16 desfecho).
 CREATE TABLE IF NOT EXISTS silver.dpara_situacao_esteira (
     situacao         text PRIMARY KEY,

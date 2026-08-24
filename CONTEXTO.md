@@ -71,7 +71,9 @@ classificação oficial que vem da Vendas Consolidadas, proposta por proposta).
 ## Fonte de dados
 
 A fonte é o CRM imobiliário CVCRM (subdomínio `pafil.cvcrm.com.br`), através da API
-CVDW, que expõe 19 objetos diferentes. A paginação é de 500 registros por página, e o
+CVDW, que expõe 20 objetos diferentes (o 20º, `pessoas/profissional`, foi
+descoberto só em 24/ago/2026 — ver DP-15 em `REGRAS_NEGOCIO.md`; os outros 19
+vieram da descoberta original de schema). A paginação é de 500 registros por página, e o
 limite de taxa é de aproximadamente 20 requisições por minuto (passar disso gera erro
 429 e um bloqueio de 60 segundos). A autenticação é por e-mail e token, guardados
 sempre no `.env` e nunca no repositório. A carga incremental usa o campo
@@ -95,7 +97,7 @@ de transformação de dados, fica adiado até o schema estabilizar.
 
 ## O que já está pronto (tudo aplicado e validado no banco local)
 
-- **Bronze** (`sql/bronze/bronze.sql`, `ingestao.py`): 20 tabelas cruas, uma cópia
+- **Bronze** (`sql/bronze/bronze.sql`, `ingestao.py`): 21 tabelas cruas, uma cópia
   fiel de cada objeto da API, mais uma tabela `_snapshot` para cada uma delas.
   Atenção: a carga local hoje é parcial, com 4.756 reservas carregadas contra cerca
   de 1.302 propostas do legado que ainda faltam. A carga completa só vai acontecer

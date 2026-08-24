@@ -118,4 +118,22 @@ deparas:
     fonte_rel: "Crédito/Base - Crédito.xlsm"
     descricao: "Aba Apoio (Etapa WKF/Etapa precadastro BI/Etapa precadastro BI Detalhada): situação crua do CVCRM -> etapa do funil de crédito (Montagem/Análise Documental/Análise de Crédito/Crédito Aprovado/Com Reserva/Ajustes/Cancelada/Vencida). Base do dashboard Pré Cadastro (DP-05). Recarga: popular_seeds --etapa-precadastro."
 
+  - nome: profissoes
+    silver: dpara_profissoes
+    tipo: arquivo
+    fonte_rel: "BI V.2/BI Matriz/de_para profissões.xlsx"
+    descricao: "DP-07: Profissão (Selecionado) original -> Micro/Macro (aba Planilha1, 3 colunas). Usado no perfil de cliente (DP-15), join case-insensitive em gold.dim_perfil_cliente. Recarga: popular_seeds --profissoes."
+
+  - nome: perfil_cliente_precadastro
+    silver: perfil_cliente_precadastro
+    tipo: arquivo
+    fonte_rel: "BI V.2/BI Matriz/perfil_cliente_precadastro.csv"
+    descricao: "DP-15: perfil de cliente (profissão/renda/PPE/demografia), grão pré-cadastro — a fonte mais completa (form de KYC/crédito). NÃO vem da API CVDW. Subconjunto curado de 148 colunas do CSV (ver REGRAS_NEGOCIO.md DP-15 pro escopo excluído por LGPD: banco, PJ, documentos, terceiros PPE). Recarga: popular_seeds --perfil-cliente-precadastro."
+
+  - nome: perfil_cliente_reserva
+    silver: perfil_cliente_reserva
+    tipo: arquivo
+    fonte_rel: "BI V.2/BI Matriz/perfil_cliente_reserva.csv"
+    descricao: "DP-15: mesmo layout do perfil_cliente_precadastro, grão reserva — complementa quem reservou sem passar pelo fluxo de crédito. Recarga: popular_seeds --perfil-cliente-reserva."
+
 
