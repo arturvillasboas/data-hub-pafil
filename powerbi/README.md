@@ -201,13 +201,20 @@ Antes de apresentar, confira os visuais contra os relatórios já reconciliados 
   98,8% dos casos, no caso do VGV.
 
 > **Atenção:** o bronze local hoje é parcial. Para o relatório de produção de
-> verdade, é preciso rodar a carga completa na instância EC2 e reapontar o
-> `.pbids` (ou o servidor de conexão). O modelo e as medidas em si não mudam
-> nesse processo.
+> verdade, use o banco de produção, não o local: a máquina Windows física/local
+> descrita em `infra/RUNBOOK_WINDOWS.md` (o plano de instância EC2 foi
+> descartado em 20/ago/2026 — a TI não provisionou, e passou uma máquina Windows
+> já existente no lugar). Troque o servidor da conexão para `localhost:5432`
+> (não `localhost:5433`, que é só do banco de dev) e o usuário para `pafil_bi`
+> (não `postgres`/`PafilLocalDev2026`) — a senha do `pafil_bi` fica em
+> `C:\pafil\pafil_credenciais.txt`, dentro da própria máquina de produção. O
+> modelo e as medidas em si não mudam nesse processo.
 
 ## 7. Como atualizar mês a mês
 
 Depois de rodar a carga incremental (`ingestao.py --incremental`) seguida de
 `aplicar_tudo.py`, basta clicar em Atualizar dentro do Power BI Desktop. Em
-produção, já com o banco na instância EC2, o Power BI Service atualiza
-automaticamente através do gateway.
+produção, isso já roda sozinho: a máquina Windows física/local
+(`infra/RUNBOOK_WINDOWS.md`) tem uma tarefa agendada rodando a ingestão
+incremental de hora em hora, e o Power BI Service atualiza automaticamente
+através do On-premises Data Gateway instalado na mesma máquina do banco.
