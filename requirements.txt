@@ -4,3 +4,12 @@ requests==2.32.3          # cliente HTTP da API CVDW
 psycopg[binary]==3.2.3    # driver PostgreSQL (psycopg 3, com binários inclusos)
 python-dotenv==1.0.1      # carrega variáveis de ambiente do .env
 PyYAML==6.0.2             # leitura do config/objetos.yml
+openpyxl==3.1.5           # le xlsx/xlsm dos seeds manuais (popular_seeds.py). Ficava de
+                           # fora de propósito por não ser dependência da ingestão em si
+                           # (ver CONTEXTO.md) -- voltou pra cá em 25/ago/2026, achado ao
+                           # tentar rodar popular_seeds.py pela 1a vez direto na producao
+                           # (RUNBOOK_WINDOWS.md): o venv de lá segue so o requirements.txt,
+                           # nunca teve o pip install openpyxl manual que o dev fez no
+                           # ambiente local. Sem isso, todo loader baseado em planilha
+                           # (metas, estrutura, viabilidade, profissoes, gerentes, perfil
+                           # de cliente) quebra com ModuleNotFoundError.

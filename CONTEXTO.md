@@ -228,9 +228,13 @@ o projeto funciona.
   imprimem acentos, setas ou qualquer caractere fora do padrão ASCII precisam
   reconfigurar a saída padrão para UTF-8. O `consultar.ps1`, por exemplo, usa a
   variável `PGCLIENTENCODING=WIN1252` para lidar com isso.
-- O pacote `openpyxl` está instalado no ambiente virtual só para ler os arquivos
-  `.xlsm` legados. Ele fica de fora do `requirements.txt` da pipeline em si, por não
-  ser uma dependência da ingestão.
+- O pacote `openpyxl` lê os arquivos `.xlsx`/`.xlsm` dos seeds manuais
+  (`popular_seeds.py`). Ficou de fora do `requirements.txt` por um tempo, por não
+  ser dependência da ingestão em si (`ingestao.py`) — decisão que voltou atrás em
+  25/ago/2026, quando `popular_seeds.py` rodou pela primeira vez direto na máquina
+  de produção (`RUNBOOK_WINDOWS.md`) e quebrou com `ModuleNotFoundError`: o `pip
+  install -r requirements.txt` de lá nunca tinha o pacote, só o ambiente local do
+  dev (instalado à mão, fora do arquivo). Agora está no `requirements.txt`.
 - As credenciais do CVCRM e os dados pessoais reais (leads e pessoas) exigem cuidado
   redobrado: o banco só pode existir em infraestrutura da própria empresa, e o token
   de API que já foi compartilhado em algum momento deve ser rotacionado.
