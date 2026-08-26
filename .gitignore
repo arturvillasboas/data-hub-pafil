@@ -45,6 +45,9 @@ relatorios/*
 # === Exports mensais de reconciliação (dado de um mês específico, não doc) ===
 reconciliacao/*.xlsx
 
+# === Automação de reporting: sessão autenticada do Power BI, nunca versionar ===
+automacao_reporting/capture_service/storage_state.json
+
 # === Claude Code ===
 .claude/
 
