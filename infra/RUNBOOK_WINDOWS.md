@@ -242,11 +242,129 @@ reservas precisa ficar acima das 4.756 da carga local parcial.
 Igual à versão Linux: `aplicar_tudo.py` popula os seeds a partir de planilhas
 do SharePoint/OneDrive, que não existem dentro desta máquina. A atualização
 dos de-paras continua rodando da máquina do analista, com o `.env` local
-apontando para cá através do túnel (seção 8):
+apontando para cá através do túnel SSH (seção 8, habilitado e testado em
+31/ago/2026).
 
-```powershell
-python popular_seeds.py
-```
+**Passo a passo validado (31/ago/2026, carga completa de 25.273 linhas em 16
+seeds):**
+
+1. Numa janela de terminal dedicada, que precisa ficar aberta durante toda a
+   atualização (é ela que sustenta o túnel), conecta:
+
+   ```powershell
+   ssh -L 5433:localhost:5432 projetosrv001
+   ```
+
+   Não fecha nem desloga essa sessão até terminar.
+
+   **A conexão é por chave, não por senha (ajustado em 09/set/2026).** O par
+   `~/.ssh/pafil_producao` (ed25519, sem passphrase, comentário
+   `tunel-pafil-producao`) já existia no notebook do analista desde
+   24/ago/2026, e agora o `~/.ssh/config` tem a entrada do host, que é o que
+   dispensa o `-i` e o `rpa02@` na linha acima. Sem essa entrada o `ssh` nem
+   chega a oferecer a chave, porque o nome do arquivo não é um dos padrão
+   (`id_ed25519`, `id_rsa`), e a conexão cai na senha, que não funciona mais.
+
+   **Se um dia der `Permission denied` mesmo com a chave**, roda com `-v` e
+   olha a linha logo depois de `Offering public key`. Se o servidor recusar,
+   a causa quase certa é a pegadinha do OpenSSH no Windows: o `rpa02` é do
+   grupo Administradores, e para membros desse grupo o `sshd` **ignora** o
+   `C:\Users\rpa02\.ssh\authorized_keys` e lê apenas o
+   `C:\ProgramData\ssh\administrators_authorized_keys`, que ainda por cima
+   precisa de ACL restrita (só Administradores e SYSTEM), senão é descartado
+   em silêncio. Foi exatamente isso em 09/set/2026: a chave existia dos dois
+   lados, mas no arquivo que o `sshd` não lê. Dentro da VM, por RDP:
+
+   ```powershell
+   $pub = "<conteúdo de ~/.ssh/pafil_producao.pub>"
+   $arq = "C:\ProgramData\ssh\administrators_authorized_keys"
+   Add-Content -Path $arq -Value $pub -Encoding ascii
+   icacls $arq /inheritance:r /grant "*S-1-5-32-544:F" /grant "*S-1-5-18:F"
+   Restart-Service sshd
+   ```
+
+   O motivo exato de qualquer recusa fica no Event Viewer da VM, em
+   `Get-WinEvent -LogName "OpenSSH/Operational" -MaxEvents 20`.
+
+2. Aponta a conexão para produção. O jeito mais seguro, e o que passou a ser
+   usado em 09/set/2026, é **não encostar no `.env`**: o
+   `config/settings.py` chama `load_dotenv()`, que por padrão não sobrepõe
+   variável já existente no ambiente, então basta definir as duas na janela
+   de trabalho. Elas valem só ali, somem quando a janela fecha, e não existe
+   passo de restaurar depois nem risco de esquecer o repositório apontado
+   para produção:
+
+   ```powershell
+   $env:PG_USER = "pafil_app"; $env:PG_PASSWORD = "<de C:\pafil\pafil_credenciais.txt>"
+   ```
+
+   O resto do bloco do Postgres do `.env` já serve para o túnel
+   (`localhost`, `5433`, `pafil_dw`, `disable`). Uma pegadinha: tudo tem que
+   rodar **na mesma janela**, porque outro PowerShell não enxerga essas
+   variáveis e cai no `postgres` do `.env`, que é o banco de dev local.
+
+   Se ainda assim preferir editar o arquivo (aí sim copie antes com
+   `Copy-Item .env .env.local.bak`, e restaure no passo 5), o bloco é este.
+   As variáveis `DEPARA_*`/`*_XLSX`/`*_XLSM` continuam como estão, já apontam
+   para o OneDrive do próprio notebook do analista, que é a fonte de
+   verdade das planilhas e não precisa (nem deve) ser tocado:
+
+   ```
+   PG_HOST=localhost
+   PG_PORT=5433
+   PG_USER=pafil_app
+   PG_PASSWORD=<de C:\pafil\pafil_credenciais.txt, lido de dentro da VM>
+   PG_SSLMODE=disable
+   ```
+
+3. Confirma que caiu no banco certo antes de rodar qualquer coisa (o
+   Postgres de dev local, quando está de pé, usa `PG_USER=postgres` — se a
+   conexão abaixo funcionar com `pafil_app`, é porque está do outro lado do
+   túnel):
+
+   ```powershell
+   python -c "from config.settings import carregar_config_pg; from cvdw import db
+   with db.conectar(carregar_config_pg()) as conn:
+       print(conn.execute('select current_database()').fetchone())"
+   ```
+
+4. Roda a atualização, sem nenhuma flag — o script já lê os caminhos
+   default do `.env` (inclusive `DEPARA_LEADS_XLSM`). **Não passe
+   `--leads-apoio` com o nome da variável em vez do caminho do arquivo**
+   (ex.: `--leads-apoio LEADS_APOIO`): isso faz o Python procurar um arquivo
+   chamado literalmente `LEADS_APOIO`, que não existe, e o loader vivo de
+   canal/mídia é pulado em silêncio (só um `WARNING` no log), sem quebrar a
+   execução — foi exatamente assim que esse bug passou despercebido da
+   primeira vez.
+
+   ```powershell
+   python popular_seeds.py
+   ```
+
+   Como o `.env` local tem todas as variáveis preenchidas, essa chamada sem
+   flags atualiza os 16 seeds de uma vez, não só canal/mídia. Cada `INSERT`
+   viaja pelo túnel, então é mais lento que local — a carga completa levou
+   cerca de 4 minutos em 31/ago/2026. Silver e gold são views, então o
+   resultado aparece na hora, sem precisar rodar
+   `aplicar_silver.py`/`aplicar_gold.py` depois.
+
+5. Fecha a janela do túnel (`Ctrl+C`). Só restaura o `.env`
+   (`Copy-Item .env.local.bak .env -Force`) se você tiver editado o arquivo
+   em vez de usar as variáveis de ambiente do passo 2.
+
+**Armadilha já encontrada, não repetir (31/ago/2026):** o primeiro caminho
+tentado foi sincronizar o OneDrive de dentro da própria sessão `rpa02` na
+VM, e não funcionou. O OneDrive dessa sessão, antes de qualquer ajuste, só
+tinha bibliotecas de Financeiro sincronizadas (`C. A PAGAR - TESTE ROBO`,
+`CONCILIAÇÃO`, `CONTABIL`) — nada do Comercial. Mesmo depois de confirmar
+que a conta certa (`artur.filho@pafil.com.br`) estava logada no OneDrive
+dessa sessão, tentar sincronizar a biblioteca "COMERCIAL - Documentos" pelo
+botão "Sincronizar" do SharePoint falhou com "Não é possível sincronizar...
+tente novamente" (suspeita: política de Conditional Access bloqueando
+sincronização nesta máquina, não investigado a fundo). O túnel SSH evita
+esse problema inteiro, porque as planilhas continuam vindo do OneDrive do
+notebook do analista, onde já funcionam sem fricção — não vale a pena
+insistir em fazer o OneDrive sincronizar dentro da VM.
 
 Isso não é dívida técnica, é uma fronteira real enquanto as planilhas de
 origem forem mantidas à mão pelo backoffice (seção 4 de `ARCHITECTURE.md`).
@@ -318,6 +436,18 @@ máquina (confirme com `Get-TimeZone`; se não for `E. South America Standard
 Time`, ajuste com `Set-TimeZone` ou os horários acima vão disparar na hora
 errada).
 
+> Uma observação sobre o `--incremental`: desde 09/set/2026, `reservas` é o
+> único objeto marcado com `sempre_full: true` em `config/objetos.yml`, ou
+> seja, ele é recarregado por inteiro em toda execução, mesmo no modo
+> incremental. O motivo está em R26 (`REGRAS_NEGOCIO.md`): o
+> `data_referencia` que a API expõe em `/reservas` acompanha a mudança de
+> situação, não a edição de um campo, então uma correção que o backoffice faz
+> no "Gerente Responsavel" dias depois da venda ficaria fora da janela para
+> sempre. São cerca de 10 páginas (35 segundos), o que cabe folgado na
+> execução de hora em hora. Se um dia a base de reservas crescer a ponto de
+> isso pesar, a alternativa é tirar a marca e passar a rodar
+> `ingestao.py --full --objetos reservas` uma vez por dia.
+
 Para conferir que funcionou:
 
 ```powershell
@@ -334,6 +464,67 @@ Get-Content C:\pafil\logs\ingestao.log -Tail 30
 > a conexão é `localhost`, e nenhum segredo `PG_*` precisa existir fora dela.
 > O workflow `ingestao-diaria.yml` do GitHub Actions continua existindo só
 > como disparo manual de emergência.
+
+### 5.1 Carga do Blip (atendimento)
+
+Esta é a única carga do projeto em que **atrasar é perder dado de verdade**, e
+vale entender o porquê antes de mexer nela.
+
+A API do Blip só devolve mais ou menos os últimos 35 dias de tickets. Medido em
+09/set/2026: a coleção inteira trazia 1.229 tickets, sendo que o contador
+interno do Blip já estava em 52.411. Os outros 51 mil existiram e foram
+arquivados, e não há endpoint que os traga de volta. Quer dizer que o banco
+passa a ser a fonte de verdade do histórico de atendimento, e não o Blip.
+
+A consequência prática: se esta tarefa ficar parada mais de um mês, o que
+passou nesse período some para sempre. Não existe recuperação depois, diferente
+do CVDW, onde um `--full` sempre reconstrói tudo do zero.
+
+**Por que `--full` e não `--incremental`.** O modo incremental existe para os
+777 mil registros do CVDW. Aqui a coleção inteira cabe em 13 páginas e 15
+segundos, então o incremental só traria o risco de a janela não alcançar um
+ticket atualizado fora dela, sem nenhum ganho de tempo em troca. Para esta
+fonte, `--full` é a escolha simples e mais segura.
+
+Antes de registrar a tarefa, o `.env` da VM precisa do bloco do Blip (o mesmo
+do `.env.example`, seção "Blip"). Basta a chave, porque o identificador do bot
+sai dela:
+
+```
+BLIP_CHAVE=Key <chave composta do bot Router>
+```
+
+A tarefa acompanha o mesmo horário da ingestão do CVDW, de hora em hora das 06h
+às 18h, para o painel ficar fresco ao longo do dia comercial:
+
+```powershell
+schtasks /Create /TN "PafilDW - Blip diario" /RU SYSTEM /RL HIGHEST /SC DAILY /ST 06:05 /RI 60 /DU 0012:01 /F `
+  /TR "cmd /c C:\pafil\app\.venv\Scripts\python.exe C:\pafil\app\ingerir_blip.py --full >> C:\pafil\logs\blip.log 2>&1"
+```
+
+O `/ST 06:05` desencontra de propósito dos 06:00 da ingestão do CVDW: as duas
+escrevem no mesmo banco e não há motivo para disputarem conexão no mesmo
+minuto.
+
+**Conferir que está rodando.** As duas fontes dividem a mesma tabela de
+controle, então uma consulta responde pelas duas:
+
+```sql
+SELECT nome_logico, ultima_execucao, ultimo_modo,
+       registros_ultima_carga, status, mensagem
+FROM bronze._ingestao_controle
+WHERE nome_logico LIKE 'blip%'
+ORDER BY ultima_execucao DESC;
+```
+
+O que olhar: `status` igual a `OK` e `ultima_execucao` de hoje. Se a
+`ultima_execucao` estiver com mais de um dia, investigue no mesmo dia, não na
+semana seguinte.
+
+> **Alerta ainda não existe, e aqui ele importa mais do que no reporting.** Hoje
+> a falha fica registrada na tabela de controle e mais nada. Como o dado perdido
+> não volta, um segundo mecanismo que avise quando a `ultima_execucao` do Blip
+> passar de 24 horas deveria entrar antes de qualquer refinamento do dashboard.
 
 ## 6. Power BI (etapa 7.5)
 
@@ -403,8 +594,11 @@ nela) é desconectada.
 
 Se preferir continuar usando o Power BI Desktop e o `psql` do seu próprio
 notebook (mais confortável no dia a dia, evita depender desta máquina estar
-disponível para RDP), habilite o recurso opcional **OpenSSH Server** do
-Windows aqui, que é o equivalente Windows ao SSH usado na versão Linux:
+disponível para RDP), o recurso opcional **OpenSSH Server** do Windows
+resolve isso — é o equivalente Windows ao SSH usado na versão Linux.
+
+**Habilitado e testado em 31/ago/2026**, numa sessão elevada (RDP como
+`rpa02`, a conta que a TI passou):
 
 ```powershell
 Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
@@ -412,16 +606,33 @@ Start-Service sshd
 Set-Service -Name sshd -StartupType Automatic
 ```
 
-Isso exige pedir a quem administra a rede da empresa para permitir a porta
-22 até esta máquina, restrita ao seu IP fixo (o mesmo modelo de acesso que o
-`PEDIDO_TI.md` já descrevia como alternativa ao SSM na versão Linux, só que
-agora é uma regra de rede local em vez de Security Group). Do seu notebook,
-o túnel fica assim (mesma porta local 5433 usada pelo Postgres de
-desenvolvimento, então `consultar.ps1` e os `.pbids` continuam funcionando
-sem alteração):
+> Se a conexão der `Connection reset` logo depois do handshake (antes até
+> de pedir senha), o serviço `sshd` provavelmente ficou num estado
+> inconsistente do primeiro start — `Restart-Service sshd` resolveu isso na
+> prática. Se persistir, `Get-WinEvent -LogName "OpenSSH/Operational"` ou
+> subir `sshd.exe -d -p 22` manualmente (com o serviço parado) mostra o
+> motivo exato.
+
+A porta 22 foi liberada só para o IP do notebook do analista, nunca de
+forma ampla:
 
 ```powershell
-ssh -L 5433:localhost:5432 -N <usuario>@<ip-da-maquina>
+New-NetFirewallRule -DisplayName "SSH-Analista" -Direction Inbound -Protocol TCP -LocalPort 22 -RemoteAddress <IP do notebook> -Action Allow
+```
+
+> O IP do notebook vem de DHCP e pode mudar. Se o túnel parar de conectar
+> um dia sem nenhuma outra mudança, confira primeiro se o IP do notebook
+> ainda é o mesmo que está nessa regra (`Get-NetFirewallRule -DisplayName
+> "SSH-Analista" | Get-NetFirewallAddressFilter`) antes de investigar outra
+> coisa.
+
+Do seu notebook, o túnel fica assim (mesma porta local 5433 usada pelo
+Postgres de desenvolvimento, então `consultar.ps1` e os `.pbids` continuam
+funcionando sem alteração — veja o passo a passo completo de uso na seção
+4):
+
+```powershell
+ssh -L 5433:localhost:5432 rpa02@projetosrv001
 ```
 
 > Cuidado: se o Postgres local de desenvolvimento já estiver de pé na porta
@@ -431,9 +642,12 @@ ssh -L 5433:localhost:5432 -N <usuario>@<ip-da-maquina>
 > qualquer carga: `psql -h localhost -p 5433 -c "select inet_server_addr(), current_database()"`.
 
 **A porta 5432 nunca é liberada para fora da rede da empresa em nenhum dos
-dois caminhos.** A abertura da porta 22 (se for o caminho escolhido) depende
-de quem administra a rede local. Leve isso como um pedido específico, não
-como algo que se resolve de dentro desta máquina.
+dois caminhos.** Diferente do que esta seção supunha antes de 31/ago/2026, a
+porta 22 **não** precisou de pedido à TI/rede: como o analista tem
+administrador nesta máquina (seção "pergunta central") e o notebook está na
+mesma rede local, roteada até aqui, o `Add-WindowsCapability` e a regra de
+Firewall da seção acima já resolvem tudo de dentro da própria VM, sem
+depender de ninguém além de quem está com a sessão RDP aberta.
 
 ## 9. Operação do dia a dia
 
@@ -449,6 +663,13 @@ como algo que se resolve de dentro desta máquina.
 | Restaurar apenas uma tabela | `pg_restore -U pafil_app -h 127.0.0.1 -d pafil_dw -t <tabela> C:\pafil\backups\<arquivo>.dump` |
 | Ver espaço em disco | `Get-Volume` |
 | Ver o tamanho do banco | `psql -U pafil_app -h 127.0.0.1 -d pafil_dw -c "\l+ pafil_dw"` |
+| Atualizar os seeds de-para (canal/mídia e os outros) | **Não roda na VM** — do notebook do analista, com o túnel SSH aberto (`python popular_seeds.py`, passo a passo completo na seção 4) |
+| A carga do Blip rodou hoje? | `Get-ScheduledTaskInfo -TaskName "PafilDW - Blip diario"`, ou a consulta da seção 5.1 |
+| Ver o log da última carga do Blip | `Get-Content C:\pafil\logs\blip.log -Tail 30` |
+| Rodar a carga do Blip fora do horário | `schtasks /Run /TN "PafilDW - Blip diario"` |
+| O SSH está habilitado nesta máquina? | `Get-Service sshd` |
+| SSH conectou mas deu "Connection reset" logo depois do handshake | `Restart-Service sshd` (sessão elevada), depois tenta o `ssh` de novo |
+| Conferir pra qual IP a porta 22 está liberada | `Get-NetFirewallRule -DisplayName "SSH-Analista" \| Get-NetFirewallAddressFilter` |
 
 ## 10. Checklist de aceite da Fase 7 (versão Windows, máquina física/local)
 
