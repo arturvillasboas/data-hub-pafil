@@ -300,3 +300,170 @@ Seleção Corte Atendimento = {
     ("Empreendimento",         NAMEOF ( 'dim_empreendimento'[empreendimento] ),     2),
     ("Motivo de encerramento", NAMEOF ( 'fato_atendimentos'[motivo_encerramento] ), 3)
 }
+
+// =============================================================================
+// As três tabelas do painel, em HTML (visual HTML Content)
+//
+// Mesma linguagem visual da faixa de KPIs: mesma família de fonte, mesmo azul
+// #003254 no cabeçalho, mesmos cantos arredondados. O que a tabela HTML entrega
+// e a matriz nativa não: barra de volume atrás da quantidade, cabeçalho fixo ao
+// rolar, e controle de largura de coluna que não depende de o usuário arrastar.
+//
+// O CSS vive numa medida separada porque as três tabelas usam o mesmo. Assim
+// um ajuste de estilo entra num lugar só, em vez de três, que é como esse tipo
+// de trio começa a divergir.
+//
+// Ordenação: por quantidade, decrescente, como no painel. Aqui isso funciona de
+// verdade, diferente da matriz nativa, porque a ordenação acontece no DAX sobre
+// o número e não sobre o texto formatado.
+// =============================================================================
+
+CSS Tabela Atendimento =
+    "<style>" &
+    "html,body{margin:0;padding:0;height:100%;}" &
+    ".t{font-family:'Segoe UI','Segoe UI Semibold',Arial,sans-serif;width:100%;height:100%;box-sizing:border-box;overflow:auto;}" &
+    ".t table{width:100%;border-collapse:separate;border-spacing:0;font-size:22px;color:#1F2937;}" &
+    ".t thead th{position:sticky;top:0;z-index:1;background:#003254;color:#fff;font-weight:600;text-align:right;padding:14px 16px;white-space:nowrap;}" &
+    ".t thead th:first-child{text-align:left;border-radius:12px 0 0 0;}" &
+    ".t thead th:last-child{border-radius:0 12px 0 0;}" &
+    ".t tbody td{padding:12px 16px;text-align:right;border-bottom:1px solid #E5E7EB;white-space:nowrap;}" &
+    ".t tbody td:first-child{text-align:left;font-weight:600;white-space:normal;}" &
+    ".t tbody tr:nth-child(even) td{background:#F3F6F8;}" &
+    ".t tbody tr:hover td{background:#E8EEF2;}" &
+    ".t .cap{font-size:18px;color:#6B7280;padding:8px 16px 0 16px;}" &
+    ".t .vazio{padding:24px 16px;color:#6B7280;font-size:22px;}" &
+    "</style>"
+
+// ---- 1. Por atendente ----
+Tabela Atendentes HTML =
+VAR _base =
+    FILTER (
+        ADDCOLUMNS (
+            VALUES ( 'dim_atendente'[atendente] ),
+            "@qtd", [Tickets Finalizados],
+            "@p1",  COALESCE ( [Tempo Médio 1a Resposta], "--" ),
+            "@esp", COALESCE ( [Tempo Médio Espera Fila], "--" ),
+            "@res", COALESCE ( [Tempo Médio Resposta], "--" ),
+            "@ate", COALESCE ( [Tempo Médio Atendimento], "--" )
+        ),
+        [@qtd] > 0
+    )
+VAR _max = MAXX ( _base, [@qtd] )
+VAR _linhas =
+    CONCATENATEX (
+        _base,
+        "<tr><td>"
+            & SUBSTITUTE ( SUBSTITUTE ( 'dim_atendente'[atendente], "&", "&amp;" ), "<", "&lt;" )
+            & "</td><td style='background:linear-gradient(to right,rgba(0,50,84,.14) "
+            & FORMAT ( DIVIDE ( [@qtd], _max ) * 100, "0" ) & "%,transparent "
+            & FORMAT ( DIVIDE ( [@qtd], _max ) * 100, "0" ) & "%)'>"
+            & FORMAT ( [@qtd], "#,0" ) & "</td><td>"
+            & [@p1] & "</td><td>" & [@esp] & "</td><td>"
+            & [@res] & "</td><td>" & [@ate] & "</td></tr>",
+        "",
+        [@qtd], DESC
+    )
+RETURN
+    [CSS Tabela Atendimento] &
+    "<div class='t'>" &
+    IF (
+        ISBLANK ( _linhas ),
+        "<div class='vazio'>Nenhum atendimento finalizado no período selecionado.</div>",
+        "<table><thead><tr>"
+            & "<th>ATENDENTE</th><th>FINALIZADOS</th><th>1ª RESPOSTA</th>"
+            & "<th>ESPERA</th><th>RESPOSTA</th><th>ATENDIMENTO</th>"
+            & "</tr></thead><tbody>" & _linhas & "</tbody></table>"
+            & "<div class='cap'>Tempos médios em hh:mm:ss. Acima de 24h acumula nas horas.</div>"
+    ) &
+    "</div>"
+
+// ---- 2. Por fila ----
+Tabela Filas HTML =
+VAR _base =
+    FILTER (
+        ADDCOLUMNS (
+            VALUES ( 'dim_fila'[fila_exibicao] ),
+            "@qtd", [Tickets Finalizados],
+            "@p1",  COALESCE ( [Tempo Médio 1a Resposta], "--" ),
+            "@esp", COALESCE ( [Tempo Médio Espera Fila], "--" ),
+            "@res", COALESCE ( [Tempo Médio Resposta], "--" ),
+            "@ate", COALESCE ( [Tempo Médio Atendimento], "--" )
+        ),
+        [@qtd] > 0
+    )
+VAR _max = MAXX ( _base, [@qtd] )
+VAR _linhas =
+    CONCATENATEX (
+        _base,
+        "<tr><td>"
+            & SUBSTITUTE ( SUBSTITUTE ( 'dim_fila'[fila_exibicao], "&", "&amp;" ), "<", "&lt;" )
+            & "</td><td style='background:linear-gradient(to right,rgba(0,50,84,.14) "
+            & FORMAT ( DIVIDE ( [@qtd], _max ) * 100, "0" ) & "%,transparent "
+            & FORMAT ( DIVIDE ( [@qtd], _max ) * 100, "0" ) & "%)'>"
+            & FORMAT ( [@qtd], "#,0" ) & "</td><td>"
+            & [@p1] & "</td><td>" & [@esp] & "</td><td>"
+            & [@res] & "</td><td>" & [@ate] & "</td></tr>",
+        "",
+        [@qtd], DESC
+    )
+RETURN
+    [CSS Tabela Atendimento] &
+    "<div class='t'>" &
+    IF (
+        ISBLANK ( _linhas ),
+        "<div class='vazio'>Nenhum atendimento finalizado no período selecionado.</div>",
+        "<table><thead><tr>"
+            & "<th>FILA</th><th>FINALIZADOS</th><th>1ª RESPOSTA</th>"
+            & "<th>ESPERA</th><th>RESPOSTA</th><th>ATENDIMENTO</th>"
+            & "</tr></thead><tbody>" & _linhas & "</tbody></table>"
+            & "<div class='cap'>Tempos médios em hh:mm:ss. Acima de 24h acumula nas horas.</div>"
+    ) &
+    "</div>"
+
+// ---- 3. Por empreendimento (a aba "Tags" do painel) ----
+// O painel empilha empreendimento e motivo de encerramento numa aba só. Esta
+// tabela é a metade que interessa para o comercial, e é a que cruza com o resto
+// do modelo. Para ter a outra metade, copie esta medida trocando as duas
+// ocorrências de 'dim_empreendimento'[empreendimento] por
+// 'fato_atendimentos'[motivo_encerramento] e o cabeçalho para MOTIVO.
+Tabela Empreendimentos HTML =
+VAR _base =
+    FILTER (
+        ADDCOLUMNS (
+            VALUES ( 'dim_empreendimento'[empreendimento] ),
+            "@qtd", [Tickets Finalizados],
+            "@p1",  COALESCE ( [Tempo Médio 1a Resposta], "--" ),
+            "@esp", COALESCE ( [Tempo Médio Espera Fila], "--" ),
+            "@res", COALESCE ( [Tempo Médio Resposta], "--" ),
+            "@ate", COALESCE ( [Tempo Médio Atendimento], "--" )
+        ),
+        [@qtd] > 0
+    )
+VAR _max = MAXX ( _base, [@qtd] )
+VAR _linhas =
+    CONCATENATEX (
+        _base,
+        "<tr><td>"
+            & SUBSTITUTE ( SUBSTITUTE ( 'dim_empreendimento'[empreendimento], "&", "&amp;" ), "<", "&lt;" )
+            & "</td><td style='background:linear-gradient(to right,rgba(0,50,84,.14) "
+            & FORMAT ( DIVIDE ( [@qtd], _max ) * 100, "0" ) & "%,transparent "
+            & FORMAT ( DIVIDE ( [@qtd], _max ) * 100, "0" ) & "%)'>"
+            & FORMAT ( [@qtd], "#,0" ) & "</td><td>"
+            & [@p1] & "</td><td>" & [@esp] & "</td><td>"
+            & [@res] & "</td><td>" & [@ate] & "</td></tr>",
+        "",
+        [@qtd], DESC
+    )
+RETURN
+    [CSS Tabela Atendimento] &
+    "<div class='t'>" &
+    IF (
+        ISBLANK ( _linhas ),
+        "<div class='vazio'>Nenhum atendimento com tag de empreendimento no período.</div>",
+        "<table><thead><tr>"
+            & "<th>EMPREENDIMENTO</th><th>FINALIZADOS</th><th>1ª RESPOSTA</th>"
+            & "<th>ESPERA</th><th>RESPOSTA</th><th>ATENDIMENTO</th>"
+            & "</tr></thead><tbody>" & _linhas & "</tbody></table>"
+            & "<div class='cap'>Só tickets com tag de empreendimento. Veja o rodapé de qualidade do dado para a cobertura.</div>"
+    ) &
+    "</div>"
