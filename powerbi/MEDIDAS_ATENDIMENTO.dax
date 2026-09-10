@@ -318,20 +318,29 @@ Seleção Corte Atendimento = {
 // o número e não sobre o texto formatado.
 // =============================================================================
 
+// As medidas de tamanho aqui conversam com as da faixa de KPIs, que usa rótulo
+// de 26px e valor de 56px. A primeira versão desta tabela usava 22px e ficou
+// visivelmente menor que o resto da página: fonte de tabela não precisa
+// competir com o número do cartão, mas precisa ficar na mesma família de
+// escala, senão a página parece montada por duas pessoas diferentes.
+//
+// Se ainda ficar pequeno ou grande no seu canvas, o ajuste é numa linha: o
+// `font-size` do `.t table`. As outras medidas acompanham em proporção.
 CSS Tabela Atendimento =
     "<style>" &
     "html,body{margin:0;padding:0;height:100%;}" &
     ".t{font-family:'Segoe UI','Segoe UI Semibold',Arial,sans-serif;width:100%;height:100%;box-sizing:border-box;overflow:auto;}" &
-    ".t table{width:100%;border-collapse:separate;border-spacing:0;font-size:22px;color:#1F2937;}" &
-    ".t thead th{position:sticky;top:0;z-index:1;background:#003254;color:#fff;font-weight:600;text-align:right;padding:14px 16px;white-space:nowrap;}" &
+    ".t table{width:100%;border-collapse:separate;border-spacing:0;font-size:30px;color:#1F2937;}" &
+    ".t thead th{position:sticky;top:0;z-index:1;background:#003254;color:#fff;font-weight:600;font-size:26px;letter-spacing:.02em;text-align:right;padding:18px 22px;white-space:nowrap;}" &
     ".t thead th:first-child{text-align:left;border-radius:12px 0 0 0;}" &
     ".t thead th:last-child{border-radius:0 12px 0 0;}" &
-    ".t tbody td{padding:12px 16px;text-align:right;border-bottom:1px solid #E5E7EB;white-space:nowrap;}" &
+    ".t tbody td{padding:16px 22px;text-align:right;border-bottom:1px solid #E5E7EB;white-space:nowrap;}" &
     ".t tbody td:first-child{text-align:left;font-weight:600;white-space:normal;}" &
     ".t tbody tr:nth-child(even) td{background:#F3F6F8;}" &
     ".t tbody tr:hover td{background:#E8EEF2;}" &
-    ".t .cap{font-size:18px;color:#6B7280;padding:8px 16px 0 16px;}" &
-    ".t .vazio{padding:24px 16px;color:#6B7280;font-size:22px;}" &
+    ".t .semid{color:#6B7280;font-style:italic;font-weight:600;}" &
+    ".t .cap{font-size:22px;color:#6B7280;padding:12px 22px 0 22px;}" &
+    ".t .vazio{padding:28px 22px;color:#6B7280;font-size:30px;}" &
     "</style>"
 
 // ---- 1. Por atendente ----
@@ -352,9 +361,19 @@ VAR _max = MAXX ( _base, [@qtd] )
 VAR _linhas =
     CONCATENATEX (
         _base,
-        "<tr><td>"
-            & SUBSTITUTE ( SUBSTITUTE ( 'dim_atendente'[atendente], "&", "&amp;" ), "<", "&lt;" )
-            & "</td><td style='background:linear-gradient(to right,rgba(0,50,84,.14) "
+        "<tr>"
+            -- Ticket fechado sem atendente identificado existe e não é pouco:
+            -- 11% dos tickets vêm com agent_identity nulo. Sem este rótulo eles
+            -- viram uma linha anônima no meio do ranking, e quem lê a tabela
+            -- não tem como saber se é erro de dado ou um atendente sem nome.
+            & IF (
+                ISBLANK ( 'dim_atendente'[atendente] ),
+                "<td class='semid'>Sem atendente identificado</td>",
+                "<td>"
+                    & SUBSTITUTE ( SUBSTITUTE ( 'dim_atendente'[atendente], "&", "&amp;" ), "<", "&lt;" )
+                    & "</td>"
+            )
+            & "<td style='background:linear-gradient(to right,rgba(0,50,84,.14) "
             & FORMAT ( DIVIDE ( [@qtd], _max ) * 100, "0" ) & "%,transparent "
             & FORMAT ( DIVIDE ( [@qtd], _max ) * 100, "0" ) & "%)'>"
             & FORMAT ( [@qtd], "#,0" ) & "</td><td>"
@@ -395,9 +414,15 @@ VAR _max = MAXX ( _base, [@qtd] )
 VAR _linhas =
     CONCATENATEX (
         _base,
-        "<tr><td>"
-            & SUBSTITUTE ( SUBSTITUTE ( 'dim_fila'[fila_exibicao], "&", "&amp;" ), "<", "&lt;" )
-            & "</td><td style='background:linear-gradient(to right,rgba(0,50,84,.14) "
+        "<tr>"
+            & IF (
+                ISBLANK ( 'dim_fila'[fila_exibicao] ),
+                "<td class='semid'>Sem fila</td>",
+                "<td>"
+                    & SUBSTITUTE ( SUBSTITUTE ( 'dim_fila'[fila_exibicao], "&", "&amp;" ), "<", "&lt;" )
+                    & "</td>"
+            )
+            & "<td style='background:linear-gradient(to right,rgba(0,50,84,.14) "
             & FORMAT ( DIVIDE ( [@qtd], _max ) * 100, "0" ) & "%,transparent "
             & FORMAT ( DIVIDE ( [@qtd], _max ) * 100, "0" ) & "%)'>"
             & FORMAT ( [@qtd], "#,0" ) & "</td><td>"
@@ -436,7 +461,11 @@ VAR _base =
             "@res", COALESCE ( [Tempo Médio Resposta], "--" ),
             "@ate", COALESCE ( [Tempo Médio Atendimento], "--" )
         ),
-        [@qtd] > 0
+        -- Os sem empreendimento ficam de fora, senão a primeira linha viria em
+        -- branco com o maior volume de todos (são 42% dos fechados) e enterraria
+        -- os produtos de verdade. O tamanho desse buraco é o que os dois cartões
+        -- de qualidade do dado, no rodapé da página, existem para mostrar.
+        [@qtd] > 0 && NOT ISBLANK ( 'dim_empreendimento'[empreendimento] )
     )
 VAR _max = MAXX ( _base, [@qtd] )
 VAR _linhas =
