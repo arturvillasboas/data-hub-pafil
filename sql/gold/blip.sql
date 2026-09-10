@@ -10,6 +10,26 @@
 
 CREATE SCHEMA IF NOT EXISTS gold;
 
+-- ===== Por que estes DROP existem =====
+-- O `CREATE OR REPLACE VIEW` do Postgres só consegue ACRESCENTAR coluna no fim
+-- da lista. Ele não renomeia, não reordena e não remove: qualquer uma dessas
+-- três coisas faz o comando falhar com "cannot change name of view column" ou
+-- "cannot drop columns from view".
+--
+-- Isso morde exatamente no caso mais comum de evolução de um modelo, que é
+-- inserir uma coluna no meio ou tirar uma que saiu de uso. E morde de um jeito
+-- ruim: o arquivo inteiro é aplicado numa transação só, então a view fica com a
+-- definição ANTIGA no banco enquanto o repositório mostra a nova. Foi assim que
+-- `dim_fila` ficou sem `fila_exibicao` depois de ganhar a coluna aqui.
+--
+-- Dropar antes de criar resolve, e é seguro porque nenhuma destas quatro views
+-- tem dependente. Sem CASCADE de propósito: se um dia alguma ganhar dependente,
+-- o DROP falha e avisa, em vez de derrubar em silêncio o que depende dela.
+DROP VIEW IF EXISTS gold.blip_tags_sem_empreendimento;
+DROP VIEW IF EXISTS gold.fato_atendimentos;
+DROP VIEW IF EXISTS gold.dim_fila;
+DROP VIEW IF EXISTS gold.dim_atendente;
+
 -- ===== Dimensões =====
 
 -- As duas dimensões abaixo nascem da UNIÃO entre o cadastro do Blip e o que

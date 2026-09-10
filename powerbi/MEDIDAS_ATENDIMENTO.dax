@@ -420,12 +420,11 @@ RETURN
     ) &
     "</div>"
 
-// ---- 3. Por empreendimento (a aba "Tags" do painel) ----
-// O painel empilha empreendimento e motivo de encerramento numa aba só. Esta
-// tabela é a metade que interessa para o comercial, e é a que cruza com o resto
-// do modelo. Para ter a outra metade, copie esta medida trocando as duas
-// ocorrências de 'dim_empreendimento'[empreendimento] por
-// 'fato_atendimentos'[motivo_encerramento] e o cabeçalho para MOTIVO.
+// ---- 3. Por empreendimento (metade da aba "Tags" do painel) ----
+// O painel empilha empreendimento e motivo de encerramento numa aba só, porque
+// para ele os dois são "tag". São perguntas diferentes: esta responde sobre
+// produto e cruza com o resto do modelo; a próxima responde por que a conversa
+// acabou e não sai do domínio de atendimento.
 Tabela Empreendimentos HTML =
 VAR _base =
     FILTER (
@@ -465,5 +464,54 @@ RETURN
             & "<th>ESPERA</th><th>RESPOSTA</th><th>ATENDIMENTO</th>"
             & "</tr></thead><tbody>" & _linhas & "</tbody></table>"
             & "<div class='cap'>Só tickets com tag de empreendimento. Veja o rodapé de qualidade do dado para a cobertura.</div>"
+    ) &
+    "</div>"
+
+// ---- 4. Por motivo de encerramento (a outra metade da aba "Tags") ----
+// Diferente das três anteriores, o corte aqui sai de uma coluna do próprio
+// fato, e não de uma dimensão: motivo de encerramento não tem atributo nenhum
+// além do próprio nome, então criar uma dimensão para ele seria cerimônia sem
+// função. Os tickets sem motivo ficam de fora, como na tabela de
+// empreendimento, senão a primeira linha viria com o rótulo em branco e o
+// maior volume de todos, que é ruído e não informação.
+Tabela Motivos HTML =
+VAR _base =
+    FILTER (
+        ADDCOLUMNS (
+            VALUES ( 'fato_atendimentos'[motivo_encerramento] ),
+            "@qtd", [Tickets Finalizados],
+            "@p1",  COALESCE ( [Tempo Médio 1a Resposta], "--" ),
+            "@esp", COALESCE ( [Tempo Médio Espera Fila], "--" ),
+            "@res", COALESCE ( [Tempo Médio Resposta], "--" ),
+            "@ate", COALESCE ( [Tempo Médio Atendimento], "--" )
+        ),
+        [@qtd] > 0 && NOT ISBLANK ( 'fato_atendimentos'[motivo_encerramento] )
+    )
+VAR _max = MAXX ( _base, [@qtd] )
+VAR _linhas =
+    CONCATENATEX (
+        _base,
+        "<tr><td>"
+            & SUBSTITUTE ( SUBSTITUTE ( 'fato_atendimentos'[motivo_encerramento], "&", "&amp;" ), "<", "&lt;" )
+            & "</td><td style='background:linear-gradient(to right,rgba(0,50,84,.14) "
+            & FORMAT ( DIVIDE ( [@qtd], _max ) * 100, "0" ) & "%,transparent "
+            & FORMAT ( DIVIDE ( [@qtd], _max ) * 100, "0" ) & "%)'>"
+            & FORMAT ( [@qtd], "#,0" ) & "</td><td>"
+            & [@p1] & "</td><td>" & [@esp] & "</td><td>"
+            & [@res] & "</td><td>" & [@ate] & "</td></tr>",
+        "",
+        [@qtd], DESC
+    )
+RETURN
+    [CSS Tabela Atendimento] &
+    "<div class='t'>" &
+    IF (
+        ISBLANK ( _linhas ),
+        "<div class='vazio'>Nenhum atendimento com motivo de encerramento no período.</div>",
+        "<table><thead><tr>"
+            & "<th>MOTIVO DE ENCERRAMENTO</th><th>FINALIZADOS</th><th>1ª RESPOSTA</th>"
+            & "<th>ESPERA</th><th>RESPOSTA</th><th>ATENDIMENTO</th>"
+            & "</tr></thead><tbody>" & _linhas & "</tbody></table>"
+            & "<div class='cap'>Só tickets com motivo marcado pelo atendente.</div>"
     ) &
     "</div>"

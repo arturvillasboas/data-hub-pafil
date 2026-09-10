@@ -12,6 +12,19 @@
 
 CREATE SCHEMA IF NOT EXISTS silver;
 
+-- Aviso para quem for MUDAR a forma destas views, e não só o conteúdo delas:
+-- o `CREATE OR REPLACE VIEW` do Postgres só acrescenta coluna no fim. Renomear,
+-- reordenar ou remover coluna faz o comando falhar, e como o arquivo inteiro é
+-- aplicado numa transação só, a view continua no banco com a definição antiga
+-- enquanto o repositório já mostra a nova. O sintoma aparece longe daqui, em
+-- forma de "coluna não pode ser encontrada" no Power BI.
+--
+-- O gold/blip.sql resolve isso com DROP antes do CREATE, mas aqui não dá para
+-- fazer o mesmo sem cuidado: gold.fato_atendimentos depende de
+-- silver.blip_tickets, então um DROP sem CASCADE falha e um DROP com CASCADE
+-- derruba a gold junto. Se precisar mudar a forma de uma view desta camada,
+-- rode `aplicar_tudo.py`, que reconstrói silver e gold na ordem certa.
+
 -- ===== Filas de atendimento =====
 CREATE OR REPLACE VIEW silver.blip_filas AS
 SELECT
