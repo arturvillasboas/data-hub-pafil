@@ -1,0 +1,195 @@
+// =============================================================================
+// Medidas DAX — atendimento humano (Blip), sobre gold.fato_atendimentos.
+//
+// Replica as telas do painel nativo do Blip que a gestão pediu: os cinco
+// cartões de tempo médio, os dois de tempo máximo, o gráfico de tickets abertos
+// contra fechados, e as três abas de corte (atendente, fila e tag).
+//
+// Tabelas (importadas do schema gold): fato_atendimentos, dim_atendente,
+// dim_fila, mais as conformadas dim_calendario e dim_empreendimento, que já
+// existem no modelo.
+//
+// Relacionamentos que estas medidas assumem:
+//   dim_calendario[data]                  1─* fato_atendimentos[data_fechamento]  (ATIVO)
+//   dim_calendario[data]                  1─* fato_atendimentos[data_criacao]     (inativo)
+//   dim_calendario[data]                  1─* fato_atendimentos[data_abertura]    (inativo)
+//   dim_atendente[atendente_identity]     1─* fato_atendimentos[atendente_identity]
+//   dim_fila[fila]                        1─* fato_atendimentos[fila]
+//   dim_empreendimento[id_empreendimento] 1─* fato_atendimentos[id_empreendimento]
+//
+// O relacionamento ativo é o de FECHAMENTO porque a pergunta do painel é
+// "quantos atendimentos aconteceram no período", e atendimento que conta é o
+// que terminou. Criação e abertura entram por USERELATIONSHIP nas medidas que
+// precisam delas.
+//
+// Sobre as durações: a gold entrega tudo em SEGUNDOS, de propósito. Média de
+// segundos é somável e divisível; média de texto "01:09:12" não é. Por isso
+// cada métrica aparece duas vezes aqui, uma medida base em segundos (que é a
+// que entra em conta, ordenação e gráfico) e uma medida de exibição, que só
+// formata. Nos visuais, use a formatada nos cartões e tabelas, e a base em
+// qualquer coisa que precise comparar ou ordenar.
+//
+// Sobre passar de 24 horas: o painel do Blip escreve "1d 10:18". Aqui a escolha
+// é acumular nas horas ("34:18:00"), porque valor monotônico ordena certo numa
+// tabela e "1d 10:18" não. Isso vai aparecer como diferença de forma, não de
+// número, quando você comparar as duas telas lado a lado.
+// =============================================================================
+
+// ---- Contagens ----
+
+// Snapshot: quantos estão em aberto AGORA. Não depende de janela de data,
+// porque ticket em aberto não tem data de fechamento e some de qualquer
+// contexto de tempo apoiado no relacionamento ativo.
+Tickets Em Aberto =
+CALCULATE ( COUNTROWS ( fato_atendimentos ), fato_atendimentos[fechado] = FALSE () )
+
+Tickets Fechados =
+CALCULATE ( COUNTROWS ( fato_atendimentos ), fato_atendimentos[fechado] = TRUE () )
+
+Tickets Finalizados =
+CALCULATE ( COUNTROWS ( fato_atendimentos ), fato_atendimentos[finalizado] = TRUE () )
+
+Tickets Abandonados =
+CALCULATE ( COUNTROWS ( fato_atendimentos ), fato_atendimentos[abandonado] = TRUE () )
+
+// Série "Abertos" do gráfico de Abertos x Fechados: tickets CRIADOS no dia.
+// É outra pergunta que [Tickets Em Aberto], e o painel usa a mesma palavra
+// para as duas. Aqui ficam separadas de propósito.
+Tickets Criados =
+CALCULATE (
+    COUNTROWS ( fato_atendimentos ),
+    USERELATIONSHIP ( dim_calendario[data], fato_atendimentos[data_criacao] )
+)
+
+// Ticket transferido gera registro novo apontando para o anterior. Esta medida
+// conta CONVERSAS; [Tickets Fechados] conta ATENDIMENTOS PRESTADOS. Com 27% de
+// continuação na base de set/2026, as duas diferem bastante, e qual é "a"
+// volumetria é decisão da gestão, não do modelo.
+Conversas Fechadas =
+CALCULATE (
+    COUNTROWS ( fato_atendimentos ),
+    fato_atendimentos[fechado] = TRUE (),
+    fato_atendimentos[e_continuacao] = FALSE ()
+)
+
+// ---- Tempos médios, base em segundos ----
+
+Tempo Médio Espera Fila (seg) =
+AVERAGE ( fato_atendimentos[espera_fila_seg] )
+
+Tempo Médio 1a Resposta (seg) =
+AVERAGE ( fato_atendimentos[ate_primeira_resposta_seg] )
+
+Tempo Médio Espera Total (seg) =
+AVERAGE ( fato_atendimentos[espera_total_seg] )
+
+// Não se deriva das outras datas: vem calculado pelo próprio Blip, por ticket.
+Tempo Médio Resposta (seg) =
+AVERAGE ( fato_atendimentos[tempo_resposta_medio_seg] )
+
+Tempo Médio Atendimento (seg) =
+AVERAGE ( fato_atendimentos[atendimento_seg] )
+
+// ---- Tempos máximos, base em segundos ----
+
+Tempo Máximo Espera Fila (seg) =
+MAX ( fato_atendimentos[espera_fila_seg] )
+
+Tempo Máximo 1a Resposta (seg) =
+MAX ( fato_atendimentos[ate_primeira_resposta_seg] )
+
+// ---- Exibição em hh:mm:ss ----
+// O DAX não tem função de usuário, então o padrão abaixo se repete. É verboso
+// e é intencional: a alternativa seria um grupo de cálculo, que exige o
+// Tabular Editor e mais uma ferramenta na cadeia para economizar dez linhas.
+
+Tempo Médio Espera Fila =
+VAR s = [Tempo Médio Espera Fila (seg)]
+VAR h = INT ( s / 3600 )
+VAR m = INT ( MOD ( s, 3600 ) / 60 )
+VAR sg = INT ( MOD ( s, 60 ) )
+RETURN
+    IF ( ISBLANK ( s ), BLANK (),
+         FORMAT ( h, "00" ) & ":" & FORMAT ( m, "00" ) & ":" & FORMAT ( sg, "00" ) )
+
+Tempo Médio 1a Resposta =
+VAR s = [Tempo Médio 1a Resposta (seg)]
+VAR h = INT ( s / 3600 )
+VAR m = INT ( MOD ( s, 3600 ) / 60 )
+VAR sg = INT ( MOD ( s, 60 ) )
+RETURN
+    IF ( ISBLANK ( s ), BLANK (),
+         FORMAT ( h, "00" ) & ":" & FORMAT ( m, "00" ) & ":" & FORMAT ( sg, "00" ) )
+
+Tempo Médio Espera Total =
+VAR s = [Tempo Médio Espera Total (seg)]
+VAR h = INT ( s / 3600 )
+VAR m = INT ( MOD ( s, 3600 ) / 60 )
+VAR sg = INT ( MOD ( s, 60 ) )
+RETURN
+    IF ( ISBLANK ( s ), BLANK (),
+         FORMAT ( h, "00" ) & ":" & FORMAT ( m, "00" ) & ":" & FORMAT ( sg, "00" ) )
+
+Tempo Médio Resposta =
+VAR s = [Tempo Médio Resposta (seg)]
+VAR h = INT ( s / 3600 )
+VAR m = INT ( MOD ( s, 3600 ) / 60 )
+VAR sg = INT ( MOD ( s, 60 ) )
+RETURN
+    IF ( ISBLANK ( s ), BLANK (),
+         FORMAT ( h, "00" ) & ":" & FORMAT ( m, "00" ) & ":" & FORMAT ( sg, "00" ) )
+
+Tempo Médio Atendimento =
+VAR s = [Tempo Médio Atendimento (seg)]
+VAR h = INT ( s / 3600 )
+VAR m = INT ( MOD ( s, 3600 ) / 60 )
+VAR sg = INT ( MOD ( s, 60 ) )
+RETURN
+    IF ( ISBLANK ( s ), BLANK (),
+         FORMAT ( h, "00" ) & ":" & FORMAT ( m, "00" ) & ":" & FORMAT ( sg, "00" ) )
+
+Tempo Máximo Espera Fila =
+VAR s = [Tempo Máximo Espera Fila (seg)]
+VAR h = INT ( s / 3600 )
+VAR m = INT ( MOD ( s, 3600 ) / 60 )
+VAR sg = INT ( MOD ( s, 60 ) )
+RETURN
+    IF ( ISBLANK ( s ), BLANK (),
+         FORMAT ( h, "00" ) & ":" & FORMAT ( m, "00" ) & ":" & FORMAT ( sg, "00" ) )
+
+Tempo Máximo 1a Resposta =
+VAR s = [Tempo Máximo 1a Resposta (seg)]
+VAR h = INT ( s / 3600 )
+VAR m = INT ( MOD ( s, 3600 ) / 60 )
+VAR sg = INT ( MOD ( s, 60 ) )
+RETURN
+    IF ( ISBLANK ( s ), BLANK (),
+         FORMAT ( h, "00" ) & ":" & FORMAT ( m, "00" ) & ":" & FORMAT ( sg, "00" ) )
+
+// ---- Qualidade do dado ----
+// Esta é a medida que impede o corte por produto de mentir por omissão. A tag
+// do Blip só vira empreendimento se a grafia estiver na de-para; quando não
+// está, o ticket some do visual filtrado por empreendimento sem avisar
+// ninguém. Deixe este percentual visível em algum canto da página.
+% Tickets com Empreendimento =
+VAR total = COUNTROWS ( fato_atendimentos )
+VAR comEmp =
+    CALCULATE (
+        COUNTROWS ( fato_atendimentos ),
+        NOT ISBLANK ( fato_atendimentos[id_empreendimento] )
+    )
+RETURN
+    DIVIDE ( comEmp, total )
+
+// Complemento do anterior: quantos tickets sequer têm tag de empreendimento.
+// Diferente do acima, aqui não é falha de de-para, é o atendente não ter
+// marcado. Na base de set/2026 eram 42% dos fechados.
+% Tickets sem Tag de Empreendimento =
+VAR total = COUNTROWS ( fato_atendimentos )
+VAR semTag =
+    CALCULATE (
+        COUNTROWS ( fato_atendimentos ),
+        ISBLANK ( fato_atendimentos[empreendimento_tag] )
+    )
+RETURN
+    DIVIDE ( semTag, total )
