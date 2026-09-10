@@ -24,7 +24,7 @@ todo visual por dia vem vazio. É o erro mais caro de diagnosticar aqui.
 │  2. Criados x Fechados por dia     │  3. Tickets por situação        │
 │     (gráfico de linhas)            │     (barras horizontais)        │
 ├────────────────────────────────────┴─────────────────────────────────┤
-│  4. Matriz de corte, com o parâmetro de campo trocando a linha       │
+│  4. Tabelas de corte (HTML): atendente, fila, empreendimento         │
 ├──────────────────────────────────────────────────────────────────────┤
 │  5. Rodapé de qualidade do dado (dois cartões pequenos)              │
 └──────────────────────────────────────────────────────────────────────┘
@@ -70,25 +70,50 @@ Barra horizontal em vez de rosca porque são seis categorias com nomes longos, e
 rosca com seis fatias vira legenda ilegível. Se a gestão preferir a leitura de
 proporção, troque para barras 100% empilhadas em vez de rosca.
 
-## 4. Matriz de corte
+## 4. As tabelas de corte
+
+São as três abas do painel (Atendentes, Filas, Tags). Há dois caminhos, e eles
+resolvem problemas diferentes.
+
+### Caminho principal: as três tabelas em HTML
+
+**Visual:** HTML Content, um para cada.
+**Medidas:** `[Tabela Atendentes HTML]`, `[Tabela Filas HTML]`,
+`[Tabela Empreendimentos HTML]`.
+
+As três compartilham `[CSS Tabela Atendimento]`, então ajuste de estilo entra
+num lugar só. Três coisas que a tabela HTML entrega e a matriz nativa não:
+
+- **Ordenação por quantidade que funciona de verdade.** Acontece no DAX, sobre
+  o número. Na matriz nativa, ordenar por uma coluna de tempo cai no texto
+  formatado e coloca `09:00:00` depois de `10:00:00`.
+- **Barra de volume atrás da quantidade**, proporcional ao maior da tabela.
+- **Cabeçalho fixo ao rolar**, e largura de coluna que não depende de ninguém
+  arrastar nada.
+
+Para reproduzir as abas do painel, coloque as três no mesmo lugar da página e
+troque com indicadores (bookmarks) mais um navegador de indicadores.
+
+A tabela de empreendimento cobre metade da aba "Tags" do painel, que é a metade
+que interessa ao comercial. Para a outra metade, copie a medida trocando as duas
+ocorrências de `'dim_empreendimento'[empreendimento]` por
+`'fato_atendimentos'[motivo_encerramento]` e o cabeçalho para MOTIVO.
+
+### Caminho alternativo: matriz nativa com parâmetro de campo
 
 **Visual:** Matriz.
 **Linhas:** a coluna de campos de `Seleção Corte Atendimento`.
 **Slicer:** a coluna de texto do mesmo parâmetro.
-**Valores, nesta ordem:** `[Tickets Finalizados]`, `[Tempo Médio 1a Resposta]`,
+**Valores:** `[Tickets Finalizados]`, `[Tempo Médio 1a Resposta]`,
 `[Tempo Médio Espera Fila]`, `[Tempo Médio Resposta]`, `[Tempo Médio Atendimento]`.
 
-Este visual sozinho substitui as três abas do painel (Atendentes, Filas, Tags),
-e acrescenta uma quarta: o Blip empilha empreendimento e motivo de encerramento
-no mesmo campo de tag, e aqui eles são opções separadas, porque são perguntas
-diferentes.
+Um visual só, com um slicer trocando a dimensão da linha, e sem indicador
+nenhum para manter. Vale quando você quiser exportar os dados pelo menu do
+visual ou fixar o visual num painel do Serviço, que a tabela HTML não permite.
 
-**Uma limitação que vale saber antes de esbarrar nela.** As medidas de tempo
-devolvem texto formatado (`01:09:12`), então a matriz não ordena por elas de
-forma numérica: ordenaria alfabeticamente, e `09:00:00` viria depois de
-`10:00:00`. Deixe a ordenação padrão em `[Tickets Finalizados]`, que é o que o
-painel faz. Se precisar ordenar por um tempo específico, acrescente a medida
-`(seg)` correspondente ao visual e ordene por ela.
+Aqui a limitação da ordenação se aplica: deixe ordenando por
+`[Tickets Finalizados]`, e se precisar ordenar por um tempo, acrescente a
+medida `(seg)` correspondente ao visual.
 
 ## 5. Rodapé de qualidade do dado
 
