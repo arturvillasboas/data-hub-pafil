@@ -15,12 +15,18 @@ log = get_logger("aplicar_silver")
 
 SILVER_SQL = RAIZ / "sql" / "silver" / "silver.sql"
 SEEDS_SQL = RAIZ / "sql" / "silver" / "seeds.sql"
+# O Blip fica em arquivo próprio: é outra fonte, com outro vocabulário e outro
+# ciclo de vida, e misturar as duas faria toda mudança nele aparecer como diff
+# no meio do CVDW. Aplicado depois das seeds, porque as views dele não dependem
+# de de-para nenhuma mas a gold correspondente depende.
+BLIP_SQL = RAIZ / "sql" / "silver" / "blip.sql"
 
 # Views da silver a validar (devem existir após aplicar silver.sql).
 VIEWS = [
     "reservas", "vendas", "distratos",
     "unidades", "corretores", "imobiliarias",
     "leads", "precadastros", "leads_conversoes",
+    "blip_tickets", "blip_filas", "blip_atendentes",
 ]
 
 
@@ -56,6 +62,8 @@ def main() -> int:
             if not args.so_views:
                 db.aplicar_ddl(conn, str(SEEDS_SQL))
                 log.info("Seeds de-para aplicadas (%s).", SEEDS_SQL.name)
+            db.aplicar_ddl(conn, str(BLIP_SQL))
+            log.info("Views silver do Blip aplicadas (%s).", BLIP_SQL.name)
 
         log.info("Validação smoke das views:")
         falhas = validar(conn)

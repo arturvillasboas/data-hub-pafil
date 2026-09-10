@@ -13,11 +13,15 @@ from cvdw.log import configurar_logging, get_logger
 log = get_logger("aplicar_gold")
 
 GOLD_SQL = RAIZ / "sql" / "gold" / "gold.sql"
+# Aplicado depois do gold.sql, e não junto: fato_atendimentos junta com
+# gold.dim_empreendimento, que nasce lá.
+BLIP_SQL = RAIZ / "sql" / "gold" / "blip.sql"
 
 OBJETOS = [
     "dim_calendario", "dim_empreendimento", "dim_unidade",
     "dim_corretor", "dim_corretor_headcount", "fato_reservas",
     "fato_leads", "fato_precadastros",
+    "dim_fila", "dim_atendente", "fato_atendimentos",
 ]
 
 
@@ -48,6 +52,8 @@ def main() -> int:
         if not args.validar:
             db.aplicar_ddl(conn, str(GOLD_SQL))
             log.info("Views gold aplicadas (%s).", GOLD_SQL.name)
+            db.aplicar_ddl(conn, str(BLIP_SQL))
+            log.info("Views gold do Blip aplicadas (%s).", BLIP_SQL.name)
         log.info("Validação smoke:")
         falhas = validar(conn)
 
