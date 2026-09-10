@@ -12,20 +12,57 @@ CREATE SCHEMA IF NOT EXISTS gold;
 
 -- ===== Dimensões =====
 
+-- As duas dimensões abaixo nascem da UNIÃO entre o cadastro do Blip e o que
+-- aparece de fato nos tickets, e não só do cadastro. O motivo é integridade
+-- referencial: a fila `DIRECT_TRANSFER` (a "Transferência direta" do painel,
+-- a maior de todas em volume) não existe no /teams, e um atendente desligado
+-- some do /attendants sem que os tickets dele sumam junto. Montando a dimensão
+-- só do cadastro, esses tickets ficariam órfãos e o Power BI simplesmente
+-- deixaria de mostrá-los em qualquer visual fatiado pela dimensão, sem erro e
+-- sem aviso. A coluna `cadastrada_no_blip` guarda a diferença.
+
 CREATE OR REPLACE VIEW gold.dim_fila AS
 SELECT
     f.fila,
-    f.agents_online AS agentes_online_agora
-FROM silver.blip_filas f;
+    -- O Blip guarda esta fila com nome técnico e a exibe traduzida no painel.
+    CASE f.fila
+        WHEN 'DIRECT_TRANSFER' THEN 'Transferência direta'
+        ELSE f.fila
+    END                                   AS fila_exibicao,
+    c.agents_online                       AS agentes_online_agora,
+    (c.fila IS NOT NULL)                  AS cadastrada_no_blip
+FROM (
+    SELECT DISTINCT fila FROM silver.blip_tickets WHERE fila IS NOT NULL
+    UNION
+    SELECT fila FROM silver.blip_filas
+) f
+LEFT JOIN silver.blip_filas c ON c.fila = f.fila;
 
 CREATE OR REPLACE VIEW gold.dim_atendente AS
 SELECT
-    a.atendente_identity,
-    a.atendente,
-    a.atendente_email,
+    i.atendente_identity,
+    -- Sem cadastro, o nome é derivado da própria identidade do ticket, que é
+    -- o e-mail codificado. Melhor um nome aproximado do que uma linha em branco.
+    coalesce(
+        a.atendente,
+        split_part(
+            lower(replace(regexp_replace(i.atendente_identity, '@blip\.ai$', ''), '%40', '@')),
+            '@', 1)
+    )                                     AS atendente,
+    coalesce(
+        a.atendente_email,
+        lower(replace(regexp_replace(i.atendente_identity, '@blip\.ai$', ''), '%40', '@'))
+    )                                     AS atendente_email,
     a.ativo,
-    a.filas
-FROM silver.blip_atendentes a;
+    a.filas,
+    (a.atendente_identity IS NOT NULL)    AS cadastrado_no_blip
+FROM (
+    SELECT DISTINCT atendente_identity FROM silver.blip_tickets
+     WHERE atendente_identity IS NOT NULL
+    UNION
+    SELECT atendente_identity FROM silver.blip_atendentes
+) i
+LEFT JOIN silver.blip_atendentes a ON a.atendente_identity = i.atendente_identity;
 
 -- ===== Fato =====
 -- Grão: um ticket, que é uma conversa atendida por gente.
@@ -49,9 +86,11 @@ SELECT
 
     -- --- dimensões ------------------------------------------------------
     t.fila,
+    -- Só a chave: nome e e-mail do atendente moram em gold.dim_atendente, que
+    -- é quem sabe tratar o atendente sem cadastro. Repetir o atributo aqui
+    -- criaria duas versões do mesmo nome, que divergem no dia em que uma das
+    -- duas ganhar um coalesce e a outra não.
     t.atendente_identity,
-    a.atendente,
-    a.atendente_email,
     t.canal,
     t.motivo_encerramento,
 
@@ -98,8 +137,6 @@ SELECT
     t.id_campanha,
     t.qtd_tags
 FROM silver.blip_tickets t
-LEFT JOIN silver.blip_atendentes a
-       ON a.atendente_identity = t.atendente_identity
 LEFT JOIN gold.dim_empreendimento e
        ON silver.conformar_empreendimento(t.empreendimento_tag) = e.empreendimento_conformado;
 
