@@ -193,3 +193,110 @@ VAR semTag =
     )
 RETURN
     DIVIDE ( semTag, total )
+
+// ---- Qualidade do atendimento ----
+// Dos atendimentos que terminaram, quantos terminaram porque o cliente sumiu.
+// É a métrica de operação mais acionável do conjunto: tempo alto explica
+// abandono, e abandono é o que custa cliente.
+% Abandono =
+DIVIDE ( [Tickets Abandonados], [Tickets Fechados] )
+
+// =============================================================================
+// Faixa de KPIs em HTML (visual HTML Content)
+//
+// Mesmo padrão dos outros *_HTML.dax da pasta. O CSS é o do KPIs Performance
+// HTML, sem alteração nenhuma de tamanho, cor, espaçamento ou raio: muda só o
+// que é exibido. As variantes .r (vermelho) e .g (cinza) que já existiam no
+// padrão são usadas com significado, e não por decoração — vermelho para o par
+// de abandono, cinza para o único cartão que é foto do momento e não medida do
+// período.
+//
+// Os cinco cartões de tempo reaproveitam as medidas de exibição em vez de
+// reimplementar o hh:mm:ss aqui. Se um dia a formatação mudar, muda num lugar
+// só e a faixa acompanha.
+// =============================================================================
+
+KPIs Atendimento HTML =
+
+VAR _finalizados = [Tickets Finalizados]
+VAR _abandonados = [Tickets Abandonados]
+VAR _txAbandono  = [% Abandono]
+VAR _emAberto    = [Tickets Em Aberto]
+VAR _esperaFila  = COALESCE ( [Tempo Médio Espera Fila], "--" )
+VAR _primeira    = COALESCE ( [Tempo Médio 1a Resposta], "--" )
+VAR _resposta    = COALESCE ( [Tempo Médio Resposta], "--" )
+VAR _atendimento = COALESCE ( [Tempo Médio Atendimento], "--" )
+
+VAR _icoCheck = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M22 11.08V12a10 10 0 1 1-5.93-9.14'></path><polyline points='22 4 12 14.01 9 11.01'></polyline></svg>"
+VAR _icoAband = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2'></path><circle cx='8.5' cy='7' r='4'></circle><line x1='18' y1='8' x2='23' y2='13'></line><line x1='23' y1='8' x2='18' y2='13'></line></svg>"
+VAR _icoQueda = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='23 18 13.5 8.5 8.5 13.5 1 6'></polyline><polyline points='17 18 23 18 23 12'></polyline></svg>"
+VAR _icoAberto = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'></path></svg>"
+VAR _icoRelogio = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'></circle><polyline points='12 6 12 12 16 14'></polyline></svg>"
+VAR _icoRaio = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polygon points='13 2 3 14 12 14 11 22 21 10 12 10 13 2'></polygon></svg>"
+VAR _icoChat = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z'></path></svg>"
+VAR _icoFone = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M3 18v-6a9 9 0 0 1 18 0v6'></path><path d='M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z'></path></svg>"
+
+VAR _css =
+    "<style>" &
+    "html,body{margin:0;padding:0;height:100%;}" &
+    ".k{font-family:'Segoe UI Semibold','Segoe UI',Arial,sans-serif;font-weight:600;display:flex;flex-direction:row;gap:18px;width:100%;height:100%;box-sizing:border-box;}" &
+    ".k .c{position:relative;overflow:hidden;flex:1 1 0;background:#003254;color:#fff;border-radius:20px;padding:24px 28px;box-sizing:border-box;}" &
+    ".k .c.g{background:#6B7280;}" &
+    ".k .c.r{background:#8A1C1C;}" &
+    ".k .ic{position:absolute;top:18px;right:22px;width:50px;height:50px;background:rgba(255,255,255,.15);border-radius:14px;display:flex;align-items:center;justify-content:center;}" &
+    ".k .ic svg{width:28px;height:28px;color:#fff;opacity:.95;}" &
+    ".k .l{font-size:26px;letter-spacing:.02em;opacity:.9;max-width:75%;}" &
+    ".k .v{font-size:56px;margin-top:10px;line-height:1;}" &
+    ".k .s{font-size:24px;opacity:.85;margin-top:8px;}" &
+    "</style>"
+
+RETURN
+    _css &
+    "<div class='k'>" &
+        "<div class='c'><div class='ic'>" & _icoCheck & "</div><div class='l'>FINALIZADOS</div><div class='v'>" &
+            FORMAT ( _finalizados, "#,0" ) & "</div><div class='s'>atendimentos concluídos</div></div>" &
+
+        "<div class='c r'><div class='ic'>" & _icoAband & "</div><div class='l'>ABANDONADOS</div><div class='v'>" &
+            FORMAT ( _abandonados, "#,0" ) & "</div><div class='s'>cliente parou de responder</div></div>" &
+
+        "<div class='c r'><div class='ic'>" & _icoQueda & "</div><div class='l'>TX ABANDONO</div><div class='v'>" &
+            FORMAT ( _txAbandono, "0.0%" ) & "</div><div class='s'>sobre os fechados</div></div>" &
+
+        "<div class='c g'><div class='ic'>" & _icoAberto & "</div><div class='l'>EM ABERTO</div><div class='v'>" &
+            FORMAT ( _emAberto, "#,0" ) & "</div><div class='s'>fila neste momento</div></div>" &
+
+        "<div class='c'><div class='ic'>" & _icoRelogio & "</div><div class='l'>ESPERA NA FILA</div><div class='v'>" &
+            _esperaFila & "</div><div class='s'>tempo médio</div></div>" &
+
+        "<div class='c'><div class='ic'>" & _icoRaio & "</div><div class='l'>1ª RESPOSTA</div><div class='v'>" &
+            _primeira & "</div><div class='s'>tempo médio</div></div>" &
+
+        "<div class='c'><div class='ic'>" & _icoChat & "</div><div class='l'>TEMPO DE RESPOSTA</div><div class='v'>" &
+            _resposta & "</div><div class='s'>média por atendimento</div></div>" &
+
+        "<div class='c'><div class='ic'>" & _icoFone & "</div><div class='l'>ATENDIMENTO</div><div class='v'>" &
+            _atendimento & "</div><div class='s'>abertura até fechamento</div></div>" &
+    "</div>"
+
+// =============================================================================
+// Parâmetro de campo: as três abas do painel num visual só
+//
+// O painel do Blip tem três abas (Atendentes, Filas, Tags) mostrando a MESMA
+// tabela de métricas com a linha trocada. Em vez de três matrizes empilhadas,
+// um parâmetro de campo troca a dimensão da linha, que é o mesmo padrão de
+// PARAMETROS_CAMPO.dax, só que sobre coluna em vez de medida.
+//
+// Repare que a aba "Tags" do painel vira DUAS opções aqui. O Blip empilha
+// empreendimento e motivo de encerramento no mesmo campo, e são perguntas
+// diferentes: uma é sobre produto, a outra é sobre por que a conversa acabou.
+//
+// Criar em Modelagem -> Nova tabela. Depois é só arrastar a coluna de texto
+// para um slicer e a coluna de campos para a linha da matriz.
+// =============================================================================
+
+Seleção Corte Atendimento = {
+    ("Atendente",              NAMEOF ( 'dim_atendente'[atendente] ),               0),
+    ("Fila",                   NAMEOF ( 'dim_fila'[fila_exibicao] ),                1),
+    ("Empreendimento",         NAMEOF ( 'dim_empreendimento'[empreendimento] ),     2),
+    ("Motivo de encerramento", NAMEOF ( 'fato_atendimentos'[motivo_encerramento] ), 3)
+}
