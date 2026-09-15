@@ -89,11 +89,23 @@ desconhecida para o time). O banco local se chama `pafil_dw`, a senha local é
 `%LOCALAPPDATA%\pafil_pg\pg.ps1 start` (ela cai automaticamente a cada logoff, por
 não ser um serviço do Windows).
 
-Em produção, o destino é uma instância AWS EC2 da própria empresa, ainda não
-provisionada até o momento (veja `infra/PEDIDO_TI.md` para o pedido formal). Duas
-opções ficam explicitamente descartadas: Neon, Supabase ou qualquer VPS pessoal, por
-causa da LGPD e da presença de dados pessoais (PII) no banco. O dbt Core, ferramenta
-de transformação de dados, fica adiado até o schema estabilizar.
+Em produção, o banco já está de pé desde 20 de agosto de 2026, numa máquina Windows
+10 Pro física/local da empresa. A ideia original era uma instância AWS EC2 (veja
+`infra/PEDIDO_TI.md` para o pedido formal que foi feito), mas a TI acabou passando
+credenciais de RDP para essa máquina em vez disso, e confirmou que é o destino
+definitivo (não é uma instância AWS: o teste do endereço de metadados da AWS deu
+timeout nela). O runbook que reflete essa realidade é `infra/RUNBOOK_WINDOWS.md`.
+Duas opções ficam explicitamente descartadas: Neon, Supabase ou qualquer VPS
+pessoal, por causa da LGPD e da presença de dados pessoais (PII) no banco.
+
+O dbt Core, ferramenta de transformação de dados citada neste documento em versões
+anteriores como adiada até o schema estabilizar, passou a ser adotada em setembro de
+2026, junto com o Apache Airflow como orquestrador (também citado antes como
+descartado). Essas duas decisões foram revisitadas porque o cenário mudou: a VM
+Windows de produção já acumula tarefas manuais via PowerShell que deveriam ser
+automatizadas, e um segundo projeto (integração entre o CVCRM e o GoHighLevel)
+também depende dessa fundação. Veja `SKILL.md`, seção "Atualizações de setembro de
+2026", para o detalhe das duas decisões revisitadas e da ordem de execução.
 
 ## O que já está pronto (tudo aplicado e validado no banco local)
 
@@ -150,6 +162,29 @@ de transformação de dados, fica adiado até o schema estabilizar.
   respectivamente, de viabilidade vazia na origem, de um fator de 1000x errado no
   produto Villa Manacás, e da existência de duas matrizes de preço concorrentes).
 
+  Em setembro de 2026 entrou a série mensal de headcount (DP-16):
+  `silver.dpara_corretor_headcount_mensal` e `gold.fato_headcount_mensal`, com uma
+  linha por corretor e mês. Ela vem da mesma planilha do backoffice que já
+  alimentava o DP-12, carregada na mesma passada do `popular_seeds.py`, e é o que
+  destrava a página "Performance" do BI legado: o farol de vendas por corretor e
+  todas as medidas de produtividade por mês dependem de saber quantos meses cada
+  corretor esteve ativo. Ver `powerbi/PAGINA_PERFORMANCE.md` e
+  `powerbi/MEDIDAS_PERFORMANCE.dax`.
+
+  No dia 10 de setembro o headcount do DP-12 ganhou as datas de entrada e saída
+  (`dt_contratacao` e `dt_desligamento`, mais o `meses_de_casa` calculado em
+  `gold.dim_corretor_headcount`). Com elas, o farol branco de "entrada recente"
+  passou a ser tempo de casa de verdade, em vez de ser deduzido da soma de meses
+  ativos, e corretor com desligamento já lançado deixou de ser cobrado por venda.
+
+  Na mesma passada, o DP-12 deixou de carregar só os ativos e passou a trazer o
+  quadro inteiro do backoffice, 258 nomes, com a coluna `eh_ativo`. O motivo é que as
+  linhas da matriz de Performance vêm dessa dimensão: com só os ativos, corretor
+  desligado no meio do ano sumia da tela enquanto as vendas dele continuavam no
+  Total, pela linha em branco do relacionamento (eram três corretores e 12 das 77
+  vendas do ano). O join de `gold.dim_corretor` com o headcount passou a exigir
+  `eh_ativo`, de propósito, para que nada mude nas páginas que já estão no ar.
+
 - **Orquestrador**: `aplicar_tudo.py` roda silver, gold e seeds em um único comando.
 - **Power BI**: a pasta `powerbi/` reúne o arquivo de conexão (`.pbids`), o
   `MEDIDAS_GOLD.dax` e um guia de uso. O `.pbix` propriamente dito ainda não foi
@@ -205,10 +240,11 @@ o projeto funciona.
 
 ## Em aberto: próximos passos
 
-- Provisionar a instância EC2 e rodar a carga completa. É só a partir daí que a
-  reconciliação de totais consegue fechar de verdade (hoje ela só é válida por
-  chave, comparando proposta a proposta ou reserva a reserva, e não pelo total, por
-  causa da carga parcial).
+- Confirmar o status da carga completa em produção (feita na máquina Windows real,
+  não na EC2 que este texto previa — ver `infra/RUNBOOK_WINDOWS.md`) e, a partir
+  daí, se a reconciliação de totais já fecha de verdade (antes, ela só era válida
+  por chave, comparando proposta a proposta ou reserva a reserva, por causa da carga
+  parcial local).
 - Montar o `.pbix` sobre a camada gold (etapa manual).
 - Validar com a gestão as regras ainda em aberto: R1 (a definição oficial de venda),
   R3 (qual versão de canal e mídia usar), R6 (as listas de exceção) e R9/R10 (os
