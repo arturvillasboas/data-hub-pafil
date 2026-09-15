@@ -30,11 +30,11 @@ ingestão diária, junto com o run em paralelo com o sistema antigo.
 | Tema | Decisão | Justificativa |
 |---|---|---|
 | Engine de banco | PostgreSQL, open source | Requisito fixo do projeto: uma engine portável, sem lock-in de dados |
-| Hospedagem (demo e produção) | Postgres self-hosted numa instância AWS EC2 da própria empresa. Decisão fechada em 7 de agosto de 2026, substituindo a ideia anterior de VPS na DigitalOcean | A TI confirmou um licenciamento AWS corporativo já existente, que cobre a EC2 sem custo adicional de infraestrutura, aproveitando uma conta que a empresa já contratou. O Postgres em si continua 100% open source; só o sistema operacional e o servidor passam a ser da AWS |
-| Hospedagem (produção definitiva, ainda em aberto) | Manter o modelo self-hosted na EC2, ou migrar para um Postgres gerenciado (RDS ou Azure Database) | O gatilho para migrar seria quando operar o banco por conta própria (backup, patch, alta disponibilidade) pesar mais do que o custo de um serviço gerenciado, ou quando a governança exigir um único provedor. A decisão é reversível: bastaria reapontar a string de conexão, reaplicar `bronze.sql` e rodar `--full` de novo |
+| Hospedagem (demo e produção) | Postgres self-hosted numa instância AWS EC2 da própria empresa. Decisão fechada em 7 de agosto de 2026, substituindo a ideia anterior de VPS na DigitalOcean. **Superada em 20/ago/2026, ver a seção "Atualizações de setembro de 2026" logo abaixo** | A TI confirmou um licenciamento AWS corporativo já existente, que cobre a EC2 sem custo adicional de infraestrutura, aproveitando uma conta que a empresa já contratou. O Postgres em si continua 100% open source; só o sistema operacional e o servidor passam a ser da AWS |
+| Hospedagem (produção definitiva, ainda em aberto) | Manter o modelo self-hosted na EC2, ou migrar para um Postgres gerenciado (RDS ou Azure Database). **Superada junto com a linha acima: não há EC2, a pergunta agora é sobre a VM Windows atual** | O gatilho para migrar seria quando operar o banco por conta própria (backup, patch, alta disponibilidade) pesar mais do que o custo de um serviço gerenciado, ou quando a governança exigir um único provedor |
 | Arquitetura de dados | Medalhão, com camadas bronze, silver e gold | A bronze fica o mais próxima possível da origem, sem regra de negócio; a silver aplica limpeza, padronização, deduplicação e conformação; a gold entrega os indicadores oficiais, fatos e dimensões |
-| Transformação | dbt Core, adiado até o schema estabilizar | Não faz sentido modelar com dbt sobre um schema que ainda está em descoberta |
-| Orquestração | GitHub Actions ou cron | O Airflow foi descartado por ser over-engineering para a escala atual do projeto |
+| Transformação | dbt Core, adiado até o schema estabilizar. **Superada em 15/set/2026, ver abaixo** | Não fazia sentido modelar com dbt sobre um schema que ainda estava em descoberta |
+| Orquestração | GitHub Actions ou cron. **Superada em 15/set/2026, ver abaixo** | O Airflow tinha sido descartado por ser over-engineering para a escala do projeto até então |
 | Estratégia de migração | Strangler-fig: as extrações dos PBIX antigos continuam rodando em paralelo até a reconciliação número a número confirmar a pipeline nova | Permite trocar o sistema sem um big-bang, com o antigo e o novo coexistindo até a virada ser segura |
 | Reporting | Power BI Pro (hoje em trial; a compra de 1 seat está pendente da validação do projeto). O Power BI Service conecta ao Postgres na EC2 através de um On-premises Data Gateway, para nunca expor o banco publicamente | Sem observações adicionais |
 
@@ -43,6 +43,28 @@ chefe.** A primeira é uma nuvem de terceiros que passaria a guardar dados pesso
 (PII); a segunda misturaria dado de cliente da empresa com um workflow pessoal
 (automações de n8n, apelidadas de "Paty"), o que seria um problema de LGPD e de
 governança.
+
+### Atualizações de setembro de 2026 (decisões supersedidas)
+
+As linhas da tabela acima sobre hospedagem, transformação e orquestração foram
+escritas antes da VM Windows de produção existir e antes de um segundo projeto de
+integração (CVCRM↔GoHighLevel) entrar em cena. Elas ficam registradas como estavam,
+por histórico; este bloco documenta o que mudou, sem apagar o que veio antes.
+
+| Decisão anterior | O que mudou | Motivo | Data |
+|---|---|---|---|
+| Hospedagem: AWS EC2 (linha da tabela acima) | A TI nunca provisionou a EC2. A produção roda numa máquina Windows 10 Pro física/local, desde 20/ago/2026 (não é uma instância AWS: o teste do endereço de metadados da AWS deu timeout nela) | Decisão da TI, fora do controle do projeto. Ver `infra/RUNBOOK_WINDOWS.md` e a memória "hospedagem-producao" para a linha do tempo completa | 20/ago/2026 |
+| Transformação: dbt Core adiado | Adotado. Migração de bronze/silver/gold para dbt-core, com testes automatizados (o primeiro conjunto de testes que o projeto vai ter) | O schema estabilizou, e a falta de teste automatizado virou um risco real de sucessão, não só uma questão de maturidade do projeto | 15/set/2026 |
+| Orquestração: Airflow descartado por over-engineering | Adotado. Airflow substitui as Tarefas Agendadas do Windows que hoje disparam a ingestão | O cenário mudou desde a decisão original: existe agora uma VM Windows real acumulando operação manual via PowerShell, e um segundo projeto (integração GHL) que também precisa de agendamento visível, não escondido em `schtasks` | 15/set/2026 |
+| (decisão nova) Ordem de execução entre os dois projetos | A integração CVCRM↔GoHighLevel é construída primeiro, sobre SQL simples direto no Postgres e o agendamento do próprio n8n (sem esperar dbt/Airflow existirem). A migração da pipeline atual para dbt-core e Airflow vem depois. A lógica da integração é consolidada dentro da fundação nova numa fase própria, depois que ela estiver estável | Pedido do Igor, depois de apresentar o diagrama e o quadro de acompanhamento do plano completo | 15/set/2026 |
+
+O plano detalhado dessas três frentes (fundação dbt/Airflow, integração GHL,
+SharePoint via Graph API) ainda mora fora deste repositório, num plano local do
+Claude Code, e é acompanhado por um quadro no GitHub Projects
+(`github.com/users/arturvillasboas/projects/1`). Trazer esse plano para dentro do
+repositório versionado (por exemplo, como um `ROADMAP_V2.md`) é um próximo passo
+ainda pendente, para não repetir o mesmo problema de desalinhamento que motivou esta
+seção.
 
 ---
 

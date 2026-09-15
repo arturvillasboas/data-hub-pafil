@@ -1,0 +1,349 @@
+{
+  "name": "Pafil - integracao GHL x CVCRM",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "webhook/ghl-evento",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-ghl",
+      "name": "Webhook GHL",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-260, 0],
+      "webhookId": "pafil-ghl-evento"
+    },
+    {
+      "parameters": {
+        "jsCode": "// TODO: confirmar contra um payload real de webhook do GHL antes de ligar isto\n// em producao. A forma abaixo segue o formato mais comum de webhook de\n// contato/oportunidade do GoHighLevel, mas o Workflow que dispara pode variar\n// o formato. Nenhuma decisao de negocio acontece aqui: so molda o payload cru\n// no formato que integracao.fila_sync espera. Casamento de contato, dono do\n// campo e deteccao de eco ficam todos em SQL (ver sql/integracao/integracao.sql).\nconst body = $json.body ?? $json;\n\nreturn {\n  json: {\n    origem: 'ghl',\n    tipo_evento: body.type ?? 'desconhecido',\n    telefone_bruto: body.phone ?? body.contact?.phone ?? null,\n    email_bruto: body.email ?? body.contact?.email ?? null,\n    cpf_bruto: null, // GHL normalmente nao guarda CPF; ajustar se houver custom field\n    campos: {\n      id_contato_ghl: body.contactId ?? body.contact?.id ?? null,\n      tags: body.tags ?? body.contact?.tags ?? null,\n      etapa_funil_marketing: body.pipelineStageId ?? null,\n      origem_campanha: body.attributionSource ?? null,\n    },\n  },\n};\n"
+      },
+      "id": "normalizar-ghl",
+      "name": "Normalizar evento GHL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-40, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO integracao.fila_sync (origem, tipo_evento, telefone_bruto, email_bruto, cpf_bruto, campos)\nVALUES ($1, $2, $3, $4, $5, $6::jsonb)\nRETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [$json.origem, $json.tipo_evento, $json.telefone_bruto, $json.email_bruto, $json.cpf_bruto, JSON.stringify($json.campos)] }}"
+        }
+      },
+      "id": "gravar-fila-ghl",
+      "name": "Gravar fila (GHL)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [180, 0]
+    },
+
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "webhook/cvcrm-evento",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-cvcrm",
+      "name": "Webhook CVCRM",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-260, 220],
+      "webhookId": "pafil-cvcrm-evento"
+    },
+    {
+      "parameters": {
+        "jsCode": "// TODO: confirmar contra um payload real de webhook do CVCRM antes de ligar\n// isto em producao (inclusive se o plano da Pafil no CVCRM realmente dispara\n// webhook de mudanca de situacao -- ver a conversa que originou este plano).\n// Os nomes de campo abaixo seguem o padrao ja visto na API CVDW para /leads.\nconst body = $json.body ?? $json;\n\nreturn {\n  json: {\n    origem: 'cvcrm',\n    tipo_evento: body.evento ?? 'desconhecido',\n    telefone_bruto: body.telefone ?? body.celular ?? null,\n    email_bruto: body.email ?? null,\n    cpf_bruto: body.cpf ?? null,\n    campos: {\n      idlead_cvcrm: body.idlead ?? body.id ?? null,\n      situacao_lead: body.situacao ?? null,\n      corretor_responsavel: body.corretor ?? null,\n      empreendimento_interesse: body.empreendimento ?? null,\n    },\n  },\n};\n"
+      },
+      "id": "normalizar-cvcrm",
+      "name": "Normalizar evento CVCRM",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-40, 220]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO integracao.fila_sync (origem, tipo_evento, telefone_bruto, email_bruto, cpf_bruto, campos)\nVALUES ($1, $2, $3, $4, $5, $6::jsonb)\nRETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [$json.origem, $json.tipo_evento, $json.telefone_bruto, $json.email_bruto, $json.cpf_bruto, JSON.stringify($json.campos)] }}"
+        }
+      },
+      "id": "gravar-fila-cvcrm",
+      "name": "Gravar fila (CVCRM)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [180, 220]
+    },
+
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "minutes", "minutesInterval": 2 }
+          ]
+        }
+      },
+      "id": "gatilho-despacho",
+      "name": "Gatilho despacho",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-260, 460]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM integracao.v_fila_para_despachar LIMIT 50;",
+        "options": {}
+      },
+      "id": "fila-para-despachar",
+      "name": "Fila para despachar",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-40, 460]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": { "reset": false }
+      },
+      "id": "loop-fila",
+      "name": "Loop fila",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [180, 460]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "cond-eco",
+              "leftValue": "={{ $json.eh_eco }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "eh-eco",
+      "name": "Eh eco?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [400, 460]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT integracao.marcar_fila_processada($1, 'descartado', 'eco detectado: hash igual ao ultimo envio nosso para essa origem');",
+        "options": {
+          "queryReplacement": "={{ [$json.fila_sync_id] }}"
+        }
+      },
+      "id": "marcar-descartado",
+      "name": "Marcar descartado (eco)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [620, 380]
+    },
+    {
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 2,
+        "output": "={{ $json.destino === 'cvcrm' ? 0 : 1 }}",
+        "options": {}
+      },
+      "id": "canal-destino",
+      "name": "Canal destino",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [620, 540]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://pafil.cvcrm.com.br/api/cvio/lead",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ idlead: $json.idlead_cvcrm, ...$json.campos_permitidos }) }}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "enviar-cvcrm",
+      "name": "Enviar CVCRM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [840, 460],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput",
+      "notes": "TODO: confirmar o endpoint e o verbo exatos para ATUALIZAR um lead existente (o /api/cvio/lead documentado ate agora e o de criacao)."
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://services.leadconnectorhq.com/contacts/{{ $json.id_contato_ghl }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.campos_permitidos) }}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "enviar-ghl",
+      "name": "Enviar GHL",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [840, 620],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput",
+      "notes": "TODO: confirmar o formato exato do body na API v2 do GHL (Private Integration da sub-account)."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Recebe a saida de sucesso ou erro de qualquer um dos dois HTTP Request (CVCRM\n// ou GHL). O contexto da linha da fila (fila_sync_id, contato_id, hash, campos\n// enviados) nao sobrevive a chamada HTTP, entao volta a ser lido do no anterior\n// ao envio, igual ao padrao ja usado em automacao_reporting/workflow_n8n.json.\nconst origem = $('Canal destino').item.json;\nconst deuErro = Boolean($json.error);\n\nreturn {\n  json: {\n    fila_sync_id: origem.fila_sync_id,\n    contato_id: origem.contato_id,\n    destino: origem.destino,\n    campos_permitidos: origem.campos_permitidos,\n    hash_evento: origem.hash_evento,\n    status: deuErro ? 'erro' : 'enviado',\n    detalhe: deuErro ? String($json.error?.message ?? 'erro desconhecido').slice(0, 1000) : null,\n  },\n};\n",
+        "mode": "runOnceForEachItem"
+      },
+      "id": "rotular-despacho",
+      "name": "Rotular despacho",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1060, 540]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT integracao.marcar_fila_processada($1, $2, $3);",
+        "options": {
+          "queryReplacement": "={{ [$json.fila_sync_id, $json.status === 'enviado' ? 'processado' : 'erro', $json.detalhe] }}"
+        }
+      },
+      "id": "marcar-processada",
+      "name": "Marcar processada",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1280, 540]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT integracao.registrar_envio($1, $2, $3, $4::jsonb, $5, $6, $7);",
+        "options": {
+          "queryReplacement": "={{ [$json.fila_sync_id, $json.contato_id, $json.destino, JSON.stringify($json.campos_permitidos), $json.hash_evento, $json.status, $json.detalhe] }}"
+        }
+      },
+      "id": "registrar-envio-integracao",
+      "name": "Registrar envio",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1500, 540]
+    },
+
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "hours", "hoursInterval": 6 }
+          ]
+        }
+      },
+      "id": "gatilho-reconciliacao",
+      "name": "Gatilho reconciliacao",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-260, 760]
+    },
+    {
+      "parameters": {
+        "jsCode": "// STUB, nao implementado ainda: reconciliacao periodica pra pegar eventos que\n// um webhook perdeu (GHL ou CVCRM fora do ar no momento do disparo, por\n// exemplo). Implementar isto de verdade exige chamar o endpoint de listagem\n// \"atualizados desde X\" de cada plataforma (GHL: /contacts com filtro de data;\n// CVCRM: a_partir_data_referencia, igual ao ingestao.py ja usa) e comparar\n// contra integracao.log_sync -- nenhum dos dois esta implementado aqui ainda.\n// Por enquanto este no so registra que rodou, pra ficar visivel no historico\n// de execucoes do n8n que a peca existe mas esta pendente.\nreturn {\n  json: {\n    status: 'nao_implementado',\n    mensagem: 'Reconciliacao periodica ainda e um stub. Ver TODO no workflow.',\n  },\n};\n"
+      },
+      "id": "reconciliacao-stub",
+      "name": "Reconciliacao (stub)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-40, 760]
+    }
+  ],
+  "connections": {
+    "Webhook GHL": {
+      "main": [[{ "node": "Normalizar evento GHL", "type": "main", "index": 0 }]]
+    },
+    "Normalizar evento GHL": {
+      "main": [[{ "node": "Gravar fila (GHL)", "type": "main", "index": 0 }]]
+    },
+    "Webhook CVCRM": {
+      "main": [[{ "node": "Normalizar evento CVCRM", "type": "main", "index": 0 }]]
+    },
+    "Normalizar evento CVCRM": {
+      "main": [[{ "node": "Gravar fila (CVCRM)", "type": "main", "index": 0 }]]
+    },
+    "Gatilho despacho": {
+      "main": [[{ "node": "Fila para despachar", "type": "main", "index": 0 }]]
+    },
+    "Fila para despachar": {
+      "main": [[{ "node": "Loop fila", "type": "main", "index": 0 }]]
+    },
+    "Loop fila": {
+      "main": [
+        [],
+        [{ "node": "Eh eco?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Eh eco?": {
+      "main": [
+        [{ "node": "Marcar descartado (eco)", "type": "main", "index": 0 }],
+        [{ "node": "Canal destino", "type": "main", "index": 0 }]
+      ]
+    },
+    "Marcar descartado (eco)": {
+      "main": [[{ "node": "Loop fila", "type": "main", "index": 0 }]]
+    },
+    "Canal destino": {
+      "main": [
+        [{ "node": "Enviar CVCRM", "type": "main", "index": 0 }],
+        [{ "node": "Enviar GHL", "type": "main", "index": 0 }]
+      ]
+    },
+    "Enviar CVCRM": {
+      "main": [
+        [{ "node": "Rotular despacho", "type": "main", "index": 0 }],
+        [{ "node": "Rotular despacho", "type": "main", "index": 0 }]
+      ]
+    },
+    "Enviar GHL": {
+      "main": [
+        [{ "node": "Rotular despacho", "type": "main", "index": 0 }],
+        [{ "node": "Rotular despacho", "type": "main", "index": 0 }]
+      ]
+    },
+    "Rotular despacho": {
+      "main": [[{ "node": "Marcar processada", "type": "main", "index": 0 }]]
+    },
+    "Marcar processada": {
+      "main": [[{ "node": "Registrar envio", "type": "main", "index": 0 }]]
+    },
+    "Registrar envio": {
+      "main": [[{ "node": "Loop fila", "type": "main", "index": 0 }]]
+    },
+    "Gatilho reconciliacao": {
+      "main": [[{ "node": "Reconciliacao (stub)", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Sao_Paulo",
+    "saveManualExecutions": true
+  },
+  "pinData": {}
+}

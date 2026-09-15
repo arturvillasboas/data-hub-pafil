@@ -24,33 +24,32 @@ faseamento abaixo concilia esses dois pontos.
   requisições por minuto da API, o que significa manter poucas tabelas e espaçar bem
   o refresh.
 
-## Fase 1: infraestrutura própria da Pafil, para governança (a instância EC2 ainda não foi provisionada)
+## Fase 1: infraestrutura própria da Pafil, para governança (concluída, numa máquina Windows, não na EC2 originalmente planejada)
 
-- **O quê:** um Postgres self-hosted, rodando em uma instância AWS EC2 da própria
-  empresa. Essa é uma decisão fechada em 7 de agosto de 2026 (a TI confirmou um
-  licenciamento AWS corporativo já existente, que cobre a EC2 sem custo adicional
-  de infraestrutura; veja a seção 2 de `SKILL.md`, que prevalece em caso de
-  conflito). Essa decisão substitui a opção anterior de VPS na DigitalOcean. Um
-  Postgres gerenciado (RDS ou Azure Database) fica como opção em aberto para uma
-  produção futura, com o seguinte gatilho: valeria a pena migrar quando operar o
-  banco por conta própria (backup, patch, alta disponibilidade) pesar mais do que o
-  custo de um serviço gerenciado. A decisão é reversível: bastaria reapontar a
-  string de conexão, reaplicar `bronze.sql` e rodar `--full` de novo.
-- **Por quê:** aproveita uma licença AWS que a empresa já paga, sem fricção de
-  procurement; um banco sempre ativo serve à reconciliação diária melhor do que um
-  Docker rodando localmente; e o Postgres em si continua 100% open source, só o
-  sistema operacional e o servidor passam a ser da AWS.
-- **Resultado esperado:** preencher as variáveis `PG_*` no `.env` com o host e a
-  porta da instância EC2 (o acesso é sempre por túnel, via SSM ou SSH; a porta do
-  Postgres nunca fica exposta à internet pública).
-- **Preparação já concluída (12 de agosto de 2026):** o runbook executável e os
-  scripts de provisionamento estão prontos em [`infra/`](infra/README.md), cobrindo
-  a instalação do Postgres 16 (tanto em Ubuntu quanto em Amazon Linux 2023), o
-  tuning do banco, a configuração do `pg_hba` restrita a acesso local, as roles
-  `pafil_app` e `pafil_bi`, o backup diário, o systemd timer da ingestão e os
-  grants necessários para o Power BI. O pedido formal para levar à TI está em
-  [`infra/PEDIDO_TI.md`](infra/PEDIDO_TI.md). Falta apenas a instância existir de
-  fato.
+- **O quê:** um Postgres self-hosted. O plano original era uma instância AWS EC2 da
+  própria empresa (decisão fechada em 7 de agosto de 2026, veja a seção 2 de
+  `SKILL.md`), mas a TI nunca a provisionou: em 20 de agosto de 2026, passou
+  credenciais de RDP para uma máquina Windows 10 Pro física/local já em uso, e
+  confirmou que é esse o destino definitivo (não é uma instância AWS — o teste do
+  endereço de metadados da AWS deu timeout nela). Veja `SKILL.md`, seção
+  "Atualizações de setembro de 2026", e `infra/RUNBOOK_WINDOWS.md` para o runbook
+  real. Um Postgres gerenciado (RDS ou Azure Database) segue como opção em aberto
+  para uma produção futura, com o mesmo gatilho de antes: valeria a pena migrar
+  quando operar o banco por conta própria pesar mais do que o custo de um serviço
+  gerenciado.
+- **Por quê:** o destino final não seguiu o plano original, mas o resultado
+  prático é o mesmo objetivo desta fase: um Postgres sempre ativo, fora da máquina
+  do analista, servindo à reconciliação diária e ao Power BI. O Postgres em si
+  continua 100% open source.
+- **Resultado alcançado:** o banco está de pé desde 20/ago/2026, com Postgres 16
+  rodando como Serviço do Windows, backup diário e a ingestão automatizada por
+  Tarefa Agendada (o runbook completo, incluindo os passos já validados na prática,
+  está em [`infra/RUNBOOK_WINDOWS.md`](infra/RUNBOOK_WINDOWS.md)).
+- **Preparação anterior (12 de agosto de 2026), mantida como histórico:** o
+  runbook e os scripts pensados para EC2 Linux estão em
+  [`infra/README.md`](infra/README.md) e [`infra/PEDIDO_TI.md`](infra/PEDIDO_TI.md).
+  Ficam no repositório caso a empresa migre no futuro para uma instância Linux de
+  verdade, mas não refletem o ambiente real hoje.
 
 ## Fase 2: bronze e ingestão do histórico (código pronto, aguardando a Fase 1)
 
@@ -75,10 +74,9 @@ faseamento abaixo concilia esses dois pontos.
   [`REGRAS_NEGOCIO.md`](REGRAS_NEGOCIO.md), fruto de uma engenharia reversa
   guardada em `../_bi_ref/`. A silver implementa as regras de limpeza (`ING-*`) e
   materializa os de-paras (`DP-*`) como seeds.
-- **O que falta:** rodar contra a carga completa, que só vai existir depois da Fase
-  1 na EC2 (hoje a validação usa apenas a carga local parcial), e popular os
-  de-paras que ainda dependem de planilha do SharePoint (feriados, profissões,
-  etapa de crédito).
+- **O que falta:** confirmar o status da carga completa em produção (feita na
+  máquina Windows real, ver Fase 1 acima), e popular os de-paras que ainda dependem
+  de planilha do SharePoint (feriados, profissões, etapa de crédito).
 
 ## Fase 4: gold e o Power BI definitivo (a gold está pronta; falta montar o .pbix)
 
@@ -95,7 +93,7 @@ faseamento abaixo concilia esses dois pontos.
   `reconciliacao/`).
 - Pendente: montar o `.pbix` sobre a gold, um passo manual feito no Power BI
   Desktop, e, já no ambiente de produção, reapontar o `.pbids` e o gateway para a
-  instância EC2 com a carga completa.
+  máquina Windows de produção com a carga completa.
 
 > **Para reconstruir o warehouse inteiro em um banco novo**, depois que a bronze já
 > existir, basta rodar `python aplicar_tudo.py` (que executa silver, gold e seeds
@@ -106,25 +104,29 @@ faseamento abaixo concilia esses dois pontos.
 
 ## Decisões em aberto
 
-1. Provisionar a instância AWS EC2 da empresa e instalar o Postgres (Fase 1). O
-   runbook já está pronto em [`infra/README.md`](infra/README.md), e o pedido está
-   em [`infra/PEDIDO_TI.md`](infra/PEDIDO_TI.md). O que falta confirmar com a TI é
-   o sistema operacional (Ubuntu LTS ou Amazon Linux 2023) e a forma de acesso
-   (SSM ou SSH por chave).
-2. Rodar `ingestao.py --full --criar-tabelas` na EC2 e validar os primeiros dados
-   (Fase 2). Hoje a carga local é parcial, com cerca de 4.756 das mais de 6.000
-   reservas reais.
-3. Reconciliar os totais com os relatórios PBIX existentes, para validar de vez o
+Os itens 1 e 5 desta lista, em versões anteriores deste documento, tratavam a
+instância AWS EC2 e a localização do gateway do Power BI como pendências. As duas
+estão resolvidas, por um caminho diferente do planejado: a produção roda numa
+máquina Windows 10 Pro física/local (não a EC2), e o gateway já está instalado
+nela, já que a máquina toda é Windows. Veja `SKILL.md`, seção "Atualizações de
+setembro de 2026", para o histórico completo. Os itens que seguem em aberto de
+verdade são:
+
+1. Confirmar o status da carga completa em produção e validar os totais (Fase 2).
+   Antes da produção existir, a carga local era parcial, com cerca de 4.756 das
+   mais de 6.000 reservas reais; o runbook (`infra/RUNBOOK_WINDOWS.md`, seção 3)
+   define o critério de aceite, mas vale reconferir o status atual.
+2. Reconciliar os totais com os relatórios PBIX existentes, para validar de vez o
    paralelo entre a pipeline nova e a antiga.
-4. Definir como os de-paras de planilha (hoje sincronizados via OneDrive e
-   SharePoint) vão continuar sendo atualizados depois que a fonte deixar de ser
-   uma máquina local (veja `ARCHITECTURE.md` para mais detalhes sobre essa
-   fronteira).
-5. Decidir onde vai morar o On-premises Data Gateway. Ele só roda em Windows,
-   então não cabe dentro de uma EC2 Linux, e o desenho anterior, que previa o
-   gateway "na própria VPS", não se sustenta mais. Há três opções: usar um host
-   Windows sempre ativo que a empresa já tenha (sem custo adicional), subir uma
-   segunda instância EC2 Windows só para isso (com custo adicional), ou adiar essa
-   decisão (o Power BI Desktop continua funcionando normalmente por túnel; só a
-   atualização agendada no Power BI Service fica bloqueada enquanto isso). Essa
-   decisão não bloqueia as etapas 7.2 a 7.4.
+3. Definir como os de-paras de planilha (hoje atualizados por um túnel SSH da
+   máquina do analista) vão continuar sendo atualizados de forma menos manual. Um
+   plano em execução (ver `SKILL.md`) prevê buscar as planilhas via Microsoft
+   Graph API, eliminando a dependência do túnel e do OneDrive sincronizado local
+   para a maior parte delas (veja `ARCHITECTURE.md`, seção 4, para o detalhe dessa
+   fronteira e da exceção dos processos que dependem de Excel COM).
+4. Trazer para dentro do repositório o plano em execução desde 15/set/2026
+   (migração para dbt-core e Airflow, e a integração entre CVCRM e GoHighLevel),
+   hoje registrado só num plano local do Claude Code e num quadro no GitHub
+   Projects. Enquanto isso não acontece, este ROADMAP.md descreve apenas a
+   primeira etapa do projeto (Fases 0 a 4 acima), já praticamente concluída, não o
+   trabalho em andamento.
