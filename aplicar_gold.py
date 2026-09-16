@@ -22,6 +22,7 @@ OBJETOS = [
     "dim_corretor", "dim_corretor_headcount", "fato_reservas",
     "fato_leads", "fato_precadastros",
     "dim_fila", "dim_atendente", "fato_atendimentos",
+    "fato_atendimentos_cvcrm",
 ]
 
 

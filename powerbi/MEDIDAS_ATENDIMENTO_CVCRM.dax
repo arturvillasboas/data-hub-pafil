@@ -1,0 +1,87 @@
+// =============================================================================
+// Medidas DAX — atendimento (protocolo/ticket de pós-venda do CVCRM), sobre
+// gold.fato_atendimentos_cvcrm.
+//
+// NÃO confundir com powerbi/MEDIDAS_ATENDIMENTO.dax (essas são do Blip, chat de
+// WhatsApp). O sufixo _cvcrm em todas as tabelas/medidas deste arquivo é de
+// propósito, pra não colidir com o que já está em produção. Ver DP-17 em
+// REGRAS_NEGOCIO.md.
+//
+// Tabela (importada do schema gold): fato_atendimentos_cvcrm, mais as
+// conformadas dim_calendario e dim_empreendimento, que já existem no modelo.
+//
+// Relacionamentos que estas medidas assumem:
+//   dim_calendario[data]                  1─* fato_atendimentos_cvcrm[data_cad]  (ATIVO)
+//   dim_empreendimento[id_empreendimento] 1─* fato_atendimentos_cvcrm[id_empreendimento]
+//
+// ATENÇÃO DE VOLUME (16/set/2026): o ambiente `pafil` tem hoje só 10
+// atendimentos no total. Toda medida aqui é validada estruturalmente (roda sem
+// erro, soma bate com os 10 registros), mas nenhuma foi validada contra um
+// número de referência externo, porque não existe um painel legado para este
+// módulo (diferente do Blip, que replica o painel nativo). Revisitar o design
+// das medidas quando o volume crescer.
+//
+// ATENÇÃO DE UNIDADE: tempo_resposta e tempo_finalizado (gold, em segundos) têm
+// essa unidade INFERIDA pela ordem de grandeza dos valores observados (ex.:
+// 1.308.597 ≈ 15 dias, plausível para uma Assistência Técnica lenta), não
+// confirmada pela documentação da API. Conferir contra o CVCRM (tela do
+// atendimento) assim que houver um caso real pra comparar.
+// =============================================================================
+
+// ---- Contagens ----
+
+Total Atendimentos =
+COUNTROWS ( fato_atendimentos_cvcrm )
+
+Atendimentos Finalizados =
+CALCULATE ( COUNTROWS ( fato_atendimentos_cvcrm ), fato_atendimentos_cvcrm[eh_finalizado] = TRUE () )
+
+Atendimentos Cancelados =
+CALCULATE ( COUNTROWS ( fato_atendimentos_cvcrm ), fato_atendimentos_cvcrm[situacao] = "Cancelado" )
+
+// Snapshot: nem finalizado nem cancelado. REMOVEFILTERS no calendário pela
+// mesma razão do painel de Blip (Tickets Em Aberto): atendimento em aberto não
+// tem data de finalização certa, então sem tirar o filtro o cartão zeraria ao
+// escolher qualquer mês — "em aberto" é uma foto do momento, não um total do
+// período.
+Atendimentos Em Aberto =
+CALCULATE (
+    COUNTROWS ( fato_atendimentos_cvcrm ),
+    fato_atendimentos_cvcrm[eh_finalizado] = FALSE (),
+    fato_atendimentos_cvcrm[situacao] <> "Cancelado",
+    REMOVEFILTERS ( dim_calendario )
+)
+
+Taxa de Cancelamento =
+DIVIDE ( [Atendimentos Cancelados], [Total Atendimentos] )
+
+Taxa de Resolução 1º Contato =
+DIVIDE (
+    CALCULATE ( COUNTROWS ( fato_atendimentos_cvcrm ), fato_atendimentos_cvcrm[eh_resolvido_primeiro_contato] = TRUE () ),
+    [Total Atendimentos]
+)
+
+// ---- Tempos médios, base em segundos (ver nota de unidade no topo) ----
+
+Tempo Médio de Resposta (seg) =
+AVERAGE ( fato_atendimentos_cvcrm[tempo_resposta] )
+
+Tempo Médio de Finalização (seg) =
+AVERAGE ( fato_atendimentos_cvcrm[tempo_finalizado] )
+
+// Exibição em dias, uma casa decimal — mais legível que segundos/hh:mm:ss
+// quando o prazo típico é de dias (ao contrário do Blip, que mede minutos).
+Tempo Médio de Finalização (dias) =
+VAR s = [Tempo Médio de Finalização (seg)]
+RETURN IF ( ISBLANK ( s ), BLANK (), ROUND ( s / 86400, 1 ) )
+
+// ---- Qualidade ----
+
+Avaliação Média =
+AVERAGE ( fato_atendimentos_cvcrm[avaliacao] )
+
+Qtd Avaliações =
+CALCULATE ( COUNTROWS ( fato_atendimentos_cvcrm ), NOT ISBLANK ( fato_atendimentos_cvcrm[avaliacao] ) )
+
+Média de Mensagens por Atendimento =
+AVERAGE ( fato_atendimentos_cvcrm[quantidade_mensagens] )

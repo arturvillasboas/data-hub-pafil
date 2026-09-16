@@ -185,6 +185,18 @@ também depende dessa fundação. Veja `SKILL.md`, seção "Atualizações de se
   vendas do ano). O join de `gold.dim_corretor` com o headcount passou a exigir
   `eh_ativo`, de propósito, para que nada mude nas páginas que já estão no ar.
 
+  Em 16 de setembro de 2026 entrou um objeto novo (DP-17): o endpoint `atendimentos`
+  da API CVDW, o módulo de protocolo/ticket de pós-venda do próprio CVCRM
+  (assistência técnica, financeiro, contratos...), sem nenhuma relação com o Blip.
+  Como o projeto já tinha `gold.fato_atendimentos` e a página "Atendimento" para o
+  Blip (chat de WhatsApp), todo o objeto novo leva o sufixo `_cvcrm`
+  (`bronze.atendimentos_cvcrm`, `silver.atendimentos_cvcrm`,
+  `gold.fato_atendimentos_cvcrm`), para não colidir com o que já está em produção.
+  O ambiente da Pafil tem hoje só 10 atendimentos no total (população inteira, não
+  amostra), então o módulo parece recém-adotado — o valor da página cresce junto
+  com o uso do CVCRM. Ver DP-17 em `REGRAS_NEGOCIO.md` para o método de descoberta e
+  as correções manuais de tipo.
+
 - **Orquestrador**: `aplicar_tudo.py` roda silver, gold e seeds em um único comando.
 - **Power BI**: a pasta `powerbi/` reúne o arquivo de conexão (`.pbids`), o
   `MEDIDAS_GOLD.dax` e um guia de uso. O `.pbix` propriamente dito ainda não foi

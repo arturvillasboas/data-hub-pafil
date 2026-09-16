@@ -1233,3 +1233,76 @@ LEFT JOIN silver.dpara_profissoes dp
        ON lower(btrim(dp.original)) = lower(btrim(u.profissao_selecionado))
 LEFT JOIN silver.dpara_profissoes dp2
        ON lower(btrim(dp2.original)) = lower(btrim(u.profissao_preenchido));
+
+
+-- ===========================================================================
+-- ATENDIMENTOS (CVCRM) — protocolo/ticket de pós-venda (assistência técnica,
+-- financeiro, contratos...). Grão = 1 linha por atendimento. Sufixo _cvcrm em
+-- toda a camada pra não colidir com gold.fato_atendimentos (esse é do Blip,
+-- chat de WhatsApp — ver powerbi/PAGINA_ATENDIMENTO.md, que é a página do
+-- Blip; a página deste fato é powerbi/PAGINA_ATENDIMENTO_CVCRM.md).
+--
+-- SEM join com gold.dim_corretor: id_corretor/corretor vieram vazios nos 10
+-- registros que existem hoje (módulo pouco usado ainda). Quando o volume
+-- crescer e o campo passar a vir preenchido, ligar por silver.chave_nome()
+-- igual à fato_leads/fato_precadastros.
+-- ===========================================================================
+CREATE VIEW gold.fato_atendimentos_cvcrm AS
+SELECT
+    a.id_atendimento,
+    a.protocolo,
+    a.id_protocolo,
+
+    a.data_cad::date                                      AS data_cad,
+    a.ano_cad,
+    a.mes_cad,
+    a.ano_mes_cad,
+    a.data_situacao,
+    a.data_modificacao,
+    a.data_finalizado,
+    a.previsao_conclusao,
+    a.eh_finalizado,
+
+    a.id_empreendimento,
+    a.empreendimento,
+    silver.conformar_empreendimento(a.empreendimento)     AS empreendimento_conformado,
+    de.regional,
+    de.regiao,
+    a.etapa,
+    a.bloco,
+    a.id_unidade,
+    a.unidade,
+
+    a.id_cliente,
+    a.cliente,
+    a.documento_cliente,
+
+    a.id_corretor,
+    a.corretor,
+    a.id_imobiliaria,
+    a.imobiliaria,
+
+    a.situacao,
+    a.id_situacao,
+    a.tipo,
+    a.assunto,
+    a.subassunto,
+    a.classificacao,
+    a.prioridade,
+    a.origem,
+    a.canal,
+    a.equipe,
+    a.usuario,
+    a.responsavel,
+
+    a.eh_ativo,
+    a.eh_resolvido_primeiro_contato,
+    a.humor_cliente,
+    a.avaliacao,
+    a.quantidade_mensagens,
+    a.quantidade_interacoes,
+    a.tempo_resposta,
+    a.tempo_finalizado
+FROM silver.atendimentos_cvcrm a
+LEFT JOIN gold.dim_empreendimento de
+       ON de.id_empreendimento = a.id_empreendimento;

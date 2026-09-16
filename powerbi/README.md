@@ -189,6 +189,20 @@ estão no próprio arquivo `.dax`):
 
 ---
 
+### A página "Atendimento (CVCRM)" (protocolo/ticket de pós-venda)
+
+Sobre `gold.fato_atendimentos_cvcrm`, o endpoint `atendimentos` do CVDW (DP-17
+em `REGRAS_NEGOCIO.md`). **Não confundir com a página "Atendimento" já
+existente, que é o chat de WhatsApp via Blip** — os dois fatos e as duas
+famílias de medidas levam o mesmo nome de assunto de propósito, mas são
+domínios diferentes, sem relação entre si hoje; daí o sufixo `_cvcrm` em tudo
+que é novo aqui. As medidas estão em
+[`MEDIDAS_ATENDIMENTO_CVCRM.dax`](MEDIDAS_ATENDIMENTO_CVCRM.dax), e o layout
+(enxuto de propósito, porque o volume ainda é muito baixo) está em
+[`PAGINA_ATENDIMENTO_CVCRM.md`](PAGINA_ATENDIMENTO_CVCRM.md).
+
+---
+
 ## 6. Validação: como confiar nos números
 
 Antes de apresentar, confira os visuais contra os relatórios já reconciliados em

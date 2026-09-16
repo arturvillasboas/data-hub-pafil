@@ -530,3 +530,88 @@ SELECT
     to_char(c.conversao, 'YYYY-MM')                       AS ano_mes_conversao,
     c._data_extracao
 FROM bronze.leads_conversoes c;
+
+
+-- ===========================================================================
+-- ATENDIMENTOS (CVCRM) — módulo de protocolo/ticket de pós-venda do próprio
+-- CVCRM (assistência técnica, financeiro, contratos...). SEM relação com o
+-- Blip: gold.fato_atendimentos + powerbi/PAGINA_ATENDIMENTO.md são do Blip
+-- (chat de WhatsApp) — daí o sufixo _cvcrm em toda a camada, pra não colidir
+-- com o que já está no ar. Grão = 1 linha por atendimento (idatendimento).
+-- Mesmo tratamento de cliente que silver.reservas/vendas (não omite PII: é
+-- cliente já identificado, pós-venda, não lead de marketing).
+-- humor_cliente e tags/atendimentos_vinculados ficam crus (texto): a amostra
+-- inteira disponível hoje (10 registros) só mostrou 'N'/vazio, sem variedade
+-- suficiente pra decidir uma normalização — revisar quando o volume crescer.
+-- ===========================================================================
+CREATE OR REPLACE VIEW silver.atendimentos_cvcrm AS
+SELECT
+    a.idatendimento::bigint                               AS id_atendimento,
+    btrim(a.protocolo)                                    AS protocolo,
+    a.idprotocolo::bigint                                 AS id_protocolo,
+
+    a.idempreendimento::bigint                             AS id_empreendimento,
+    btrim(a.empreendimento)                                AS empreendimento,
+    a.codigointerno_empreendimento::bigint                 AS codigo_interno_empreendimento,
+    btrim(a.sigla_empreendimento)                          AS sigla_empreendimento,
+    btrim(a.etapa)                                         AS etapa,
+    btrim(a.bloco)                                         AS bloco,
+    btrim(a.regiao)                                        AS regiao,
+    a.idunidade::bigint                                    AS id_unidade,
+    btrim(a.unidade)                                       AS unidade,
+
+    a.idcliente::bigint                                    AS id_cliente,
+    btrim(a.cliente)                                       AS cliente,
+    btrim(a.nome_cliente)                                  AS nome_cliente_informado,  -- raro: só quando idcliente não resolve
+    a.documento_cliente,
+    btrim(a.email_cliente)                                 AS email_cliente,
+    btrim(a.telefone_atendimento)                          AS telefone_atendimento,
+    btrim(a.cep_cliente)                                   AS cep_cliente,
+
+    a.idcorretor::bigint                                   AS id_corretor,
+    btrim(a.corretor)                                      AS corretor,
+    a.idimobiliaria::bigint                                AS id_imobiliaria,
+    btrim(a.imobiliaria)                                   AS imobiliaria,
+
+    btrim(a.situacao)                                      AS situacao,
+    a.idsituacao::bigint                                   AS id_situacao,
+    btrim(a.tipo)                                          AS tipo,               -- "Aberto pelo cliente"/"Aberto pelo gestor"
+    a.idtipo::bigint                                       AS id_tipo,
+    btrim(a.assunto)                                       AS assunto,
+    btrim(a.subassunto)                                    AS subassunto,
+    btrim(a.classificacao)                                 AS classificacao,
+    a.idclassificacao::bigint                              AS id_classificacao,
+    btrim(a.prioridade)                                    AS prioridade,
+    btrim(a.origem)                                        AS origem,             -- código 2 letras (ex.: PC/GE); domínio próprio, não confundir com origem de leads
+    a.idcanal::bigint                                      AS id_canal,
+    btrim(a.canal)                                         AS canal,
+    btrim(a.times)                                         AS equipe,
+    btrim(a.usuario)                                        AS usuario,
+    btrim(a.responsavel)                                   AS responsavel,
+    a.id_usuario_finalizado::bigint                        AS id_usuario_finalizado,
+
+    (upper(btrim(coalesce(a.ativo,'')))       = 'S')        AS eh_ativo,
+    (upper(btrim(coalesce(a.ativo_painel,'')))= 'S')        AS eh_ativo_painel,
+    (upper(btrim(coalesce(a.encerrado_primeiro_contato,''))) = 'S') AS eh_resolvido_primeiro_contato,
+    btrim(a.humor_cliente)                                  AS humor_cliente,
+
+    a.avaliacao,
+    a.quantidade_mensagens,
+    a.quantidade_interacoes,
+    -- tempo_resposta/tempo_finalizado: segundos (inferido pela ordem de grandeza
+    -- vs. data_cad/data_finalizado da amostra; validar quando o volume crescer).
+    a.tempo_resposta,
+    a.tempo_finalizado,
+
+    a.data_cad,
+    a.data_situacao,
+    a.data_modificacao,
+    a.data_finalizado,
+    silver.tentar_timestamptz(a.previsao_conclusao)         AS previsao_conclusao,
+    (a.data_finalizado IS NOT NULL)                         AS eh_finalizado,
+
+    EXTRACT(YEAR  FROM a.data_cad)::int                     AS ano_cad,
+    EXTRACT(MONTH FROM a.data_cad)::int                     AS mes_cad,
+    to_char(a.data_cad, 'YYYY-MM')                          AS ano_mes_cad,
+    a._data_extracao
+FROM bronze.atendimentos_cvcrm a;

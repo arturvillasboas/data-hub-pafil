@@ -26,6 +26,7 @@ VIEWS = [
     "reservas", "vendas", "distratos",
     "unidades", "corretores", "imobiliarias",
     "leads", "precadastros", "leads_conversoes",
+    "atendimentos_cvcrm",
     "blip_tickets", "blip_filas", "blip_atendentes",
 ]
 
