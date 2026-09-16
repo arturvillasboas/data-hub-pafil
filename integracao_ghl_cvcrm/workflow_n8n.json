@@ -302,7 +302,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ locationId: '<PREENCHER: ID da sub-account do GHL>', filters: [{ field: 'dateUpdated', operator: 'gte', value: $now.minus({ hours: 6 }).toISO() }], pageLimit: 100 }) }}",
+        "jsonBody": "={{ JSON.stringify({ locationId: '<PREENCHER: ID da sub-account do GHL>', filters: [{ field: 'dateUpdated', operator: 'range', value: { gte: $now.minus({ hours: 6 }).toISO() } }], pageLimit: 100 }) }}",
         "options": { "timeout": 30000 }
       },
       "id": "buscar-ghl-atualizados",
@@ -310,7 +310,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [-40, 840],
-      "notes": "TODO: verificar contra uma chamada real (e' leitura, sem risco de escrita) se o nome do endpoint, o formato do filtro (field/operator/value) e o locationId estao corretos -- a documentacao publica do GHL nao confirmou o corpo exato da requisicao."
+      "notes": "Validado contra a API real (16/set/2026): endpoint, headers e filtro (field=dateUpdated, operator=range, value={gte:...}) confirmados, resposta 200 com {contacts:[], total:0, traceId:...}. Ainda falta ver o formato de um contato de verdade dentro de 'contacts' (o teste rodou sem nenhum resultado no periodo)."
     },
     {
       "parameters": {
@@ -322,7 +322,7 @@
       "type": "n8n-nodes-base.splitOut",
       "typeVersion": 1,
       "position": [180, 840],
-      "notes": "TODO: confirmar se a resposta real vem em 'contacts' (nome assumido, nao confirmado)."
+      "notes": "Confirmado (16/set/2026): a resposta real vem mesmo em 'contacts'."
     },
     {
       "parameters": {
