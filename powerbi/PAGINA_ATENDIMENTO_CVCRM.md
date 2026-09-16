@@ -121,18 +121,27 @@ conferir um caso pontual sem sair da página.
 
 ## 4. Esteira (kanban)
 
-**Visual:** HTML Content, sem Granularity (é um board inteiro numa medida só,
-igual à faixa de KPIs — não tem clique nesta primeira versão). **Medida:**
-`[Esteira Atendimentos CVCRM HTML]`. O Stylesheet já vem embutido na própria
-medida.
+Réplica da tela nativa "Andamento dos atendimentos" do CVCRM: 6 colunas fixas,
+**na ordem certa agora** (Novo Atendimento → Triagem → Time Cobrança → Time
+Atendimento → Time Crédito → Em Atendimento — o `ASC` por nome da primeira
+versão embaralhava isso alfabeticamente, corrigido), cabeçalho na cor da
+paleta de KPIs (azul `#003254` na primeira coluna, vermelho `#8A1C1C` nas
+demais — mesma paleta da faixa de KPIs da seção 1, pedido de harmonia
+visual), e um cartão por atendimento com protocolo, cliente, bloco/unidade +
+empreendimento, assunto/subassunto e um rodapé "+ INFORMAÇÕES". Cancelado e
+Finalizado ficam de fora — a tela nativa mostra o que está em andamento, não
+o histórico encerrado. Fontes bem maiores que o resto do arquivo, calibradas
+pro tamanho real desta página (4500×3800) e deste visual (4253 de largura ×
+876 de altura, ~708px por coluna).
 
-Réplica da tela nativa "Andamento dos atendimentos" do CVCRM: 6 colunas fixas
-(Novo Atendimento, Triagem, Time Cobrança, Time Atendimento, Time Crédito, Em
-Atendimento), cabeçalho azul na primeira e vermelho nas demais, e um cartão
-por atendimento com protocolo, cliente (ícone de pessoa), bloco/unidade +
-empreendimento (ícone de local), assunto/subassunto (ícone de balão) e um
-rodapé "+ INFORMAÇÕES". Cancelado e Finalizado ficam de fora — a tela nativa
-mostra o que está em andamento, não o histórico encerrado.
+**Passe o mouse sobre um cartão** para expandir um bloco de estatísticas —
+CRIADO HÁ, NA SITUAÇÃO, INTERAÇÕES, ÚLT. ATUALIZAÇÃO —, inspirado na tela
+expandida que você mandou de exemplo. As três linhas de "VENCIMENTO DE SLA"
+daquele print (por assunto/subassunto/workflow) **não entraram**: a API do
+CVDW não expõe prazo de SLA em nenhum dos 60 campos de `atendimentos` — é
+cálculo interno do CVCRM que não sai no endpoint. Mostrar essas datas seria
+inventar dado; se a gestão precisar delas, é um pedido de campo novo pro
+CVCRM, não algo que o pipeline resolve sozinho.
 
 **⚠️ Atenção antes de confiar nesta seção:** as 6 colunas são valores
 esperados do campo `fato_atendimentos_cvcrm[situacao]`, só que **só um deles
@@ -141,21 +150,55 @@ num dos 10 registros de hoje. Os outros cinco nomes (Novo Atendimento,
 Triagem, Time Cobrança, Time Atendimento, Time Crédito) foram copiados da
 captura de tela que você mandou, mas nunca apareceram nos dados: é uma aposta
 de que são valores de `situacao`, não uma confirmação. Se algum atendimento
-passar por uma dessas etapas e a coluna dele continuar vazia (ficar preso na
-coluna errada, ou sumir), o texto exato provavelmente diverge — corrija a
-grafia direto na variável `_colunas`, no topo de
-`[Esteira Atendimentos CVCRM HTML]` (é uma tabela de 6 linhas, `situacao` +
-tema de cor). É possível também que "Time Cobrança"/"Time Atendimento"/"Time
-Crédito" não sejam 3 valores de `situacao`, e sim uma combinação de situação
-com a equipe (`fato_atendimentos_cvcrm[equipe]`) — sem um atendimento real
-nessas etapas pra conferir, não dá pra saber qual das duas é.
+passar por uma dessas etapas e a coluna dele continuar vazia, o texto exato
+provavelmente diverge — corrija a grafia direto na tabela `Esteira Colunas`
+(coluna `situacao`). É possível também que "Time Cobrança"/"Time
+Atendimento"/"Time Crédito" não sejam 3 valores de `situacao`, e sim uma
+combinação de situação com a equipe (`fato_atendimentos_cvcrm[equipe]`) —
+sem um atendimento real nessas etapas pra conferir, não dá pra saber qual
+das duas é.
 
-**Sem clique nesta versão:** diferente da tabela de detalhe (seção 3), o
-cartão aqui não filtra a página ao clicar — a interatividade pedida foi
-fidelidade visual à tela do CVCRM, não cross-filtering. Se quiser esse
-comportamento depois, o caminho é o mesmo padrão de Granularity da seção 3,
-só que fica mais complexo porque a esteira tem dois níveis (coluna dentro de
-board, cartão dentro de coluna) contra um nível só da tabela.
+### Sobre o clique: filtra por COLUNA (situação), não por cartão individual
+
+Foi pedido clique que filtre a página igual à tabela de detalhe — mas manter
+as 6 colunas sempre visíveis (mesmo com 0 atendimentos, que é o caso de 5 das
+6 hoje) e ter clique por CARTÃO individual são **tecnicamente incompatíveis**
+neste visual: o HTML Content só cross-filtra quando o campo Granularity tem
+uma linha por "coisa clicável", e se essa linha fosse por cartão
+(`id_atendimento`), uma coluna sem nenhum atendimento não teria nenhuma linha
+pra existir — o visual mostraria só a mensagem genérica de "sem dados" no
+lugar, sem cor, sem cabeçalho, sem "0 Registro(s)". Esse caminho foi testado
+primeiro e descartado por isso.
+
+A solução foi Granularity por COLUNA: clicar em qualquer lugar de uma coluna
+(cabeçalho ou fundo, em qualquer cartão dentro dela) seleciona aquela
+situação inteira e filtra o resto da página — inclusive a faixa de KPIs e a
+tabela da seção 3. Pra clique por atendimento individual, a tabela de
+detalhe da seção 3 já resolve isso.
+
+**Passo a passo pra montar (precisa de duas coisas novas no modelo, não só
+colar medida):**
+
+1. **Criar a tabela de apoio:** Modelagem → Nova tabela → cole o conteúdo de
+   `Esteira Colunas` (é uma DATATABLE, 6 linhas: situação, tema de cor,
+   ordem). Não é medida — não cole como "Nova medida".
+2. **Criar o relacionamento:** Modelagem → Gerenciar relacionamentos → Nova:
+   `'Esteira Colunas'[situacao]` (lado 1) → `fato_atendimentos_cvcrm[situacao]`
+   (lado vários). Direção do filtro: única (padrão).
+3. Colar as medidas `Ordem Esteira CVCRM (ordenação)`, `Coluna Esteira CVCRM
+   HTML` e `CSS Esteira Atendimentos CVCRM` na pasta `Atendimento CVCRM`,
+   igual às outras.
+4. Configurar o visual HTML Content:
+
+| Campo | Valor |
+|---|---|
+| Values | `[Coluna Esteira CVCRM HTML]` |
+| Granularity | `'Esteira Colunas'[situacao]` |
+| Tooltips | `[Ordem Esteira CVCRM (ordenação)]` |
+| Classificar por | Ordem Esteira CVCRM (ordenação), crescente |
+| Formatar > Stylesheet > fx | `[CSS Esteira Atendimentos CVCRM]` |
+| Formatar > Cross-filtering | Ativar, Transparency 0 |
+| Formatar > No data message | (deixe em branco — com a tabela de apoio, o Granularity nunca fica vazio, então essa mensagem nunca aparece) |
 
 ## Pendências conhecidas
 
