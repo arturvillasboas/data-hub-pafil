@@ -124,6 +124,12 @@ SELECT
     e.id_empreendimento,
     e.empreendimento,
 
+    -- A tag crua, numa coluna só. É o que a aba "Tags" do painel nativo mostra, com
+    -- empreendimento e motivo misturados na mesma lista. Existe ao lado das colunas
+    -- separadas acima, e não no lugar delas: as separadas servem para cruzar com a
+    -- gold, esta serve para conferir contra o painel linha a linha.
+    t.tag,
+
     -- --- situação -------------------------------------------------------
     t.status_origem,
     t.situacao,

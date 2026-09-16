@@ -176,6 +176,17 @@ SELECT
     -- Confirmar antes de construir qualquer medida de satisfação em cima.
     t.rating                                AS avaliacao,
     t.campaign_id                           AS id_campanha,
-    t._data_extracao
+    t._data_extracao,
+
+    -- A tag CRUA, numa coluna só, do jeito que o painel nativo do Blip mostra na aba
+    -- "Tags": lá empreendimento e motivo aparecem misturados na mesma lista. A
+    -- separação em duas colunas acima é uma escolha nossa, boa para cruzar com a
+    -- gold, mas ela torna impossível reproduzir aquela aba, que é o que a gestão vê.
+    --
+    -- Uma coluna basta e não há risco de duplicar ticket: medido em 10/set/2026 sobre
+    -- a coleção inteira, nenhum ticket tem mais de uma tag (446 com uma, 744 sem
+    -- nenhuma, zero com duas). Se um dia isso mudar, `qtd_tags` acusa, e aí a saída
+    -- é uma tabela-ponte de ticket × tag, não um segundo coalesce aqui.
+    coalesce(g.tag_empreendimento, g.tag_motivo) AS tag
 FROM bronze.blip_tickets t
 LEFT JOIN tags g ON g.sequential_id = t.sequential_id;
