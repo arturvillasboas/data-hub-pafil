@@ -1247,7 +1247,7 @@ LEFT JOIN silver.dpara_profissoes dp2
 -- crescer e o campo passar a vir preenchido, ligar por silver.chave_nome()
 -- igual à fato_leads/fato_precadastros.
 -- ===========================================================================
-CREATE VIEW gold.fato_atendimentos_cvcrm AS
+CREATE OR REPLACE VIEW gold.fato_atendimentos_cvcrm AS
 SELECT
     a.id_atendimento,
     a.protocolo,
