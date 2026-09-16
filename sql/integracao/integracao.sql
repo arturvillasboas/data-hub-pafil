@@ -296,3 +296,114 @@ ORDER BY f.criado_em ASC;
 
 COMMENT ON VIEW integracao.v_fila_para_despachar IS
     'Fila pronta para despacho: destino resolvido, campos filtrados por dono_campo, eco detectado. Fase 5 migra isto para um model dbt sem mudar a lógica.';
+
+-- =============================================================================
+-- Reconciliação (lado CVCRM): sem chamada de API nenhuma
+-- =============================================================================
+
+-- O CVDW já ingere `leads` de hora em hora (ver ingestao.py). Em vez de criar um
+-- caminho de leitura próprio pra CVCRM, a reconciliação desse lado só compara o
+-- que já está em bronze.leads contra o último estado que a integração já viu
+-- daquele contato. Se divergir (ou nunca tiver visto), é sinal de que um webhook
+-- foi perdido, e a linha entra na fila do mesmo jeito que um webhook entraria.
+CREATE OR REPLACE VIEW integracao.v_reconciliacao_cvcrm AS
+SELECT
+    c.id                                                   AS contato_id,
+    c.idlead_cvcrm,
+    l.telefone                                             AS telefone_bruto,
+    l.email                                                AS email_bruto,
+    jsonb_build_object(
+        'idlead_cvcrm',             l.idlead::text,
+        'situacao_lead',            l.situacao,
+        'corretor_responsavel',     l.corretor,
+        'empreendimento_interesse', l.empreendimento_ultimo
+    )                                                      AS campos_candidatos,
+    integracao.calcular_hash_evento(jsonb_build_object(
+        'idlead_cvcrm',             l.idlead::text,
+        'situacao_lead',            l.situacao,
+        'corretor_responsavel',     l.corretor,
+        'empreendimento_interesse', l.empreendimento_ultimo
+    ))                                                     AS hash_candidato,
+    (
+        SELECT f.hash_evento
+          FROM integracao.fila_sync f
+         WHERE f.contato_id = c.id AND f.origem = 'cvcrm'
+         ORDER BY f.criado_em DESC
+         LIMIT 1
+    )                                                      AS hash_conhecido
+FROM integracao.depara_contato c
+JOIN bronze.leads l ON l.idlead::text = c.idlead_cvcrm
+WHERE c.idlead_cvcrm IS NOT NULL;
+
+COMMENT ON VIEW integracao.v_reconciliacao_cvcrm IS
+    'Compara bronze.leads (ja ingerido pelo CVDW) contra o ultimo hash que a integracao conhece por contato. Base da funcao rodar_reconciliacao_cvcrm().';
+
+-- Materializa a reconciliação: grava em fila_sync só os contatos cujo hash
+-- mudou (ou nunca foi visto). Devolve quantas linhas novas foram criadas —
+-- o n8n só precisa chamar isto e seguir o pipeline normal a partir daqui.
+CREATE OR REPLACE FUNCTION integracao.rodar_reconciliacao_cvcrm()
+RETURNS int
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_inseridas int;
+BEGIN
+    WITH candidatos AS (
+        SELECT * FROM integracao.v_reconciliacao_cvcrm
+         WHERE hash_conhecido IS NULL OR hash_conhecido <> hash_candidato
+    )
+    INSERT INTO integracao.fila_sync (origem, tipo_evento, telefone_bruto, email_bruto, campos)
+    SELECT 'cvcrm', 'reconciliacao', telefone_bruto, email_bruto, campos_candidatos
+      FROM candidatos;
+    GET DIAGNOSTICS v_inseridas = ROW_COUNT;
+    RETURN v_inseridas;
+END;
+$$;
+
+COMMENT ON FUNCTION integracao.rodar_reconciliacao_cvcrm() IS
+    'Chamada pelo n8n (Gatilho reconciliacao). Insere em fila_sync um evento sintético para cada contato cujo estado no CVCRM (via bronze.leads, sem chamada de API) mudou desde o último evento que a integração conhece.';
+
+-- =============================================================================
+-- Reconciliação (lado GHL): precisa de chamada de API, feita pelo n8n
+-- =============================================================================
+
+-- Não existe um espelho local dos contatos do GHL (diferente do CVCRM, que já
+-- tem bronze.leads via CVDW), então esta reconciliação depende do n8n buscar os
+-- contatos atualizados recentemente na API e chamar esta função uma vez por
+-- contato. A função só decide "isso já é conhecido, ou é novo?" -- a mesma
+-- decisão que integracao.v_reconciliacao_cvcrm toma em SQL puro, só que aqui
+-- alimentada por dado que chegou de fora, não de uma tabela local.
+CREATE OR REPLACE FUNCTION integracao.registrar_reconciliacao_ghl(
+    p_id_contato_ghl text,
+    p_telefone       text,
+    p_email          text,
+    p_campos         jsonb
+) RETURNS boolean
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_contato_id  bigint;
+    v_hash_novo   text := integracao.calcular_hash_evento(p_campos);
+    v_hash_antigo text;
+BEGIN
+    v_contato_id := integracao.resolver_contato(p_telefone, p_email, NULL, NULL, p_id_contato_ghl);
+
+    SELECT f.hash_evento INTO v_hash_antigo
+      FROM integracao.fila_sync f
+     WHERE f.contato_id = v_contato_id AND f.origem = 'ghl'
+     ORDER BY f.criado_em DESC
+     LIMIT 1;
+
+    IF v_hash_antigo IS NOT DISTINCT FROM v_hash_novo THEN
+        RETURN false;  -- nada mudou desde o último evento conhecido
+    END IF;
+
+    INSERT INTO integracao.fila_sync (origem, tipo_evento, telefone_bruto, email_bruto, campos)
+    VALUES ('ghl', 'reconciliacao', p_telefone, p_email, p_campos || jsonb_build_object('id_contato_ghl', p_id_contato_ghl));
+
+    RETURN true;
+END;
+$$;
+
+COMMENT ON FUNCTION integracao.registrar_reconciliacao_ghl(text, text, text, jsonb) IS
+    'Chamada pelo n8n uma vez por contato retornado da busca de "atualizados recentemente" no GHL. Devolve true se gravou um evento novo em fila_sync, false se já era conhecido (nada a fazer).';

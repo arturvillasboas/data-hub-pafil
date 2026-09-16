@@ -277,13 +277,87 @@
     },
     {
       "parameters": {
-        "jsCode": "// STUB, nao implementado ainda: reconciliacao periodica pra pegar eventos que\n// um webhook perdeu (GHL ou CVCRM fora do ar no momento do disparo, por\n// exemplo). Implementar isto de verdade exige chamar o endpoint de listagem\n// \"atualizados desde X\" de cada plataforma (GHL: /contacts com filtro de data;\n// CVCRM: a_partir_data_referencia, igual ao ingestao.py ja usa) e comparar\n// contra integracao.log_sync -- nenhum dos dois esta implementado aqui ainda.\n// Por enquanto este no so registra que rodou, pra ficar visivel no historico\n// de execucoes do n8n que a peca existe mas esta pendente.\nreturn {\n  json: {\n    status: 'nao_implementado',\n    mensagem: 'Reconciliacao periodica ainda e um stub. Ver TODO no workflow.',\n  },\n};\n"
+        "operation": "executeQuery",
+        "query": "SELECT integracao.rodar_reconciliacao_cvcrm() AS linhas_inseridas;",
+        "options": {}
       },
-      "id": "reconciliacao-stub",
-      "name": "Reconciliacao (stub)",
+      "id": "reconciliar-cvcrm",
+      "name": "Reconciliar CVCRM",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-40, 680],
+      "notes": "Sem chamada de API: compara bronze.leads (ja ingerido pelo CVDW) contra o que a integracao ja conhece. Toda a logica esta em integracao.rodar_reconciliacao_cvcrm()."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://services.leadconnectorhq.com/contacts/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Version", "value": "v3" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ locationId: '<PREENCHER: ID da sub-account do GHL>', filters: [{ field: 'dateUpdated', operator: 'gte', value: $now.minus({ hours: 6 }).toISO() }], pageLimit: 100 }) }}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "buscar-ghl-atualizados",
+      "name": "Buscar contatos GHL atualizados",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-40, 840],
+      "notes": "TODO: verificar contra uma chamada real (e' leitura, sem risco de escrita) se o nome do endpoint, o formato do filtro (field/operator/value) e o locationId estao corretos -- a documentacao publica do GHL nao confirmou o corpo exato da requisicao."
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "contacts",
+        "options": {}
+      },
+      "id": "separar-contatos-ghl",
+      "name": "Separar contatos GHL",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [180, 840],
+      "notes": "TODO: confirmar se a resposta real vem em 'contacts' (nome assumido, nao confirmado)."
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": { "reset": false }
+      },
+      "id": "loop-contatos-ghl",
+      "name": "Loop contatos GHL",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [400, 840]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Mesma forma dos eventos de webhook, mas alimentada pela busca de\n// reconciliacao em vez de um POST recebido. TODO: confirmar os nomes de\n// campo reais da resposta do GHL (phone/email/tags e o nome do campo de\n// etapa de funil), igual ao aviso ja deixado em 'Normalizar evento GHL'.\nconst c = $json;\n\nreturn {\n  json: {\n    id_contato_ghl: c.id ?? null,\n    telefone: c.phone ?? null,\n    email: c.email ?? null,\n    campos: {\n      tags: c.tags ?? null,\n      etapa_funil_marketing: c.pipelineStageId ?? null,\n      origem_campanha: c.attributionSource ?? null,\n    },\n  },\n};\n"
+      },
+      "id": "normalizar-ghl-reconciliacao",
+      "name": "Normalizar contato GHL (reconciliacao)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-40, 760]
+      "position": [620, 840]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT integracao.registrar_reconciliacao_ghl($1, $2, $3, $4::jsonb) AS gravou;",
+        "options": {
+          "queryReplacement": "={{ [$json.id_contato_ghl, $json.telefone, $json.email, JSON.stringify($json.campos)] }}"
+        }
+      },
+      "id": "registrar-reconciliacao-ghl",
+      "name": "Registrar reconciliacao GHL",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [840, 840]
     }
   ],
   "connections": {
@@ -348,7 +422,28 @@
       "main": [[{ "node": "Loop fila", "type": "main", "index": 0 }]]
     },
     "Gatilho reconciliacao": {
-      "main": [[{ "node": "Reconciliacao (stub)", "type": "main", "index": 0 }]]
+      "main": [
+        [{ "node": "Reconciliar CVCRM", "type": "main", "index": 0 }],
+        [{ "node": "Buscar contatos GHL atualizados", "type": "main", "index": 0 }]
+      ]
+    },
+    "Buscar contatos GHL atualizados": {
+      "main": [[{ "node": "Separar contatos GHL", "type": "main", "index": 0 }]]
+    },
+    "Separar contatos GHL": {
+      "main": [[{ "node": "Loop contatos GHL", "type": "main", "index": 0 }]]
+    },
+    "Loop contatos GHL": {
+      "main": [
+        [],
+        [{ "node": "Normalizar contato GHL (reconciliacao)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Normalizar contato GHL (reconciliacao)": {
+      "main": [[{ "node": "Registrar reconciliacao GHL", "type": "main", "index": 0 }]]
+    },
+    "Registrar reconciliacao GHL": {
+      "main": [[{ "node": "Loop contatos GHL", "type": "main", "index": 0 }]]
     }
   },
   "active": false,

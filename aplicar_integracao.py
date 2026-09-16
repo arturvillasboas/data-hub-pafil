@@ -17,7 +17,7 @@ INTEGRACAO_SQL = RAIZ / "sql" / "integracao" / "integracao.sql"
 # Tabelas e a view a validar depois de aplicar (devem existir e responder).
 OBJETOS = [
     "depara_contato", "dono_campo", "fila_sync", "log_sync",
-    "v_fila_para_despachar",
+    "v_fila_para_despachar", "v_reconciliacao_cvcrm",
 ]
 
 
