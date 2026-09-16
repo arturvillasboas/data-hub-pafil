@@ -85,3 +85,146 @@ CALCULATE ( COUNTROWS ( fato_atendimentos_cvcrm ), NOT ISBLANK ( fato_atendiment
 
 Média de Mensagens por Atendimento =
 AVERAGE ( fato_atendimentos_cvcrm[quantidade_mensagens] )
+
+// =============================================================================
+// HTML/CSS — mesma linguagem visual das páginas de Blip e Performance (fonte
+// Segoe UI Semibold, azul #003254, cantos de 12-20px, cartão cinza para foto do
+// momento, cartão vermelho para métrica que dói). Pedido explícito do dev:
+// manter o padrão mesmo com volume baixo (10 atendimentos hoje) — a página
+// cresce visualmente junto com o dado, sem precisar refazer o layout depois.
+// =============================================================================
+
+// ---- 1. Faixa de KPIs ----
+// Visual: HTML Content. Stylesheet fica embutido na própria medida (mesmo
+// padrão da faixa de Blip) porque só há um visual HTML nesta página; se um dia
+// esta faixa e a tabela de detalhe dividirem CSS, vale extrair como
+// [CSS Tabela Atendimentos CVCRM] fez com as tabelas de corte do Blip.
+KPIs Atendimento CVCRM HTML =
+
+VAR _total       = [Total Atendimentos]
+VAR _emAberto    = [Atendimentos Em Aberto]
+VAR _finalizados = [Atendimentos Finalizados]
+VAR _cancelados  = [Atendimentos Cancelados]
+VAR _txCancel    = [Taxa de Cancelamento]
+VAR _tempoFinalDias = [Tempo Médio de Finalização (dias)]
+// FORMAT() de um número em branco devolve "" (texto vazio), não BLANK() — um
+// COALESCE em cima do resultado formatado nunca cairia no fallback "--", e
+// mostraria só a unidade solta ("dias", sem número). Por isso o ISBLANK checa
+// a medida numérica ANTES de formatar, não depois.
+VAR _tempoFinal  = IF ( ISBLANK ( _tempoFinalDias ), "--", FORMAT ( _tempoFinalDias, "#,0.0" ) & " dias" )
+VAR _avaliacao   = IF ( [Qtd Avaliações] > 0, FORMAT ( [Avaliação Média], "0.0" ) & "/5", "--" )
+
+VAR _icoInbox = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='22 12 16 12 14 15 10 15 8 12 2 12'></polyline><path d='M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z'></path></svg>"
+VAR _icoAberto = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'></path></svg>"
+VAR _icoCheck  = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M22 11.08V12a10 10 0 1 1-5.93-9.14'></path><polyline points='22 4 12 14.01 9 11.01'></polyline></svg>"
+VAR _icoCancel = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'></circle><line x1='15' y1='9' x2='9' y2='15'></line><line x1='9' y1='9' x2='15' y2='15'></line></svg>"
+VAR _icoQueda  = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='23 18 13.5 8.5 8.5 13.5 1 6'></polyline><polyline points='17 18 23 18 23 12'></polyline></svg>"
+VAR _icoRelogio = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'></circle><polyline points='12 6 12 12 16 14'></polyline></svg>"
+VAR _icoEstrela = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polygon points='12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2'></polygon></svg>"
+
+VAR _css =
+    "<style>" &
+    "html,body{margin:0;padding:0;height:100%;}" &
+    ".k{font-family:'Segoe UI Semibold','Segoe UI',Arial,sans-serif;font-weight:600;display:flex;flex-direction:row;gap:18px;width:100%;height:100%;box-sizing:border-box;}" &
+    ".k .c{position:relative;overflow:hidden;flex:1 1 0;background:#003254;color:#fff;border-radius:20px;padding:24px 28px;box-sizing:border-box;}" &
+    ".k .c.g{background:#6B7280;}" &
+    ".k .c.r{background:#8A1C1C;}" &
+    ".k .ic{position:absolute;top:18px;right:22px;width:50px;height:50px;background:rgba(255,255,255,.15);border-radius:14px;display:flex;align-items:center;justify-content:center;}" &
+    ".k .ic svg{width:28px;height:28px;color:#fff;opacity:.95;}" &
+    ".k .l{font-size:26px;letter-spacing:.02em;opacity:.9;max-width:75%;}" &
+    ".k .v{font-size:56px;margin-top:10px;line-height:1;}" &
+    ".k .s{font-size:24px;opacity:.85;margin-top:8px;}" &
+    "</style>"
+
+RETURN
+    _css &
+    "<div class='k'>" &
+        "<div class='c'><div class='ic'>" & _icoInbox & "</div><div class='l'>TOTAL</div><div class='v'>" &
+            FORMAT ( _total, "#,0" ) & "</div><div class='s'>atendimentos no período</div></div>" &
+
+        "<div class='c g'><div class='ic'>" & _icoAberto & "</div><div class='l'>EM ABERTO</div><div class='v'>" &
+            FORMAT ( _emAberto, "#,0" ) & "</div><div class='s'>foto do momento</div></div>" &
+
+        "<div class='c'><div class='ic'>" & _icoCheck & "</div><div class='l'>FINALIZADOS</div><div class='v'>" &
+            FORMAT ( _finalizados, "#,0" ) & "</div><div class='s'>atendimentos concluídos</div></div>" &
+
+        "<div class='c r'><div class='ic'>" & _icoCancel & "</div><div class='l'>CANCELADOS</div><div class='v'>" &
+            FORMAT ( _cancelados, "#,0" ) & "</div><div class='s'>atendimentos cancelados</div></div>" &
+
+        "<div class='c r'><div class='ic'>" & _icoQueda & "</div><div class='l'>TX CANCELAMENTO</div><div class='v'>" &
+            FORMAT ( _txCancel, "0.0%" ) & "</div><div class='s'>sobre o total</div></div>" &
+
+        "<div class='c'><div class='ic'>" & _icoRelogio & "</div><div class='l'>TEMPO DE FINALIZAÇÃO</div><div class='v'>" &
+            _tempoFinal & "</div><div class='s'>média, da abertura ao fechamento</div></div>" &
+
+        "<div class='c'><div class='ic'>" & _icoEstrela & "</div><div class='l'>AVALIAÇÃO</div><div class='v'>" &
+            _avaliacao & "</div><div class='s'>" & FORMAT ( [Qtd Avaliações], "#,0" ) & " atendimento(s) avaliado(s)</div></div>" &
+    "</div>"
+
+// ---- 2. Tabela de detalhe ----
+// Visual: HTML Content. Estático (CONCATENATEX), sem clique — o mesmo desenho
+// de "CSS Tabela Atendimento" no MEDIDAS_ATENDIMENTO.dax (Blip), não o desenho
+// "(linhas)" com Granularity, porque aqui não há mais nada na página para um
+// clique cruzar-filtrar. Se isso mudar (ex.: entrar um gráfico ao lado), migrar
+// para o padrão de grid com Granularity, igual ao Blip.
+CSS Tabela Atendimentos CVCRM =
+    "<style>" &
+    "html,body{margin:0;padding:0;height:100%;}" &
+    ".t{font-family:'Segoe UI','Segoe UI Semibold',Arial,sans-serif;width:100%;height:100%;box-sizing:border-box;overflow:auto;}" &
+    ".t table{width:100%;border-collapse:separate;border-spacing:0;font-size:24px;color:#1F2937;}" &
+    ".t thead th{position:sticky;top:0;z-index:1;background:#003254;color:#fff;font-weight:600;font-size:20px;letter-spacing:.02em;text-align:left;padding:14px 18px;white-space:nowrap;}" &
+    ".t thead th:first-child{border-radius:12px 0 0 0;}" &
+    ".t thead th:last-child{border-radius:0 12px 0 0;}" &
+    ".t tbody td{padding:12px 18px;text-align:left;border-bottom:1px solid #E5E7EB;white-space:nowrap;}" &
+    ".t tbody tr:nth-child(even) td{background:#F3F6F8;}" &
+    ".t tbody tr:hover td{background:#E8EEF2;}" &
+    ".t .sit{display:inline-block;padding:3px 12px;border-radius:999px;font-size:20px;font-weight:600;color:#fff;}" &
+    ".t .sit-cancelado{background:#8A1C1C;}" &
+    ".t .sit-finalizado{background:#1B6B3A;}" &
+    ".t .sit-outra{background:#6B7280;}" &
+    ".t .vazio{padding:28px 18px;color:#6B7280;font-size:24px;}" &
+    "</style>"
+
+Tabela Atendimentos CVCRM HTML =
+VAR _base =
+    FILTER (
+        ADDCOLUMNS (
+            fato_atendimentos_cvcrm,
+            "@data",   FORMAT ( fato_atendimentos_cvcrm[data_cad], "DD/MM/YYYY" ),
+            "@sit",    SWITCH (
+                           fato_atendimentos_cvcrm[situacao],
+                           "Cancelado",  "<span class='sit sit-cancelado'>Cancelado</span>",
+                           "Finalizado", "<span class='sit sit-finalizado'>Finalizado</span>",
+                           "<span class='sit sit-outra'>" & fato_atendimentos_cvcrm[situacao] & "</span>"
+                       ),
+            -- mesmo cuidado da faixa de KPIs: checar ISBLANK antes de formatar,
+            -- não depois (FORMAT de número em branco devolve "", não BLANK()).
+            "@aval",   IF ( ISBLANK ( fato_atendimentos_cvcrm[avaliacao] ), "--", FORMAT ( fato_atendimentos_cvcrm[avaliacao], "0.0" ) )
+        ),
+        TRUE ()
+    )
+VAR _linhas =
+    CONCATENATEX (
+        _base,
+        "<tr><td>" & fato_atendimentos_cvcrm[protocolo] & "</td><td>" & [@data] & "</td><td>"
+            & SUBSTITUTE ( SUBSTITUTE ( COALESCE ( fato_atendimentos_cvcrm[empreendimento], "" ), "&", "&amp;" ), "<", "&lt;" ) & "</td><td>"
+            & SUBSTITUTE ( SUBSTITUTE ( COALESCE ( fato_atendimentos_cvcrm[cliente], "" ), "&", "&amp;" ), "<", "&lt;" ) & "</td><td>"
+            & SUBSTITUTE ( SUBSTITUTE ( COALESCE ( fato_atendimentos_cvcrm[assunto], "" ), "&", "&amp;" ), "<", "&lt;" ) & "</td><td>"
+            & [@sit] & "</td><td>"
+            & COALESCE ( fato_atendimentos_cvcrm[equipe], "--" ) & "</td><td>"
+            & [@aval] & "</td></tr>",
+        "",
+        fato_atendimentos_cvcrm[data_cad], DESC
+    )
+RETURN
+    [CSS Tabela Atendimentos CVCRM] &
+    "<div class='t'>" &
+    IF (
+        ISBLANK ( _linhas ),
+        "<div class='vazio'>Nenhum atendimento no período selecionado.</div>",
+        "<table><thead><tr>"
+            & "<th>PROTOCOLO</th><th>DATA</th><th>EMPREENDIMENTO</th><th>CLIENTE</th>"
+            & "<th>ASSUNTO</th><th>SITUAÇÃO</th><th>EQUIPE</th><th>AVALIAÇÃO</th>"
+            & "</tr></thead><tbody>" & _linhas & "</tbody></table>"
+    ) &
+    "</div>"
