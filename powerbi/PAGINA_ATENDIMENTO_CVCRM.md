@@ -76,28 +76,41 @@ indicar como o ticket foi aberto (painel do cliente vs. gestor), não canal de
 marketing — não tem de-para ainda e não deve ser confundido com a origem/mídia
 de leads (domínio diferente, ver `gold.dim_origem`).
 
-## 3. Tabela de detalhe
+## 3. Tabela de detalhe (com clique)
 
-**Visual:** HTML Content. **Medida:** `[Tabela Atendimentos CVCRM HTML]`
-(o Stylesheet do CSS já vem embutido na própria medida — não precisa
-configurar "Formatar > Stylesheet" separado, ao contrário do padrão das
-tabelas de corte do Blip, porque aqui só existe este um visual HTML na
-página). Colunas: protocolo, data, empreendimento, cliente, assunto,
-situação (com selo colorido: vermelho para Cancelado, verde para
-Finalizado, cinza para as demais), equipe e avaliação. Ordenada por
-`data_cad` decrescente, direto na medida — não depende de configuração de
-ordenação do visual.
+**Visual:** HTML Content, configurado para o clique numa linha filtrar o
+resto da página (igual à tabela do Blip) — o que exige o campo Granularity
+preenchido, e não só Values. Sem Granularity, o visual recebe o HTML inteiro
+de uma vez, como um texto único, e clicar não faz nada; é a diferença entre
+esta versão e a tabela estática que veio antes dela.
 
-**Sem clique:** é a versão estática (`CONCATENATEX`), igual à `CSS Tabela
-Atendimento` do Blip, e não a versão "(linhas)" com `Granularity` que filtra
-o resto da página ao clicar — aqui não há mais nada na página pra cruzar-
-filtrar ainda. Se um dia entrar um gráfico ao lado da tabela, migrar para o
-padrão de grid com `Granularity` (ver comentário completo em
-`MEDIDAS_ATENDIMENTO.dax`, seção "Tabelas com clique").
+Configuração do visual:
+
+| Campo | Valor |
+|---|---|
+| Values | `[Linha Atendimento CVCRM HTML]` |
+| Granularity | `fato_atendimentos_cvcrm[id_atendimento]` |
+| Tooltips | `[Data do Atendimento CVCRM (ordenação)]` |
+| Classificar por | Data do Atendimento CVCRM (ordenação), decrescente |
+| Formatar > Stylesheet > fx | `[CSS Tabela Atendimentos CVCRM]` |
+| Formatar > Cross-filtering | Ativar, Transparency 0 |
+| Formatar > No data message | "Nenhum atendimento no período selecionado." |
+
+Colunas: protocolo, data, empreendimento, cliente, assunto, situação (com
+selo colorido: vermelho para Cancelado, verde para Finalizado, cinza para as
+demais), equipe e avaliação.
+
+**Por que Granularity é o campo `id_atendimento`, e não `protocolo`:** é a
+chave técnica do grão do fato — uma linha da tabela é sempre um atendimento,
+nunca dois com o mesmo id, então o clique nunca ambiguiza qual registro foi
+selecionado. `protocolo` até funcionaria hoje (também é único), mas
+`id_atendimento` é a chave de verdade do modelo.
 
 Com 10 linhas, a tabela de detalhe carrega mais peso analítico do que os
 cartões — é nela que a gestão consegue de fato ler cada ticket, o que os
-agregados ainda não sustentam sozinhos.
+agregados ainda não sustentam sozinhos. E com o clique ativo, selecionar uma
+linha já filtra a faixa de KPIs pra aquele atendimento específico — útil pra
+conferir um caso pontual sem sair da página.
 
 ## Pendências conhecidas
 

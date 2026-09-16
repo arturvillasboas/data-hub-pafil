@@ -161,70 +161,86 @@ RETURN
             _avaliacao & "</div><div class='s'>" & FORMAT ( [Qtd Avaliações], "#,0" ) & " atendimento(s) avaliado(s)</div></div>" &
     "</div>"
 
-// ---- 2. Tabela de detalhe ----
-// Visual: HTML Content. Estático (CONCATENATEX), sem clique — o mesmo desenho
-// de "CSS Tabela Atendimento" no MEDIDAS_ATENDIMENTO.dax (Blip), não o desenho
-// "(linhas)" com Granularity, porque aqui não há mais nada na página para um
-// clique cruzar-filtrar. Se isso mudar (ex.: entrar um gráfico ao lado), migrar
-// para o padrão de grid com Granularity, igual ao Blip.
+// ---- 2. Tabela de detalhe, com clique ----
+// Visual: HTML Content, com clique filtrando o resto da página — mesmo desenho
+// da seção "Tabelas com clique" de MEDIDAS_ATENDIMENTO.dax (Blip): o visual só
+// ganha contexto de linha (e portanto cross-filtering) quando o campo
+// Granularity recebe uma coluna, e passa a chamar a medida de Values UMA VEZ
+// POR LINHA do dataset, em vez de uma vez só com um texto gigante. Ver o
+// comentário completo lá para o porquê de cada detalhe do CSS abaixo (grid em
+// vez de <table>, cabeçalho/legenda embutidos em cada linha via :first-child /
+// :last-child, etc.) — aqui só o que muda para este fato.
+//
+// Diferença em relação às tabelas de corte do Blip: lá cada linha é um GRUPO
+// (por atendente, por fila), com barra de proporção sobre a contagem. Aqui
+// cada linha já É o registro (grão do fato = 1 atendimento), então não há
+// agrupamento nem barra — é a mesma ideia de "Linha X HTML" do Blip, sem o
+// _max/_pct.
+//
+// Configuração do visual:
+//   Values          -> [Linha Atendimento CVCRM HTML]
+//   Granularity     -> fato_atendimentos_cvcrm[id_atendimento]
+//   Tooltips        -> [Data do Atendimento CVCRM (ordenação)]
+//   Classificar por -> Data do Atendimento CVCRM (ordenação), decrescente
+//   Formatar -> Stylesheet -> fx -> [CSS Tabela Atendimentos CVCRM]
+//   Formatar -> Cross-filtering -> Ativar; Transparency 0 (o CSS cuida do
+//                .unselected via opacidade; a do visual não funciona em cima
+//                de um elemento display:contents)
+//   Formatar -> No data message -> "Nenhum atendimento no período selecionado."
 CSS Tabela Atendimentos CVCRM =
-    "<style>" &
-    "html,body{margin:0;padding:0;height:100%;}" &
-    ".t{font-family:'Segoe UI','Segoe UI Semibold',Arial,sans-serif;width:100%;height:100%;box-sizing:border-box;overflow:auto;}" &
-    ".t table{width:100%;border-collapse:separate;border-spacing:0;font-size:24px;color:#1F2937;}" &
-    ".t thead th{position:sticky;top:0;z-index:1;background:#003254;color:#fff;font-weight:600;font-size:20px;letter-spacing:.02em;text-align:left;padding:14px 18px;white-space:nowrap;}" &
-    ".t thead th:first-child{border-radius:12px 0 0 0;}" &
-    ".t thead th:last-child{border-radius:0 12px 0 0;}" &
-    ".t tbody td{padding:12px 18px;text-align:left;border-bottom:1px solid #E5E7EB;white-space:nowrap;}" &
-    ".t tbody tr:nth-child(even) td{background:#F3F6F8;}" &
-    ".t tbody tr:hover td{background:#E8EEF2;}" &
-    ".t .sit{display:inline-block;padding:3px 12px;border-radius:999px;font-size:20px;font-weight:600;color:#fff;}" &
-    ".t .sit-cancelado{background:#8A1C1C;}" &
-    ".t .sit-finalizado{background:#1B6B3A;}" &
-    ".t .sit-outra{background:#6B7280;}" &
-    ".t .vazio{padding:28px 18px;color:#6B7280;font-size:24px;}" &
-    "</style>"
+    "#htmlContent{display:grid;grid-template-columns:repeat(8,auto);align-content:start;font-family:'Segoe UI','Segoe UI Semibold',Arial,sans-serif;font-size:30px;color:#1F2937;}" &
+    ".htmlViewerEntry,.htmlViewerEntry>div,.hdr{display:contents;}" &
+    ".htmlViewerEntry:not(:first-child) .hdr{display:none;}" &
+    ".th{position:sticky;top:0;z-index:1;background:#003254;color:#fff;font-weight:600;font-size:26px;letter-spacing:.02em;text-align:left;padding:14px 18px;white-space:nowrap;overflow:hidden;}" &
+    ".th:first-child{border-radius:12px 0 0 0;}" &
+    ".th:last-child{border-radius:0 12px 0 0;}" &
+    ".td{padding:12px 18px;text-align:left;border-bottom:1px solid #E5E7EB;white-space:nowrap;overflow:hidden;cursor:pointer;background-color:#fff;}" &
+    ".htmlViewerEntry:nth-child(even) .td{background-color:#F3F6F8;}" &
+    ".htmlViewerEntry:hover .td{background-color:#E8EEF2;}" &
+    ".htmlViewerEntry.unselected .td{opacity:.35;}" &
+    ".sit{display:inline-block;padding:3px 12px;border-radius:999px;font-size:24px;font-weight:600;color:#fff;}" &
+    ".sit-cancelado{background:#8A1C1C;}" &
+    ".sit-finalizado{background:#1B6B3A;}" &
+    ".sit-outra{background:#6B7280;}"
 
-Tabela Atendimentos CVCRM HTML =
-VAR _base =
-    FILTER (
-        ADDCOLUMNS (
-            fato_atendimentos_cvcrm,
-            "@data",   FORMAT ( fato_atendimentos_cvcrm[data_cad], "DD/MM/YYYY" ),
-            "@sit",    SWITCH (
-                           fato_atendimentos_cvcrm[situacao],
-                           "Cancelado",  "<span class='sit sit-cancelado'>Cancelado</span>",
-                           "Finalizado", "<span class='sit sit-finalizado'>Finalizado</span>",
-                           "<span class='sit sit-outra'>" & fato_atendimentos_cvcrm[situacao] & "</span>"
-                       ),
-            -- mesmo cuidado da faixa de KPIs: checar ISBLANK antes de formatar,
-            -- não depois (FORMAT de número em branco devolve "", não BLANK()).
-            "@aval",   IF ( ISBLANK ( fato_atendimentos_cvcrm[avaliacao] ), "--", FORMAT ( fato_atendimentos_cvcrm[avaliacao], "0.0" ) )
-        ),
-        TRUE ()
-    )
-VAR _linhas =
-    CONCATENATEX (
-        _base,
-        "<tr><td>" & fato_atendimentos_cvcrm[protocolo] & "</td><td>" & [@data] & "</td><td>"
-            & SUBSTITUTE ( SUBSTITUTE ( COALESCE ( fato_atendimentos_cvcrm[empreendimento], "" ), "&", "&amp;" ), "<", "&lt;" ) & "</td><td>"
-            & SUBSTITUTE ( SUBSTITUTE ( COALESCE ( fato_atendimentos_cvcrm[cliente], "" ), "&", "&amp;" ), "<", "&lt;" ) & "</td><td>"
-            & SUBSTITUTE ( SUBSTITUTE ( COALESCE ( fato_atendimentos_cvcrm[assunto], "" ), "&", "&amp;" ), "<", "&lt;" ) & "</td><td>"
-            & [@sit] & "</td><td>"
-            & COALESCE ( fato_atendimentos_cvcrm[equipe], "--" ) & "</td><td>"
-            & [@aval] & "</td></tr>",
-        "",
-        fato_atendimentos_cvcrm[data_cad], DESC
+// Medida "âncora" só para o campo Tooltips do visual (precisa ser uma medida
+// para virar opção em "Classificar por" — não dá pra arrastar a coluna direto
+// pra lá). Devolve a própria data da linha corrente.
+Data do Atendimento CVCRM (ordenação) =
+SELECTEDVALUE ( fato_atendimentos_cvcrm[data_cad] )
+
+Linha Atendimento CVCRM HTML =
+VAR _id = SELECTEDVALUE ( fato_atendimentos_cvcrm[id_atendimento] )
+VAR _protocolo = SELECTEDVALUE ( fato_atendimentos_cvcrm[protocolo] )
+VAR _data = FORMAT ( SELECTEDVALUE ( fato_atendimentos_cvcrm[data_cad] ), "DD/MM/YYYY" )
+VAR _empreendimento = SUBSTITUTE ( SUBSTITUTE ( COALESCE ( SELECTEDVALUE ( fato_atendimentos_cvcrm[empreendimento] ), "" ), "&", "&amp;" ), "<", "&lt;" )
+VAR _cliente = SUBSTITUTE ( SUBSTITUTE ( COALESCE ( SELECTEDVALUE ( fato_atendimentos_cvcrm[cliente] ), "" ), "&", "&amp;" ), "<", "&lt;" )
+VAR _assunto = SUBSTITUTE ( SUBSTITUTE ( COALESCE ( SELECTEDVALUE ( fato_atendimentos_cvcrm[assunto] ), "" ), "&", "&amp;" ), "<", "&lt;" )
+VAR _equipe = COALESCE ( SELECTEDVALUE ( fato_atendimentos_cvcrm[equipe] ), "--" )
+VAR _avaliacaoNum = SELECTEDVALUE ( fato_atendimentos_cvcrm[avaliacao] )
+-- mesmo cuidado da faixa de KPIs: checar ISBLANK antes de formatar, não
+-- depois (FORMAT de número em branco devolve "", não BLANK()).
+VAR _avaliacao = IF ( ISBLANK ( _avaliacaoNum ), "--", FORMAT ( _avaliacaoNum, "0.0" ) )
+VAR _sit =
+    SWITCH (
+        SELECTEDVALUE ( fato_atendimentos_cvcrm[situacao] ),
+        "Cancelado",  "<span class='sit sit-cancelado'>Cancelado</span>",
+        "Finalizado", "<span class='sit sit-finalizado'>Finalizado</span>",
+        "<span class='sit sit-outra'>" & SELECTEDVALUE ( fato_atendimentos_cvcrm[situacao] ) & "</span>"
     )
 RETURN
-    [CSS Tabela Atendimentos CVCRM] &
-    "<div class='t'>" &
     IF (
-        ISBLANK ( _linhas ),
-        "<div class='vazio'>Nenhum atendimento no período selecionado.</div>",
-        "<table><thead><tr>"
-            & "<th>PROTOCOLO</th><th>DATA</th><th>EMPREENDIMENTO</th><th>CLIENTE</th>"
-            & "<th>ASSUNTO</th><th>SITUAÇÃO</th><th>EQUIPE</th><th>AVALIAÇÃO</th>"
-            & "</tr></thead><tbody>" & _linhas & "</tbody></table>"
-    ) &
-    "</div>"
+        NOT ISBLANK ( _id ),
+        "<div class='hdr'><div class='th'>PROTOCOLO</div><div class='th'>DATA</div>"
+            & "<div class='th'>EMPREENDIMENTO</div><div class='th'>CLIENTE</div>"
+            & "<div class='th'>ASSUNTO</div><div class='th'>SITUAÇÃO</div>"
+            & "<div class='th'>EQUIPE</div><div class='th'>AVALIAÇÃO</div></div>"
+            & "<div class='td'>" & _protocolo & "</div>"
+            & "<div class='td'>" & _data & "</div>"
+            & "<div class='td'>" & _empreendimento & "</div>"
+            & "<div class='td'>" & _cliente & "</div>"
+            & "<div class='td'>" & _assunto & "</div>"
+            & "<div class='td'>" & _sit & "</div>"
+            & "<div class='td'>" & _equipe & "</div>"
+            & "<div class='td'>" & _avaliacao & "</div>"
+    )
