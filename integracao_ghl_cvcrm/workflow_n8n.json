@@ -17,7 +17,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// TODO: confirmar contra um payload real de webhook do GHL antes de ligar isto\n// em producao. A forma abaixo segue o formato mais comum de webhook de\n// contato/oportunidade do GoHighLevel, mas o Workflow que dispara pode variar\n// o formato. Nenhuma decisao de negocio acontece aqui: so molda o payload cru\n// no formato que integracao.fila_sync espera. Casamento de contato, dono do\n// campo e deteccao de eco ficam todos em SQL (ver sql/integracao/integracao.sql).\nconst body = $json.body ?? $json;\n\nreturn {\n  json: {\n    origem: 'ghl',\n    tipo_evento: body.type ?? 'desconhecido',\n    telefone_bruto: body.phone ?? body.contact?.phone ?? null,\n    email_bruto: body.email ?? body.contact?.email ?? null,\n    cpf_bruto: null, // GHL normalmente nao guarda CPF; ajustar se houver custom field\n    campos: {\n      id_contato_ghl: body.contactId ?? body.contact?.id ?? null,\n      tags: body.tags ?? body.contact?.tags ?? null,\n      etapa_funil_marketing: body.pipelineStageId ?? null,\n      origem_campanha: body.attributionSource ?? null,\n    },\n  },\n};\n"
+        "jsCode": "// TODO: confirmar contra um payload real de webhook do GHL antes de ligar isto\n// em producao (o formato de POST /contacts/search foi validado em 16/set/2026,\n// mas um Workflow de webhook do GHL pode empacotar o payload diferente).\n// Nenhuma decisao de negocio acontece aqui: so molda o payload cru no formato\n// que integracao.fila_sync espera. Casamento de contato, dono do campo e\n// deteccao de eco ficam todos em SQL (ver sql/integracao/integracao.sql).\n//\n// NAO tem etapa_funil_marketing aqui de proposito: confirmado em 16/set/2026\n// que pipeline/etapa pertence a Oportunidade no GHL, nao ao Contato -- nao\n// existe esse campo pra ler, nem de webhook nem de busca.\nconst body = $json.body ?? $json;\n\nreturn {\n  json: {\n    origem: 'ghl',\n    tipo_evento: body.type ?? 'desconhecido',\n    telefone_bruto: body.phone ?? body.contact?.phone ?? null,\n    email_bruto: body.email ?? body.contact?.email ?? null,\n    cpf_bruto: null, // GHL normalmente nao guarda CPF; ajustar se houver custom field\n    campos: {\n      id_contato_ghl: body.contactId ?? body.contact?.id ?? null,\n      tags: body.tags ?? body.contact?.tags ?? null,\n      origem_campanha: body.attributionSource ?? null,\n    },\n  },\n};\n"
       },
       "id": "normalizar-ghl",
       "name": "Normalizar evento GHL",
@@ -191,7 +191,7 @@
       "maxTries": 3,
       "waitBetweenTries": 5000,
       "onError": "continueErrorOutput",
-      "notes": "Confirmado via docs oficiais (16/set/2026): POST /api/v1/comercial/leads (o /api/cvio/lead esta descontinuado), auth por headers email+token (credencial generica cobre 'token'; 'email' entra como header parameter acima, mesmo padrao do cvdw/api.py), corpo exige idlead + permitir_alteracao=true. GAP AINDA ABERTO: os campos em campos_permitidos (tags, etapa_funil_marketing, origem_campanha) sao nomes do GHL, nao nomes de campo reais do lead no CVCRM -- falta decidir/confirmar pra qual campo real do CVCRM cada um mapeia (ou se algum desses simplesmente nao tem correspondente e deve ficar de fora)."
+      "notes": "Confirmado via docs oficiais (16/set/2026): POST /api/v1/comercial/leads (o /api/cvio/lead esta descontinuado), auth por headers email+token (credencial generica cobre 'token'; 'email' entra como header parameter acima, mesmo padrao do cvdw/api.py), corpo exige idlead + permitir_alteracao=true. GAP AINDA ABERTO: os campos em campos_permitidos (tags, origem_campanha) sao nomes do GHL, nao nomes de campo reais do lead no CVCRM -- falta decidir/confirmar pra qual campo real do CVCRM cada um mapeia (ou se algum desses simplesmente nao tem correspondente e deve ficar de fora)."
     },
     {
       "parameters": {
@@ -302,7 +302,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ locationId: '<PREENCHER: ID da sub-account do GHL>', filters: [{ field: 'dateUpdated', operator: 'range', value: { gte: $now.minus({ hours: 6 }).toISO() } }], pageLimit: 100 }) }}",
+        "jsonBody": "={{ JSON.stringify({ locationId: '<PREENCHER: ID da sub-account do GHL>', filters: [{ field: 'dateUpdated', operator: 'range', value: { gte: $now.minus({ days: 30 }).toISO() } }], pageLimit: 100 }) }}",
         "options": { "timeout": 30000 }
       },
       "id": "buscar-ghl-atualizados",
@@ -337,7 +337,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Mesma forma dos eventos de webhook, mas alimentada pela busca de\n// reconciliacao em vez de um POST recebido. TODO: confirmar os nomes de\n// campo reais da resposta do GHL (phone/email/tags e o nome do campo de\n// etapa de funil), igual ao aviso ja deixado em 'Normalizar evento GHL'.\nconst c = $json;\n\nreturn {\n  json: {\n    id_contato_ghl: c.id ?? null,\n    telefone: c.phone ?? null,\n    email: c.email ?? null,\n    campos: {\n      tags: c.tags ?? null,\n      etapa_funil_marketing: c.pipelineStageId ?? null,\n      origem_campanha: c.attributionSource ?? null,\n    },\n  },\n};\n"
+        "jsCode": "// Mesma forma dos eventos de webhook, mas alimentada pela busca de\n// reconciliacao em vez de um POST recebido. Campos confirmados contra a API\n// real do GHL em 16/set/2026 (id, phone, email, tags existem e vem do jeito\n// esperado; etapa_funil_marketing foi removido, pipeline pertence a\n// Oportunidade, nao a Contato -- ver comentario em integracao.dono_campo).\nconst c = $json;\n\nreturn {\n  json: {\n    id_contato_ghl: c.id ?? null,\n    telefone: c.phone ?? null,\n    email: c.email ?? null,\n    campos: {\n      tags: c.tags ?? null,\n      origem_campanha: c.attributionSource ?? null,\n    },\n  },\n};\n"
       },
       "id": "normalizar-ghl-reconciliacao",
       "name": "Normalizar contato GHL (reconciliacao)",

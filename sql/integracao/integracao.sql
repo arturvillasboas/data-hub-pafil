@@ -46,15 +46,24 @@ CREATE TABLE IF NOT EXISTS integracao.dono_campo (
 );
 INSERT INTO integracao.dono_campo (campo, dono, descricao) VALUES
     ('tags',                     'ghl',   'Tags de marketing/nutrição'),
-    ('etapa_funil_marketing',    'ghl',   'Etapa do funil de marketing'),
-    ('origem_campanha',          'ghl',   'UTM / origem de campanha'),
+    ('origem_campanha',          'ghl',   'attributionSource do contato (objeto, ainda sem sub-campo definido)'),
     ('situacao_lead',            'cvcrm', 'Situação comercial do lead no CRM'),
     ('corretor_responsavel',     'cvcrm', 'Corretor responsável pelo atendimento'),
     ('empreendimento_interesse', 'cvcrm', 'Empreendimento de interesse')
 ON CONFLICT (campo) DO NOTHING;
--- Ajustar essa lista é o primeiro passo antes de ligar o fluxo de verdade: os
--- nomes de campo aqui são um ponto de partida razoável, não confirmados contra
--- o payload real de nenhuma das duas plataformas ainda.
+-- 'tags' e 'email'/'phone' confirmados contra a API real do GHL em 16/set/2026
+-- (ver integracao_ghl_cvcrm/workflow_n8n.json). 'etapa_funil_marketing' foi
+-- removido de propósito: pipeline/etapa pertence à Oportunidade no GHL, não ao
+-- Contato, e a busca de contatos nunca traria isso -- precisaria de uma chamada
+-- separada à API de Oportunidades, fora do escopo construído até aqui.
+-- 'origem_campanha' aponta pra um campo real (attributionSource existe), mas
+-- ainda não foi visto populado em nenhum contato de teste, então o sub-campo
+-- exato (ex.: utmSource, campaign) continua sem confirmação.
+--
+-- Do lado CVCRM, nenhum dos três campos (situacao_lead/corretor_responsavel/
+-- empreendimento_interesse) foi confirmado contra a API de escrita ainda --
+-- só existem como colunas de leitura em bronze.leads (situacao, corretor,
+-- empreendimento_ultimo). Continua sendo a lacuna registrada na issue #26.
 
 -- Fila (outbox) de eventos recebidos por webhook, pendentes de decisão/despacho.
 CREATE TABLE IF NOT EXISTS integracao.fila_sync (
