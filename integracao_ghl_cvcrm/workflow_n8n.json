@@ -168,12 +168,18 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://pafil.cvcrm.com.br/api/cvio/lead",
+        "url": "https://pafil.cvcrm.com.br/api/v1/comercial/leads",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "email", "value": "<CVCRM_EMAIL, mesma credencial ja usada pelo cvdw/api.py>" }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ idlead: $json.idlead_cvcrm, ...$json.campos_permitidos }) }}",
+        "jsonBody": "={{ JSON.stringify({ idlead: $json.idlead_cvcrm, permitir_alteracao: true, ...$json.campos_permitidos }) }}",
         "options": { "timeout": 30000 }
       },
       "id": "enviar-cvcrm",
@@ -185,7 +191,7 @@
       "maxTries": 3,
       "waitBetweenTries": 5000,
       "onError": "continueErrorOutput",
-      "notes": "TODO: confirmar o endpoint e o verbo exatos para ATUALIZAR um lead existente (o /api/cvio/lead documentado ate agora e o de criacao)."
+      "notes": "Confirmado via docs oficiais (16/set/2026): POST /api/v1/comercial/leads (o /api/cvio/lead esta descontinuado), auth por headers email+token (credencial generica cobre 'token'; 'email' entra como header parameter acima, mesmo padrao do cvdw/api.py), corpo exige idlead + permitir_alteracao=true. GAP AINDA ABERTO: os campos em campos_permitidos (tags, etapa_funil_marketing, origem_campanha) sao nomes do GHL, nao nomes de campo reais do lead no CVCRM -- falta decidir/confirmar pra qual campo real do CVCRM cada um mapeia (ou se algum desses simplesmente nao tem correspondente e deve ficar de fora)."
     },
     {
       "parameters": {
@@ -193,6 +199,12 @@
         "url": "=https://services.leadconnectorhq.com/contacts/{{ $json.id_contato_ghl }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Version", "value": "v3" }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.campos_permitidos) }}",
@@ -207,7 +219,7 @@
       "maxTries": 3,
       "waitBetweenTries": 5000,
       "onError": "continueErrorOutput",
-      "notes": "TODO: confirmar o formato exato do body na API v2 do GHL (Private Integration da sub-account)."
+      "notes": "Confirmado via docs oficiais (16/set/2026): PUT /contacts/:contactId, header Version: v3 (ja incluido acima), autenticacao Bearer via credencial generica. GAP AINDA ABERTO: campos_permitidos (situacao_lead, corretor_responsavel, empreendimento_interesse) sao nomes do CVCRM -- o GHL nao tem campo nativo com esses nomes, teriam que virar Custom Fields configurados na sub-account do GHL (com o ID de cada custom field, nao o nome), e isso ainda nao foi feito nem mapeado."
     },
     {
       "parameters": {
