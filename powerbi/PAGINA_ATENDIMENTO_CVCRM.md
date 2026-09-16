@@ -43,8 +43,15 @@ não dá erro nenhum, só fica tudo em branco).
 │  2. Slicers: Empreendimento · Situação · Assunto · Prioridade        │
 ├──────────────────────────────────────────────────────────────────────┤
 │  3. Tabela de detalhe (HTML Content, 1 linha por atendimento)        │
+├──────────────────────────────────────────────────────────────────────┤
+│  4. Esteira (HTML Content, kanban — réplica da tela nativa do CVCRM) │
 └──────────────────────────────────────────────────────────────────────┘
 ```
+
+A esteira (seção 4) é opcional e pode virar uma página separada se a página
+principal ficar muito cheia — ela replica uma tela inteira do CVCRM
+("Andamento dos atendimentos"), então tem uma pegada visual própria, diferente
+da faixa de KPIs + tabela.
 
 ## 1. Faixa de KPIs
 
@@ -111,6 +118,44 @@ cartões — é nela que a gestão consegue de fato ler cada ticket, o que os
 agregados ainda não sustentam sozinhos. E com o clique ativo, selecionar uma
 linha já filtra a faixa de KPIs pra aquele atendimento específico — útil pra
 conferir um caso pontual sem sair da página.
+
+## 4. Esteira (kanban)
+
+**Visual:** HTML Content, sem Granularity (é um board inteiro numa medida só,
+igual à faixa de KPIs — não tem clique nesta primeira versão). **Medida:**
+`[Esteira Atendimentos CVCRM HTML]`. O Stylesheet já vem embutido na própria
+medida.
+
+Réplica da tela nativa "Andamento dos atendimentos" do CVCRM: 6 colunas fixas
+(Novo Atendimento, Triagem, Time Cobrança, Time Atendimento, Time Crédito, Em
+Atendimento), cabeçalho azul na primeira e vermelho nas demais, e um cartão
+por atendimento com protocolo, cliente (ícone de pessoa), bloco/unidade +
+empreendimento (ícone de local), assunto/subassunto (ícone de balão) e um
+rodapé "+ INFORMAÇÕES". Cancelado e Finalizado ficam de fora — a tela nativa
+mostra o que está em andamento, não o histórico encerrado.
+
+**⚠️ Atenção antes de confiar nesta seção:** as 6 colunas são valores
+esperados do campo `fato_atendimentos_cvcrm[situacao]`, só que **só um deles
+foi confirmado de verdade** contra o banco — "Em Atendimento", que já existe
+num dos 10 registros de hoje. Os outros cinco nomes (Novo Atendimento,
+Triagem, Time Cobrança, Time Atendimento, Time Crédito) foram copiados da
+captura de tela que você mandou, mas nunca apareceram nos dados: é uma aposta
+de que são valores de `situacao`, não uma confirmação. Se algum atendimento
+passar por uma dessas etapas e a coluna dele continuar vazia (ficar preso na
+coluna errada, ou sumir), o texto exato provavelmente diverge — corrija a
+grafia direto na variável `_colunas`, no topo de
+`[Esteira Atendimentos CVCRM HTML]` (é uma tabela de 6 linhas, `situacao` +
+tema de cor). É possível também que "Time Cobrança"/"Time Atendimento"/"Time
+Crédito" não sejam 3 valores de `situacao`, e sim uma combinação de situação
+com a equipe (`fato_atendimentos_cvcrm[equipe]`) — sem um atendimento real
+nessas etapas pra conferir, não dá pra saber qual das duas é.
+
+**Sem clique nesta versão:** diferente da tabela de detalhe (seção 3), o
+cartão aqui não filtra a página ao clicar — a interatividade pedida foi
+fidelidade visual à tela do CVCRM, não cross-filtering. Se quiser esse
+comportamento depois, o caminho é o mesmo padrão de Granularity da seção 3,
+só que fica mais complexo porque a esteira tem dois níveis (coluna dentro de
+board, cartão dentro de coluna) contra um nível só da tabela.
 
 ## Pendências conhecidas
 

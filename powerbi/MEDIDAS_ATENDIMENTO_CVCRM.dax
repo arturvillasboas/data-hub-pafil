@@ -244,3 +244,139 @@ RETURN
             & "<div class='td'>" & _equipe & "</div>"
             & "<div class='td'>" & _avaliacao & "</div>"
     )
+
+// =============================================================================
+// ---- 3. Esteira (kanban), réplica da tela nativa "Andamento dos atendimentos"
+//
+// Pedido do dev (16/set/2026): replicar essa tela do próprio CVCRM, o mais
+// fiel possível à captura de tela — colunas por etapa do fluxo, cartão por
+// atendimento com cliente/localização/assunto e um "+ INFORMAÇÕES" no rodapé.
+//
+// PREMISSA NÃO CONFIRMADA, leia antes de usar: as 6 colunas da tela nativa
+// (Novo Atendimento, Triagem, Time Cobrança, Time Atendimento, Time Crédito,
+// Em Atendimento) parecem ser valores do próprio campo `situacao` — "Em
+// Atendimento" bate exatamente com um valor real que já vimos na gold
+// (idsituacao=12), o que é um indício forte. Mas os outros 5 nomes NUNCA
+// apareceram nos 10 registros que existem hoje (só Cancelado/Finalizado/Em
+// Atendimento foram observados), então a grafia exata deles aqui é uma
+// SUPOSIÇÃO, não um fato medido — pode ser que "Time Cobrança"/"Time
+// Atendimento"/"Time Crédito" sejam na verdade uma combinação de situação +
+// equipe (`times`), não 3 valores distintos de `situacao`. Assim que um
+// atendimento real passar por uma dessas etapas, confira o texto exato de
+// `fato_atendimentos_cvcrm[situacao]` contra os literais abaixo (variável
+// _colunas) e corrija se divergir — é só texto, uma linha por coluna.
+//
+// Cancelado e Finalizado ficam DE FORA de propósito: a tela nativa mostra o
+// "andamento" (o que ainda está em curso), não o histórico encerrado — mesma
+// leitura de [Atendimentos Em Aberto] no restante deste arquivo.
+// =============================================================================
+
+// Visual: HTML Content, SEM Granularity (o board inteiro é uma medida só,
+// como a faixa de KPIs) — a interação aqui é visual, não cross-filtering.
+// Se quiser que clicar num cartão filtre a página, dá para migrar pro mesmo
+// padrão de grid com Granularity da tabela de detalhe, mas troca a
+// Granularity para uma coluna por CARTÃO, não por coluna do board, e a
+// estrutura de grid vira mais complexa (2 níveis: coluna dentro de coluna).
+// Ficou de fora desta primeira versão por pedido não ter mencionado clique
+// aqui, só fidelidade visual.
+Esteira Atendimentos CVCRM HTML =
+VAR _colunas =
+    {
+        ( "Novo Atendimento", "az" ),
+        ( "Triagem",          "vm" ),
+        ( "Time Cobrança",    "vm" ),
+        ( "Time Atendimento", "vm" ),
+        ( "Time Crédito",     "vm" ),
+        ( "Em Atendimento",   "vm" )
+    }
+
+VAR _icoUser = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='7' r='4'></circle><path d='M5.5 21a6.5 6.5 0 0 1 13 0'></path></svg>"
+VAR _icoPin  = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z'></path><circle cx='12' cy='10' r='3'></circle></svg>"
+VAR _icoChat = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z'></path></svg>"
+
+VAR _css =
+    "<style>" &
+    "html,body{margin:0;padding:0;height:100%;}" &
+    ".eb{font-family:'Segoe UI','Segoe UI Semibold',Arial,sans-serif;display:flex;flex-direction:row;width:100%;height:100%;box-sizing:border-box;overflow-x:auto;background:#fff;}" &
+    ".eb .col{flex:1 1 0;min-width:190px;display:flex;flex-direction:column;border-right:1px solid #E5E7EB;height:100%;box-sizing:border-box;}" &
+    ".eb .col:last-child{border-right:none;}" &
+    ".eb .col-hdr{padding:10px 14px;color:#fff;}" &
+    ".eb .col-hdr.az{background:#2F80ED;}" &
+    ".eb .col-hdr.vm{background:#E5484D;}" &
+    ".eb .col-hdr .nome{font-weight:700;font-size:15px;letter-spacing:.01em;}" &
+    ".eb .col-hdr .qtd{font-size:12px;opacity:.9;margin-top:2px;}" &
+    ".eb .col-body{background:#F3F4F6;flex:1;padding:10px;display:flex;flex-direction:column;gap:10px;overflow-y:auto;}" &
+    ".eb .card{background:#fff;border:1px solid #E5E7EB;border-radius:6px;padding:10px 12px;box-shadow:0 1px 2px rgba(0,0,0,.08);}" &
+    ".eb .card.az{border-left:4px solid #2F80ED;}" &
+    ".eb .card.vm{border-left:4px solid #E5484D;}" &
+    ".eb .card .proto{font-size:11px;color:#6B7280;font-weight:700;margin-bottom:6px;}" &
+    ".eb .card .linha{display:flex;align-items:flex-start;gap:6px;font-size:12px;color:#374151;margin-top:6px;line-height:1.35;}" &
+    ".eb .card .linha svg{width:14px;height:14px;flex-shrink:0;margin-top:1px;color:#6B7280;}" &
+    ".eb .card .nome-cliente{font-weight:700;color:#111827;font-size:13px;}" &
+    ".eb .card .info-btn{margin-top:10px;padding-top:8px;border-top:1px solid #E5E7EB;text-align:center;font-size:11px;color:#2563EB;font-weight:700;letter-spacing:.03em;cursor:pointer;}" &
+    "</style>"
+
+VAR _colunasHtml =
+    CONCATENATEX (
+        _colunas,
+        VAR _nome = [Value1]
+        VAR _tema = [Value2]
+        VAR _base = FILTER ( fato_atendimentos_cvcrm, fato_atendimentos_cvcrm[situacao] = _nome )
+        VAR _qtd  = COUNTROWS ( _base )
+        VAR _cardsHtml =
+            CONCATENATEX (
+                _base,
+                -- _bloco/_unidade/_localizacao entram AQUI DENTRO de propósito: são
+                -- calculadas no contexto de linha do CARTÃO (uma linha de _base), não
+                -- no contexto de linha da COLUNA (_colunas, só tem Value1/Value2) —
+                -- colocá-las um nível acima já foi tentado nesta mesma medida e falhou,
+                -- porque lá fora não existe nenhuma linha de fato_atendimentos_cvcrm
+                -- selecionada ainda.
+                VAR _bloco   = fato_atendimentos_cvcrm[bloco]
+                VAR _unidade = fato_atendimentos_cvcrm[unidade]
+                VAR _localizacao =
+                    -- "TORRE 4 / 102" (bloco/unidade), com fallback pra quando só um
+                    -- dos dois vem preenchido.
+                    SWITCH (
+                        TRUE (),
+                        NOT ISBLANK ( _bloco ) && NOT ISBLANK ( _unidade ), _bloco & " / " & _unidade,
+                        NOT ISBLANK ( _bloco ), _bloco,
+                        NOT ISBLANK ( _unidade ), _unidade,
+                        ""
+                    )
+                RETURN
+                    "<div class='card " & _tema & "'>"
+                        & "<div class='proto'>#" & fato_atendimentos_cvcrm[protocolo] & "</div>"
+                        & "<div class='linha'>" & _icoUser & "<span class='nome-cliente'>"
+                            & SUBSTITUTE ( SUBSTITUTE ( COALESCE ( fato_atendimentos_cvcrm[cliente], "Sem cliente identificado" ), "&", "&amp;" ), "<", "&lt;" )
+                            & "</span></div>"
+                        & "<div class='linha'>" & _icoPin & "<span>"
+                            & SUBSTITUTE ( SUBSTITUTE ( _localizacao, "&", "&amp;" ), "<", "&lt;" )
+                            & IF ( NOT ISBLANK ( _localizacao ) && NOT ISBLANK ( fato_atendimentos_cvcrm[empreendimento] ), "<br>" )
+                            & SUBSTITUTE ( SUBSTITUTE ( COALESCE ( fato_atendimentos_cvcrm[empreendimento], "" ), "&", "&amp;" ), "<", "&lt;" )
+                            & "</span></div>"
+                        & "<div class='linha'>" & _icoChat & "<span>"
+                            & SUBSTITUTE ( SUBSTITUTE ( COALESCE ( fato_atendimentos_cvcrm[assunto], "" ), "&", "&amp;" ), "<", "&lt;" )
+                            & IF ( NOT ISBLANK ( fato_atendimentos_cvcrm[subassunto] ), "<br>" )
+                            & SUBSTITUTE ( SUBSTITUTE ( COALESCE ( fato_atendimentos_cvcrm[subassunto], "" ), "&", "&amp;" ), "<", "&lt;" )
+                            & "</span></div>"
+                        & "<div class='info-btn'>+ INFORMAÇÕES</div>"
+                    & "</div>",
+                "",
+                fato_atendimentos_cvcrm[data_cad], DESC
+            )
+        RETURN
+            "<div class='col'>"
+                -- Title Case aqui, igual à captura de tela (diferente da caixa alta
+                -- usada nos cartões da faixa de KPIs — são dois vocabulários visuais
+                -- diferentes de propósito: a esteira é réplica fiel da tela nativa).
+                & "<div class='col-hdr " & _tema & "'><div class='nome'>" & _nome & "</div>"
+                & "<div class='qtd'>" & FORMAT ( _qtd, "#,0" ) & " Registro(s)</div></div>"
+                & "<div class='col-body'>" & _cardsHtml & "</div>"
+            & "</div>",
+        "",
+        [Value1], ASC
+    )
+
+RETURN
+    _css & "<div class='eb'>" & _colunasHtml & "</div>"
