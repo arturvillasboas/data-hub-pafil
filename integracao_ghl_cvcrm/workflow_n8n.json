@@ -198,7 +198,7 @@
         "method": "PUT",
         "url": "=https://services.leadconnectorhq.com/contacts/{{ $json.id_contato_ghl }}",
         "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
+        "genericAuthType": "httpBearerAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -293,7 +293,7 @@
         "method": "POST",
         "url": "https://services.leadconnectorhq.com/contacts/search",
         "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
+        "genericAuthType": "httpBearerAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
