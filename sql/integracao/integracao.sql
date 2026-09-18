@@ -40,11 +40,14 @@ CREATE INDEX IF NOT EXISTS ix_depara_contato_cpf   ON integracao.depara_contato 
 -- escrever nele. Fica em tabela (não hardcoded), no mesmo espírito dos de-para
 -- de planilha do resto do projeto: é regra de negócio, pode mudar sem deploy.
 CREATE TABLE IF NOT EXISTS integracao.dono_campo (
-    campo          text PRIMARY KEY,
-    dono           text NOT NULL CHECK (dono IN ('ghl', 'cvcrm')),
-    campo_destino  text,  -- chave/id do campo real na plataforma de DESTINO (a outra). NULL = ainda sem mapeamento confirmado, fica de fora do despacho.
-    descricao      text
+    campo      text PRIMARY KEY,
+    dono       text NOT NULL CHECK (dono IN ('ghl', 'cvcrm')),
+    descricao  text
 );
+-- campo_destino entrou depois (18/set/2026): CREATE TABLE IF NOT EXISTS não
+-- altera uma tabela que já existe, então precisa do ALTER explícito para
+-- quem já rodou a versão anterior deste script.
+ALTER TABLE integracao.dono_campo ADD COLUMN IF NOT EXISTS campo_destino text;  -- chave/id do campo real na plataforma de DESTINO (a outra). NULL = ainda sem mapeamento confirmado, fica de fora do despacho.
 INSERT INTO integracao.dono_campo (campo, dono, campo_destino, descricao) VALUES
     ('tags',                     'ghl',   'tags',
         'Tags de marketing. GHL: array nativo. CVCRM: campo tags real, mas em string separada por vírgula (confirmado 18/set/2026) -- conversão de formato fica no n8n.'),
