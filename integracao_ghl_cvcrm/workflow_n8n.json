@@ -179,7 +179,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ idlead: $json.idlead_cvcrm, permitir_alteracao: true, ...Object.fromEntries(Object.entries($json.campos_permitidos).map(([k, v]) => [k, Array.isArray(v) ? v.join(',') : v])) }) }}",
+        "jsonBody": "={{ JSON.stringify({ idlead: $json.idlead_cvcrm, permitir_alteracao: true, email: $json.contato_email, telefone: $json.contato_telefone, ...Object.fromEntries(Object.entries($json.campos_permitidos).map(([k, v]) => [k, Array.isArray(v) ? v.join(',') : v])) }) }}",
         "options": { "timeout": 30000 }
       },
       "id": "enviar-cvcrm",

@@ -287,6 +287,8 @@ SELECT
     f.contato_id,
     c.idlead_cvcrm,
     c.id_contato_ghl,
+    c.telefone_chave AS contato_telefone,  -- o CVCRM exige email OU telefone no corpo, mesmo numa edição
+    c.email           AS contato_email,
     f.origem,
     CASE WHEN f.origem = 'ghl' THEN 'cvcrm' ELSE 'ghl' END AS destino,
     COALESCE(
