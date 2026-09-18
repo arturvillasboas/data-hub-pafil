@@ -287,8 +287,6 @@ SELECT
     f.contato_id,
     c.idlead_cvcrm,
     c.id_contato_ghl,
-    c.telefone_chave AS contato_telefone,  -- o CVCRM exige email OU telefone no corpo, mesmo numa edição
-    c.email           AS contato_email,
     f.origem,
     CASE WHEN f.origem = 'ghl' THEN 'cvcrm' ELSE 'ghl' END AS destino,
     COALESCE(
@@ -313,7 +311,9 @@ SELECT
          WHERE l.contato_id = f.contato_id
            AND l.destino = f.origem
            AND l.hash_evento = f.hash_evento
-    ) AS eh_eco
+    ) AS eh_eco,
+    c.telefone_chave AS contato_telefone,  -- o CVCRM exige email OU telefone no corpo, mesmo numa edição.
+    c.email           AS contato_email      -- no final da lista de propósito: CREATE OR REPLACE VIEW só aceita coluna nova no fim.
 FROM integracao.fila_sync f
 LEFT JOIN integracao.depara_contato c ON c.id = f.contato_id
 WHERE f.status = 'pendente'
