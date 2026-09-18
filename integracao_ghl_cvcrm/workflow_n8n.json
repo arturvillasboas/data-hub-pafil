@@ -179,7 +179,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ idlead: $json.idlead_cvcrm, permitir_alteracao: true, ...$json.campos_permitidos }) }}",
+        "jsonBody": "={{ JSON.stringify({ idlead: $json.idlead_cvcrm, permitir_alteracao: true, ...Object.fromEntries(Object.entries($json.campos_permitidos).map(([k, v]) => [k, Array.isArray(v) ? v.join(',') : v])) }) }}",
         "options": { "timeout": 30000 }
       },
       "id": "enviar-cvcrm",
@@ -191,7 +191,7 @@
       "maxTries": 3,
       "waitBetweenTries": 5000,
       "onError": "continueErrorOutput",
-      "notes": "Confirmado via docs oficiais (16/set/2026): POST /api/v1/comercial/leads (o /api/cvio/lead esta descontinuado), auth por headers email+token (credencial generica cobre 'token'; 'email' entra como header parameter acima, mesmo padrao do cvdw/api.py), corpo exige idlead + permitir_alteracao=true. GAP AINDA ABERTO: os campos em campos_permitidos (tags, origem_campanha) sao nomes do GHL, nao nomes de campo reais do lead no CVCRM -- falta decidir/confirmar pra qual campo real do CVCRM cada um mapeia (ou se algum desses simplesmente nao tem correspondente e deve ficar de fora)."
+      "notes": "Confirmado via docs oficiais (16/set/2026): POST /api/v1/comercial/leads (o /api/cvio/lead esta descontinuado), auth por headers email+token, corpo exige idlead + permitir_alteracao=true. Mapeamento de campo fechado em 18/set/2026 (ver integracao.dono_campo): campos_permitidos ja chega com as chaves reais do CVCRM (ex.: 'tags'), so precisa converter array->string separada por virgula quando aplicavel (ja feito no jsonBody). Falta so testar o envio de verdade contra um lead real -- confirmado ate agora e a permissao de CRIACAO (ver issue #26), nao a edicao de um lead existente."
     },
     {
       "parameters": {
@@ -207,7 +207,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify($json.campos_permitidos) }}",
+        "jsonBody": "={{ JSON.stringify({ customFields: Object.entries($json.campos_permitidos).map(([id, value]) => ({ id, value })) }) }}",
         "options": { "timeout": 30000 }
       },
       "id": "enviar-ghl",
@@ -219,7 +219,7 @@
       "maxTries": 3,
       "waitBetweenTries": 5000,
       "onError": "continueErrorOutput",
-      "notes": "Confirmado via docs oficiais (16/set/2026): PUT /contacts/:contactId, header Version: v3 (ja incluido acima), autenticacao Bearer via credencial generica. GAP AINDA ABERTO: campos_permitidos (situacao_lead, corretor_responsavel, empreendimento_interesse) sao nomes do CVCRM -- o GHL nao tem campo nativo com esses nomes, teriam que virar Custom Fields configurados na sub-account do GHL (com o ID de cada custom field, nao o nome), e isso ainda nao foi feito nem mapeado."
+      "notes": "Confirmado via docs oficiais (16/set/2026): PUT /contacts/:contactId, header Version: v3, autenticacao Bearer. Mapeamento fechado em 18/set/2026: a sub-account do GHL ja tinha Custom Fields prontos pra isso desde 28/mai/2026 (situacao_lead_cv, empreendimento_cv), mais um novo criado nesta sessao (nome_corretor_cvcrm) -- ver integracao.dono_campo.campo_destino pelos ids reais. campos_permitidos ja chega keyed pelo id do Custom Field; o jsonBody so reshapea pro formato {customFields:[{id,value}]} que a API do GHL exige. Falta so testar o envio de verdade."
     },
     {
       "parameters": {

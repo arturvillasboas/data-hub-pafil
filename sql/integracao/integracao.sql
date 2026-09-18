@@ -40,30 +40,36 @@ CREATE INDEX IF NOT EXISTS ix_depara_contato_cpf   ON integracao.depara_contato 
 -- escrever nele. Fica em tabela (não hardcoded), no mesmo espírito dos de-para
 -- de planilha do resto do projeto: é regra de negócio, pode mudar sem deploy.
 CREATE TABLE IF NOT EXISTS integracao.dono_campo (
-    campo      text PRIMARY KEY,
-    dono       text NOT NULL CHECK (dono IN ('ghl', 'cvcrm')),
-    descricao  text
+    campo          text PRIMARY KEY,
+    dono           text NOT NULL CHECK (dono IN ('ghl', 'cvcrm')),
+    campo_destino  text,  -- chave/id do campo real na plataforma de DESTINO (a outra). NULL = ainda sem mapeamento confirmado, fica de fora do despacho.
+    descricao      text
 );
-INSERT INTO integracao.dono_campo (campo, dono, descricao) VALUES
-    ('tags',                     'ghl',   'Tags de marketing/nutrição'),
-    ('origem_campanha',          'ghl',   'attributionSource do contato (objeto, ainda sem sub-campo definido)'),
-    ('situacao_lead',            'cvcrm', 'Situação comercial do lead no CRM'),
-    ('corretor_responsavel',     'cvcrm', 'Corretor responsável pelo atendimento'),
-    ('empreendimento_interesse', 'cvcrm', 'Empreendimento de interesse')
-ON CONFLICT (campo) DO NOTHING;
--- 'tags' e 'email'/'phone' confirmados contra a API real do GHL em 16/set/2026
--- (ver integracao_ghl_cvcrm/workflow_n8n.json). 'etapa_funil_marketing' foi
--- removido de propósito: pipeline/etapa pertence à Oportunidade no GHL, não ao
--- Contato, e a busca de contatos nunca traria isso -- precisaria de uma chamada
--- separada à API de Oportunidades, fora do escopo construído até aqui.
--- 'origem_campanha' aponta pra um campo real (attributionSource existe), mas
--- ainda não foi visto populado em nenhum contato de teste, então o sub-campo
--- exato (ex.: utmSource, campaign) continua sem confirmação.
+INSERT INTO integracao.dono_campo (campo, dono, campo_destino, descricao) VALUES
+    ('tags',                     'ghl',   'tags',
+        'Tags de marketing. GHL: array nativo. CVCRM: campo tags real, mas em string separada por vírgula (confirmado 18/set/2026) -- conversão de formato fica no n8n.'),
+    ('origem_campanha',          'ghl',   NULL,
+        'attributionSource do contato GHL (objeto). Sem mapeamento: nunca visto populado em contato real, e o CVCRM não tem um campo solto equivalente -- o conceito mais próximo é origem/mídia, um sistema de classificação já existente e maior que um campo simples. Decisão de negócio pendente.'),
+    ('situacao_lead',            'cvcrm', 'SX73VVvBKW0S2UEfGu43',
+        'Situação comercial do lead. Destino = Custom Field "Situacao Lead CV" no GHL (contact.situacao_lead_cv), já existia na sub-account desde 28/mai/2026.'),
+    ('corretor_responsavel',     'cvcrm', 'MzBSUBH8ttuLVPCX16JU',
+        'Nome do corretor responsável (texto, não o idcorretor -- decisão de 18/set/2026). Destino = Custom Field "Nome Corretor CVCRM" no GHL (contact.nome_corretor_cvcrm), criado em 18/set/2026 especificamente para isto (já existia um "ID Corretor CVCRM" com outro propósito).'),
+    ('empreendimento_interesse', 'cvcrm', 'VU4yvq6ZFoJkAhzJhS26',
+        'Destino = Custom Field "Empreendimento CV" no GHL (contact.empreendimento_cv), já existia na sub-account desde 28/mai/2026.')
+ON CONFLICT (campo) DO UPDATE SET campo_destino = EXCLUDED.campo_destino, descricao = EXCLUDED.descricao;
+-- Achado em 18/set/2026: a sub-account do GHL já tinha, desde 28/mai/2026, um
+-- conjunto de Custom Fields pensados especificamente para uma integração com o
+-- CVCRM (situacao_lead_cv, empreendimento_cv, midia_cv, idcorretor_cv,
+-- idlead_cv, idreserva_cv, idimobiliaria_cv, idprecadastro_cv, cpf_cv, entre
+-- outros) -- alguem ja tinha planejado isso antes deste projeto. Usamos os que
+-- fazem sentido pro escopo atual (lead); o resto fica disponivel pra quando o
+-- escopo crescer (reserva, pre-cadastro).
 --
--- Do lado CVCRM, nenhum dos três campos (situacao_lead/corretor_responsavel/
--- empreendimento_interesse) foi confirmado contra a API de escrita ainda --
--- só existem como colunas de leitura em bronze.leads (situacao, corretor,
--- empreendimento_ultimo). Continua sendo a lacuna registrada na issue #26.
+-- Do lado CVCRM, os nomes internos (situacao_lead/corretor_responsavel/
+-- empreendimento_interesse) correspondem as colunas situacao/corretor/
+-- empreendimento_ultimo de bronze.leads (confirmado contra a API real em
+-- 18/set/2026), mas o ENVIO pra dentro do CVCRM (a direcao ghl->cvcrm) ainda
+-- não foi confirmado contra a API de escrita -- só a leitura foi validada.
 
 -- Fila (outbox) de eventos recebidos por webhook, pendentes de decisão/despacho.
 CREATE TABLE IF NOT EXISTS integracao.fila_sync (
@@ -265,9 +271,13 @@ $$;
 
 -- O que o Schedule Trigger do n8n consulta. Já resolve, em SQL: (a) pra qual
 -- plataforma despachar (o inverso da origem), (b) só os campos que a origem tem
--- autoridade para escrever (dono_campo), e (c) se é eco de um envio nosso
--- anterior (comparando o hash contra o último log_sync no mesmo sentido).
--- O n8n só decide "descarta se eh_eco, senão despacha campos_permitidos".
+-- autoridade para escrever E que já têm mapeamento confirmado pro campo real
+-- do destino (dono_campo.campo_destino IS NOT NULL -- um campo sem destino
+-- mapeado fica de fora do despacho de propósito, em vez de mandar lixo), e
+-- (c) se é eco de um envio nosso anterior (hash contra o último log_sync no
+-- mesmo sentido). campos_permitidos já sai no formato do CAMPO REAL do
+-- destino (não no nome interno), então o n8n só decide "descarta se eh_eco,
+-- senão despacha campos_permitidos direto no corpo da API".
 CREATE OR REPLACE VIEW integracao.v_fila_para_despachar AS
 SELECT
     f.id AS fila_sync_id,
@@ -277,9 +287,10 @@ SELECT
     f.origem,
     CASE WHEN f.origem = 'ghl' THEN 'cvcrm' ELSE 'ghl' END AS destino,
     COALESCE(
-        (SELECT jsonb_object_agg(chave, f.campos -> chave)
+        (SELECT jsonb_object_agg(dc.campo_destino, f.campos -> chave)
            FROM jsonb_object_keys(f.campos) AS chave
-           JOIN integracao.dono_campo dc ON dc.campo = chave AND dc.dono = f.origem),
+           JOIN integracao.dono_campo dc ON dc.campo = chave AND dc.dono = f.origem
+          WHERE dc.campo_destino IS NOT NULL),
         '{}'::jsonb
     ) AS campos_permitidos,
     f.hash_evento,
