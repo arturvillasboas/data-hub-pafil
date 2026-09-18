@@ -251,7 +251,7 @@
         "operation": "executeQuery",
         "query": "SELECT integracao.registrar_envio($1, $2, $3, $4::jsonb, $5, $6, $7);",
         "options": {
-          "queryReplacement": "={{ [$json.fila_sync_id, $json.contato_id, $json.destino, JSON.stringify($json.campos_permitidos), $json.hash_evento, $json.status, $json.detalhe] }}"
+          "queryReplacement": "={{ [$('Rotular despacho').item.json.fila_sync_id, $('Rotular despacho').item.json.contato_id, $('Rotular despacho').item.json.destino, JSON.stringify($('Rotular despacho').item.json.campos_permitidos), $('Rotular despacho').item.json.hash_evento, $('Rotular despacho').item.json.status, $('Rotular despacho').item.json.detalhe] }}"
         }
       },
       "id": "registrar-envio-integracao",
