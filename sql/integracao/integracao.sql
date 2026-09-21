@@ -51,15 +51,15 @@ ALTER TABLE integracao.dono_campo ADD COLUMN IF NOT EXISTS campo_destino text;  
 INSERT INTO integracao.dono_campo (campo, dono, campo_destino, descricao) VALUES
     ('tags',                     'ghl',   'tags',
         'Tags de marketing. GHL: array nativo. CVCRM: campo tags real, mas em string separada por vírgula (confirmado 18/set/2026) -- conversão de formato fica no n8n.'),
-    ('origem_campanha',          'ghl',   NULL,
-        'attributionSource do contato GHL (objeto). Sem mapeamento: nunca visto populado em contato real, e o CVCRM não tem um campo solto equivalente -- o conceito mais próximo é origem/mídia, um sistema de classificação já existente e maior que um campo simples. Decisão de negócio pendente.'),
+    ('origem_campanha',          'cvcrm', 'X9HoukgKTYlebZNCSyvA',
+        'Decisão de negócio fechada em 21/set/2026: quem gerencia campanha e origem de lead é o CVCRM, não o GHL, então o dono é cvcrm (invertido do que estava antes). O campo origem do CVCRM é uma lista fechada de ~30 valores padronizados (Facebook, Google, Portais, Painel Gestor etc. -- não aceita texto livre), então não precisa de de-para: o valor passa direto pro GHL, que aceita texto livre. Destino: Custom Field GHL "Midia CVCRM" (chave {{contact.midia_cv}}), criado em 28/mai/2026 junto com os outros três, mas nunca usado até agora.'),
     ('situacao_lead',            'cvcrm', 'SX73VVvBKW0S2UEfGu43',
         'Situação comercial do lead. Destino = Custom Field "Situacao Lead CV" no GHL (contact.situacao_lead_cv), já existia na sub-account desde 28/mai/2026.'),
     ('corretor_responsavel',     'cvcrm', 'MzBSUBH8ttuLVPCX16JU',
         'Nome do corretor responsável (texto, não o idcorretor -- decisão de 18/set/2026). Destino = Custom Field "Nome Corretor CVCRM" no GHL (contact.nome_corretor_cvcrm), criado em 18/set/2026 especificamente para isto (já existia um "ID Corretor CVCRM" com outro propósito).'),
     ('empreendimento_interesse', 'cvcrm', 'VU4yvq6ZFoJkAhzJhS26',
         'Destino = Custom Field "Empreendimento CV" no GHL (contact.empreendimento_cv), já existia na sub-account desde 28/mai/2026.')
-ON CONFLICT (campo) DO UPDATE SET campo_destino = EXCLUDED.campo_destino, descricao = EXCLUDED.descricao;
+ON CONFLICT (campo) DO UPDATE SET dono = EXCLUDED.dono, campo_destino = EXCLUDED.campo_destino, descricao = EXCLUDED.descricao;
 -- Achado em 18/set/2026: a sub-account do GHL já tinha, desde 28/mai/2026, um
 -- conjunto de Custom Fields pensados especificamente para uma integração com o
 -- CVCRM (situacao_lead_cv, empreendimento_cv, midia_cv, idcorretor_cv,
@@ -341,13 +341,15 @@ SELECT
         'idlead_cvcrm',             l.idlead::text,
         'situacao_lead',            l.situacao,
         'corretor_responsavel',     l.corretor,
-        'empreendimento_interesse', l.empreendimento_ultimo
+        'empreendimento_interesse', l.empreendimento_ultimo,
+        'origem_campanha',          l.origem_nome
     )                                                      AS campos_candidatos,
     integracao.calcular_hash_evento(jsonb_build_object(
         'idlead_cvcrm',             l.idlead::text,
         'situacao_lead',            l.situacao,
         'corretor_responsavel',     l.corretor,
-        'empreendimento_interesse', l.empreendimento_ultimo
+        'empreendimento_interesse', l.empreendimento_ultimo,
+        'origem_campanha',          l.origem_nome
     ))                                                     AS hash_candidato,
     (
         SELECT f.hash_evento

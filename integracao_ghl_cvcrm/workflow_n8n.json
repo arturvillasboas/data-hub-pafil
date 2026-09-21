@@ -4,7 +4,7 @@
     {
       "parameters": {
         "httpMethod": "POST",
-        "path": "webhook/ghl-evento",
+        "path": "ghl-evento",
         "responseMode": "onReceived",
         "options": {}
       },
@@ -17,7 +17,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// TODO: confirmar contra um payload real de webhook do GHL antes de ligar isto\n// em producao (o formato de POST /contacts/search foi validado em 16/set/2026,\n// mas um Workflow de webhook do GHL pode empacotar o payload diferente).\n// Nenhuma decisao de negocio acontece aqui: so molda o payload cru no formato\n// que integracao.fila_sync espera. Casamento de contato, dono do campo e\n// deteccao de eco ficam todos em SQL (ver sql/integracao/integracao.sql).\n//\n// NAO tem etapa_funil_marketing aqui de proposito: confirmado em 16/set/2026\n// que pipeline/etapa pertence a Oportunidade no GHL, nao ao Contato -- nao\n// existe esse campo pra ler, nem de webhook nem de busca.\nconst body = $json.body ?? $json;\n\nreturn {\n  json: {\n    origem: 'ghl',\n    tipo_evento: body.type ?? 'desconhecido',\n    telefone_bruto: body.phone ?? body.contact?.phone ?? null,\n    email_bruto: body.email ?? body.contact?.email ?? null,\n    cpf_bruto: null, // GHL normalmente nao guarda CPF; ajustar se houver custom field\n    campos: {\n      id_contato_ghl: body.contactId ?? body.contact?.id ?? null,\n      tags: body.tags ?? body.contact?.tags ?? null,\n      origem_campanha: body.attributionSource ?? null,\n    },\n  },\n};\n"
+        "jsCode": "// Confirmado contra um payload real de Workflow Webhook do GHL em 18/set/2026:\n// o corpo vem achatado (contact_id, first_name, email, phone, tags como string\n// unica, location, workflow), com um 'contact' aninhado que so tem\n// attributionSource/lastAttributionSource -- o 'attributionSource' solto no\n// topo do body vem sempre vazio ({}), o de verdade fica em contact.attributionSource.\n// Nenhuma decisao de negocio acontece aqui: so molda o payload cru no formato\n// que integracao.fila_sync espera. Casamento de contato, dono do campo e\n// deteccao de eco ficam todos em SQL (ver sql/integracao/integracao.sql).\n//\n// NAO tem etapa_funil_marketing aqui de proposito: confirmado em 16/set/2026\n// que pipeline/etapa pertence a Oportunidade no GHL, nao ao Contato -- nao\n// existe esse campo pra ler, nem de webhook nem de busca.\n//\n// tipo_evento usa o nome do Workflow do GHL que disparou (hoje so tem um\n// gatilho, Tag de contato) -- se no futuro esse mesmo workflow ganhar mais\n// gatilhos, vai precisar de um jeito melhor de distinguir.\nconst body = $json.body ?? $json;\n\nreturn {\n  json: {\n    origem: 'ghl',\n    tipo_evento: body.workflow?.name ?? 'desconhecido',\n    telefone_bruto: body.phone ?? null,\n    email_bruto: body.email ?? null,\n    cpf_bruto: null, // GHL normalmente nao guarda CPF; ajustar se houver custom field\n    campos: {\n      id_contato_ghl: body.contact_id ?? null,\n      tags: body.tags ?? null,\n      origem_campanha: body.contact?.attributionSource ?? null,\n    },\n  },\n};\n"
       },
       "id": "normalizar-ghl",
       "name": "Normalizar evento GHL",
@@ -43,7 +43,7 @@
     {
       "parameters": {
         "httpMethod": "POST",
-        "path": "webhook/cvcrm-evento",
+        "path": "cvcrm-evento",
         "responseMode": "onReceived",
         "options": {}
       },
@@ -56,13 +56,34 @@
     },
     {
       "parameters": {
-        "jsCode": "// TODO: confirmar contra um payload real de webhook do CVCRM antes de ligar\n// isto em producao (inclusive se o plano da Pafil no CVCRM realmente dispara\n// webhook de mudanca de situacao -- ver a conversa que originou este plano).\n// Os nomes de campo abaixo seguem o padrao ja visto na API CVDW para /leads.\nconst body = $json.body ?? $json;\n\nreturn {\n  json: {\n    origem: 'cvcrm',\n    tipo_evento: body.evento ?? 'desconhecido',\n    telefone_bruto: body.telefone ?? body.celular ?? null,\n    email_bruto: body.email ?? null,\n    cpf_bruto: body.cpf ?? null,\n    campos: {\n      idlead_cvcrm: body.idlead ?? body.id ?? null,\n      situacao_lead: body.situacao ?? null,\n      corretor_responsavel: body.corretor ?? null,\n      empreendimento_interesse: body.empreendimento ?? null,\n    },\n  },\n};\n"
+        "method": "GET",
+        "url": "=https://pafil.cvcrm.com.br/api/v1/comercial/leads?idlead={{ ($json.body ?? $json).idlead }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "email", "value": "<CVCRM_EMAIL, mesma credencial ja usada por Enviar CVCRM>" }
+          ]
+        },
+        "options": { "timeout": 30000 }
+      },
+      "id": "buscar-lead-cvcrm",
+      "name": "Buscar lead CVCRM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-150, 220],
+      "notes": "Confirmado na doc oficial (18/set/2026, https://ajuda.cvcrm.com.br - 'Webhooks de Leads'): o webhook de Leads do CVCRM manda so {\"idlead\": N}, nenhum outro campo. Por isso esta busca e obrigatoria antes de normalizar -- o node 'Normalizar evento CVCRM' nao pode mais ler telefone/email/situacao direto do corpo do webhook. TODO: confirmar contra uma chamada real -- a doc do desenvolvedor (desenvolvedor.cvcrm.com.br/reference/getlead) confirma que idlead/email/telefone sao aceitos como query param (um por vez), mas o formato da resposta (nomes de campo do lead) ainda nao foi visto ao vivo."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Confirmado contra uma resposta real do GET (node 'Buscar lead CVCRM') em\n// 18/set/2026: a resposta vem envelopada em {codigo, total, leads: [...]},\n// nao o lead direto -- e dentro do lead, 'situacao' e 'corretor' sao objetos\n// {id, nome[, email]}, nao campos escalares.\n// tipo_evento nao vem em lugar nenhum do payload do CVCRM (o webhook so manda\n// idlead) -- se for preciso distinguir o gatilho (criacao vs. mudanca de\n// situacao), a saida e cadastrar um Webhook por gatilho no painel do CVCRM,\n// cada um com uma query string diferente na URL (ex.: ?gatilho=criacao),\n// e ler isso do node 'Webhook CVCRM' original, nao deste.\n// TODO: 'empreendimento' veio como array vazio no lead de teste (sem nenhum\n// empreendimento vinculado) -- confirmar o formato dos itens (id/nome) contra\n// um lead real que tenha empreendimento antes de confiar nesse mapeamento.\n//\n// origem_campanha invertido em 21/set/2026: quem gerencia campanha e origem\n// de lead e o CVCRM, nao o GHL, entao o dono passou a ser cvcrm (ver\n// dono_campo). O 'origem' do lead CVCRM ja e uma lista fechada de valores\n// padronizados (Facebook, Google, Portais, Painel Gestor etc.), entao o\n// valor passa direto pro GHL, sem de-para -- o GHL aceita texto livre.\nconst lead = ($json.leads ?? [])[0] ?? {};\n\nreturn {\n  json: {\n    origem: 'cvcrm',\n    tipo_evento: $('Webhook CVCRM').item.json.query?.gatilho ?? 'desconhecido',\n    telefone_bruto: lead.telefone ?? null,\n    email_bruto: lead.email ?? null,\n    cpf_bruto: lead.documento_tipo === 'cpf' ? (lead.documento ?? null) : null,\n    campos: {\n      idlead_cvcrm: lead.idlead ?? null,\n      situacao_lead: lead.situacao?.id ?? null,\n      corretor_responsavel: lead.corretor?.nome ?? null,\n      empreendimento_interesse: lead.empreendimento?.[0]?.nome ?? null,\n      origem_campanha: lead.origem ?? null,\n    },\n  },\n};\n"
       },
       "id": "normalizar-cvcrm",
       "name": "Normalizar evento CVCRM",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-40, 220]
+      "position": [40, 220]
     },
     {
       "parameters": {
@@ -76,7 +97,7 @@
       "name": "Gravar fila (CVCRM)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [180, 220]
+      "position": [260, 220]
     },
 
     {
@@ -368,6 +389,9 @@
       "main": [[{ "node": "Gravar fila (GHL)", "type": "main", "index": 0 }]]
     },
     "Webhook CVCRM": {
+      "main": [[{ "node": "Buscar lead CVCRM", "type": "main", "index": 0 }]]
+    },
+    "Buscar lead CVCRM": {
       "main": [[{ "node": "Normalizar evento CVCRM", "type": "main", "index": 0 }]]
     },
     "Normalizar evento CVCRM": {
