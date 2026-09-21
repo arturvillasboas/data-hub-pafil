@@ -649,6 +649,65 @@ mesma rede local, roteada até aqui, o `Add-WindowsCapability` e a regra de
 Firewall da seção acima já resolvem tudo de dentro da própria VM, sem
 depender de ninguém além de quem está com a sessão RDP aberta.
 
+### 8.1 RDP de fora da rede da empresa, sem VPN (Tailscale)
+
+Os dois caminhos acima (Power BI Desktop local, ou túnel SSH) pressupõem
+estar na rede da empresa ou já ter uma sessão RDP aberta. Em 21/set/2026,
+surgiu a necessidade de acessar a VM de fora do escritório (sem VPN
+corporativa disponível, e a TI sem previsão de configurar uma). A solução
+usada foi **Tailscale**: uma rede privada (mesh VPN via WireGuard) entre
+dispositivos autorizados, sem expor nenhuma porta pública.
+
+**Por que não usar um túnel público (tipo ngrok) direto na porta de RDP:**
+foi cogitado e descartado. RDP exposto direto na internet é um dos vetores
+de ataque mais comuns (varredura automática, força bruta, exploits
+conhecidos), e esta máquina não tem nenhuma camada de proteção de nuvem por
+trás (ver a ressalva no topo deste arquivo) além do próprio Firewall do
+Windows. O Tailscale resolve o mesmo problema sem esse risco: não abre porta
+nenhuma para a internet, só conecta dispositivos já autenticados na mesma
+conta.
+
+**Importante:** a conta do Tailscale usada é vinculada a um email do domínio
+`@pafil.com.br` (não uma conta pessoal), pelo mesmo motivo já registrado
+sobre o domínio do ngrok em `integracao_ghl_cvcrm/RUNBOOK.md` — essa conta
+vira uma dependência de acesso à VM, e não deveria ficar amarrada a uma
+pessoa só.
+
+**Configuração feita na VM** (precisou de alguém com acesso físico/RDP
+já funcionando, porque instalar algo na VM exige rodar comando nela):
+
+```powershell
+winget install --id Tailscale.Tailscale -e
+tailscale up   # abre um link de login no navegador; usar o email @pafil.com.br
+```
+
+Depois do login, o adaptador de rede do Tailscale entra como "Pública" por
+padrão no Windows, o que bloquearia o RDP. Corrigir (precisa de PowerShell
+**elevado**, "Executar como Administrador" — sem isso os dois comandos abaixo
+falham com `PermissionDenied`):
+
+```powershell
+Set-NetConnectionProfile -InterfaceAlias "Tailscale" -NetworkCategory Private
+tailscale ip -4   # anota o IP 100.x.y.z, é o endereço fixo da VM na rede do Tailscale
+```
+
+Confirmado em 21/set/2026: a regra de firewall do RDP nesta máquina já vale
+para qualquer perfil de rede (`Get-NetFirewallPortFilter | Where-Object {
+$_.LocalPort -eq 3389 } | Get-NetFirewallRule` mostra `Profile: Any`), então
+não foi preciso nenhuma regra nova de Firewall para o RDP funcionar pela
+interface do Tailscale.
+
+**Do notebook de fora do escritório:**
+
+1. Instala o Tailscale (tailscale.com/download).
+2. Login com a mesma conta `@pafil.com.br`.
+3. Conecta por RDP no IP do Tailscale da VM: `mstsc /v:100.x.y.z`.
+
+Nenhuma configuração de rede da empresa precisou mudar. O Tailscale funciona
+porque é a **VM** que inicia a conexão de saída até a rede do Tailscale (o
+mesmo princípio do túnel do ngrok em `integracao_ghl_cvcrm/RUNBOOK.md`), não
+uma porta de entrada aberta.
+
 ## 9. Operação do dia a dia
 
 | Situação | Comando |
