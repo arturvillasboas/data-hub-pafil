@@ -55,7 +55,7 @@ QUERY = """
     WHERE g."canal 2.0" = %s
       AND g."Empreendimento" = %s
       AND g."Data da Última Interação" >= now() - (%s || ' days')::interval
-      AND b.situacao NOT IN %s
+      AND NOT (b.situacao = ANY(%s))
     ORDER BY b.idlead
 """
 
@@ -81,7 +81,7 @@ def main() -> int:
 
     linhas = 0
     with db.conectar(cfg) as conn, conn.cursor() as cur:
-        cur.execute(QUERY, (args.canal, args.empreendimento, str(args.dias), tuple(args.excluir_situacao)))
+        cur.execute(QUERY, (args.canal, args.empreendimento, str(args.dias), list(args.excluir_situacao)))
         with open(args.saida, "w", newline="", encoding="utf-8-sig") as f:
             writer = csv.writer(f)
             writer.writerow(COLUNAS)
