@@ -240,7 +240,73 @@
       "maxTries": 3,
       "waitBetweenTries": 5000,
       "onError": "continueErrorOutput",
-      "notes": "Confirmado via docs oficiais (16/set/2026): PUT /contacts/:contactId, header Version: v3, autenticacao Bearer. Mapeamento fechado em 18/set/2026: a sub-account do GHL ja tinha Custom Fields prontos pra isso desde 28/mai/2026 (situacao_lead_cv, empreendimento_cv), mais um novo criado nesta sessao (nome_corretor_cvcrm) -- ver integracao.dono_campo.campo_destino pelos ids reais. campos_permitidos ja chega keyed pelo id do Custom Field; o jsonBody so reshapea pro formato {customFields:[{id,value}]} que a API do GHL exige. Falta so testar o envio de verdade."
+      "notes": "Confirmado via docs oficiais (16/set/2026): PUT /contacts/:contactId, header Version: v3, autenticacao Bearer. Mapeamento fechado em 18/set/2026: a sub-account do GHL ja tinha Custom Fields prontos pra isso desde 28/mai/2026 (situacao_lead_cv, empreendimento_cv), mais um novo criado nesta sessao (nome_corretor_cvcrm) -- ver integracao.dono_campo.campo_destino pelos ids reais. campos_permitidos ja chega keyed pelo id do Custom Field; o jsonBody so reshapea pro formato {customFields:[{id,value}]} que a API do GHL exige. Confirmado 21/set/2026: PUT exige id_contato_ghl ja existente -- lead genuinamente novo do CVCRM (sem contato no GHL ainda) tem esse campo nulo, e cai em 404 'Cannot PUT /contacts/'. Esse caminho so cobre atualizacao; criacao passou a ser o node 'Tem contato GHL?' -> 'Criar contato GHL'."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "cond-tem-contato-ghl",
+              "leftValue": "={{ $json.id_contato_ghl }}",
+              "rightValue": "",
+              "operator": { "type": "string", "operation": "notEmpty", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "tem-contato-ghl",
+      "name": "Tem contato GHL?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [840, 700],
+      "notes": "Adicionado 21/set/2026: lead novo do CVCRM (via gatilho de Criacao/primeira situacao) chega sem id_contato_ghl, porque nunca teve contato no GHL. Sem esse desvio, 'Enviar GHL' (PUT) sempre falhava com 404 pra lead genuinamente novo."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://services.leadconnectorhq.com/contacts/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Version", "value": "v3" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ locationId: 'QKKhoj5ZU9PHD4j66T0E', phone: $json.contato_telefone, email: $json.contato_email, customFields: Object.entries($json.campos_permitidos).map(([id, value]) => ({ id, value })) }) }}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "criar-contato-ghl",
+      "name": "Criar contato GHL",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1060, 760],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput",
+      "notes": "Adicionado 21/set/2026, confirmado contra docs oficiais (marketplace.gohighlevel.com/docs/ghl/contacts/create-contact): POST /contacts/, header Version: v3, Bearer. locationId hardcoded (mesma sub-account de sempre). Resposta vem envelopada em {contact: {...}} (nao {contacts: [...]} como a busca) -- id novo em contact.id. Sem 'nome': v_fila_para_despachar nao traz nome do lead hoje, so telefone/email/campos; GHL aceita contato so com phone/email."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE integracao.depara_contato SET id_contato_ghl = $1, atualizado_em = now() WHERE id = $2;",
+        "options": {
+          "queryReplacement": "={{ [$json.contact?.id, $('Canal destino').item.json.contato_id] }}"
+        }
+      },
+      "id": "registrar-novo-contato-ghl",
+      "name": "Registrar novo contato GHL",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1280, 700],
+      "notes": "So roda no output de sucesso de 'Criar contato GHL'. Grava o id_contato_ghl novo em depara_contato, pra proximos despachos desse mesmo contato usarem PUT (Enviar GHL) em vez de criar duplicado."
     },
     {
       "parameters": {
@@ -421,7 +487,24 @@
     "Canal destino": {
       "main": [
         [{ "node": "Enviar CVCRM", "type": "main", "index": 0 }],
-        [{ "node": "Enviar GHL", "type": "main", "index": 0 }]
+        [{ "node": "Tem contato GHL?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Tem contato GHL?": {
+      "main": [
+        [{ "node": "Enviar GHL", "type": "main", "index": 0 }],
+        [{ "node": "Criar contato GHL", "type": "main", "index": 0 }]
+      ]
+    },
+    "Criar contato GHL": {
+      "main": [
+        [{ "node": "Registrar novo contato GHL", "type": "main", "index": 0 }],
+        [{ "node": "Rotular despacho", "type": "main", "index": 0 }]
+      ]
+    },
+    "Registrar novo contato GHL": {
+      "main": [
+        [{ "node": "Rotular despacho", "type": "main", "index": 0 }]
       ]
     },
     "Enviar CVCRM": {
