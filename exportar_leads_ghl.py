@@ -22,6 +22,10 @@ tela de importação (ver ajuda.gohighlevel.com, "CSV File Format for
 Importing Contacts").
 
   python exportar_leads_ghl.py --empreendimento "FIUSA 016" --dias 90 [--canal Lead] [--saida leads_ghl.csv]
+
+Exclui por padrão situação Perdido e Venda Realizada (decisão de negócio,
+21/set/2026): mesmo sendo campanha de ativação, não faz sentido reengajar
+lead já fechado (ganho ou perdido). Ajustável via --excluir-situacao.
 """
 from __future__ import annotations
 
@@ -33,6 +37,8 @@ from cvdw import db
 from cvdw.log import configurar_logging, get_logger
 
 log = get_logger("exportar_leads_ghl")
+
+SITUACOES_EXCLUIDAS_DEFAULT = ("Perdido", "Venda Realizada")
 
 QUERY = """
     SELECT
@@ -49,6 +55,7 @@ QUERY = """
     WHERE g."canal 2.0" = %s
       AND g."Empreendimento" = %s
       AND g."Data da Última Interação" >= now() - (%s || ' days')::interval
+      AND b.situacao NOT IN %s
     ORDER BY b.idlead
 """
 
@@ -63,6 +70,8 @@ def main() -> int:
     ap.add_argument("--empreendimento", required=True, help='nome exato em gold.fato_leads."Empreendimento" (ex.: "FIUSA 016")')
     ap.add_argument("--dias", type=int, default=90, help="janela de Data da Última Interação, em dias (default: 90)")
     ap.add_argument("--canal", default="Lead", help='valor de gold.fato_leads."canal 2.0" a incluir (default: "Lead")')
+    ap.add_argument("--excluir-situacao", nargs="*", default=list(SITUACOES_EXCLUIDAS_DEFAULT),
+                     help=f"situações a excluir (default: {' '.join(SITUACOES_EXCLUIDAS_DEFAULT)})")
     ap.add_argument("--saida", default="leads_ghl.csv", help="caminho do CSV de saída (default: leads_ghl.csv)")
     ap.add_argument("--verbose", action="store_true", help="log de debug")
     args = ap.parse_args()
@@ -72,7 +81,7 @@ def main() -> int:
 
     linhas = 0
     with db.conectar(cfg) as conn, conn.cursor() as cur:
-        cur.execute(QUERY, (args.canal, args.empreendimento, str(args.dias)))
+        cur.execute(QUERY, (args.canal, args.empreendimento, str(args.dias), tuple(args.excluir_situacao)))
         with open(args.saida, "w", newline="", encoding="utf-8-sig") as f:
             writer = csv.writer(f)
             writer.writerow(COLUNAS)
@@ -81,8 +90,8 @@ def main() -> int:
                 linhas += 1
 
     log.info(
-        "Exportado %d leads para %s (canal 2.0=%s, empreendimento=%s, últimos %d dias por interação).",
-        linhas, args.saida, args.canal, args.empreendimento, args.dias,
+        "Exportado %d leads para %s (canal 2.0=%s, empreendimento=%s, últimos %d dias por interação, excluindo situação: %s).",
+        linhas, args.saida, args.canal, args.empreendimento, args.dias, ", ".join(args.excluir_situacao),
     )
     return 0
 
