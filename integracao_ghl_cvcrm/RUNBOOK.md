@@ -128,6 +128,31 @@ o escopo de tudo que alimenta esse caminho — um filtro "em branco = todos"
 que era inofensivo vira um risco real assim que o destino passa a criar
 dado em vez de só tentar atualizar.
 
+**Segunda leva, mesmo dia (22/set/2026):** poucas horas depois da correção
+acima, apareceu mais um lote de ~91 contatos indevidos, incluindo leads
+**nunca tocados antes** (não vieram dos 4 webhooks). Causa: o node
+`Reconciliar CVCRM` estava **ativado** (deveria estar desativado desde
+21/set — não ficou claro exatamente quando/como voltou a ficar ativo).
+Esse node roda a cada 6h e varre `bronze.leads` inteiro via
+`integracao.v_reconciliacao_cvcrm`, sem nenhum filtro de empreendimento —
+diferente dos webhooks, que já tinham sido corrigidos. Um disparo agendado
+dele (identificável pelo `criado_em` idêntico em dezenas de linhas de
+`fila_sync`, sinal de INSERT em lote numa transação só) recriou o mesmo
+tipo de problema em escala maior.
+
+**Correção mais robusta desta vez:** em vez de só reativar a disciplina de
+manter o node desativado (já provou falhar uma vez), a restrição de
+empreendimento foi movida pra dentro da própria
+`integracao.v_reconciliacao_cvcrm` (`WHERE l.empreendimento_ultimo =
+'FIUSA 016'`). Mesmo que o node seja reativado de novo, por engano ou por
+qualquer motivo, o dano fica contido ao escopo do piloto — a proteção não
+depende mais de ninguém lembrar de manter um toggle desligado.
+
+**Lição adicional:** quando uma proteção depende só de "lembrar de manter
+X desativado", ela vai falhar eventualmente. Preferir sempre restringir o
+escopo na fonte de dado (a query/view), que não pode ser "esquecida
+ativada" da mesma forma que um node num canvas.
+
 ## Reconciliação: pausada de propósito
 
 O workflow tem um segundo caminho, independente do webhook: `Gatilho
