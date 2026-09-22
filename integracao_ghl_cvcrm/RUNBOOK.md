@@ -97,6 +97,37 @@ Antes de investigar qualquer falha de webhook, confira nessa ordem:
 2. `http://localhost:5678` (do navegador da VM) mostra a tela do n8n?
 3. Só depois disso, investiga o túnel/domínio.
 
+## Incidente: webhook de produção sem escopo criou ~90 contatos indevidos no GHL
+
+Em 22/set/2026, na manhã seguinte a cadastrar os 4 webhooks de produção no
+CVCRM (Nova interação, Novo lead, Alteração de situação, Associar
+Atendente), apareceram ~90 contatos novos no GHL sem nome, de leads reais
+de **outros empreendimentos**, não do piloto (FIUSA 016).
+
+**Causa:** os 4 webhooks foram cadastrados com o campo "Empreendimentos" em
+branco (= todos), copiando o padrão do webhook de teste original. Isso era
+seguro enquanto o despacho só sabia **atualizar** contato existente no GHL
+(falhava com 404 pra qualquer lead sem contato, sem criar nada). Na mesma
+sessão em que os 4 webhooks foram cadastrados, também foi adicionada a
+capacidade de **criar** contato novo no GHL quando não existe (ver node
+`Tem contato GHL?` no workflow). A combinação das duas mudanças não foi
+reconsiderada: qualquer lead de qualquer empreendimento que mudasse de
+situação passou a criar contato novo no GHL automaticamente, fora do
+escopo do piloto.
+
+**Correção:** os 4 webhooks no CVCRM foram restritos ao empreendimento
+FIUSA 016 (campo "Empreendimentos" preenchido, não mais em branco). Os ~90
+contatos criados indevidamente foram identificados por SQL (cruzando
+`integracao.fila_sync` × `integracao.depara_contato` × `bronze.leads` pelo
+empreendimento real do lead) e apagados via um workflow n8n temporário
+chamando `DELETE /contacts/:id` da API do GHL, um por um.
+
+**Lição:** sempre que uma mudança adiciona uma capacidade de **escrita/criação**
+nova a um caminho que antes só falhava com segurança (404, erro), reavaliar
+o escopo de tudo que alimenta esse caminho — um filtro "em branco = todos"
+que era inofensivo vira um risco real assim que o destino passa a criar
+dado em vez de só tentar atualizar.
+
 ## Reconciliação: pausada de propósito
 
 O workflow tem um segundo caminho, independente do webhook: `Gatilho
