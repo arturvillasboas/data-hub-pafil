@@ -53,8 +53,8 @@ INSERT INTO integracao.dono_campo (campo, dono, campo_destino, descricao) VALUES
         'Tags de marketing. GHL: array nativo. CVCRM: campo tags real, mas em string separada por vírgula (confirmado 18/set/2026) -- conversão de formato fica no n8n.'),
     ('origem_campanha',          'cvcrm', 'X9HoukgKTYlebZNCSyvA',
         'Decisão de negócio fechada em 21/set/2026: quem gerencia campanha e origem de lead é o CVCRM, não o GHL, então o dono é cvcrm (invertido do que estava antes). O campo origem do CVCRM é uma lista fechada de ~30 valores padronizados (Facebook, Google, Portais, Painel Gestor etc. -- não aceita texto livre), então não precisa de de-para: o valor passa direto pro GHL, que aceita texto livre. Destino: Custom Field GHL "Midia CVCRM" (chave {{contact.midia_cv}}), criado em 28/mai/2026 junto com os outros três, mas nunca usado até agora.'),
-    ('situacao_lead',            'cvcrm', 'SX73VVvBKW0S2UEfGu43',
-        'Situação comercial do lead. Destino = Custom Field "Situacao Lead CV" no GHL (contact.situacao_lead_cv), já existia na sub-account desde 28/mai/2026.'),
+    ('situacao_lead',            'ghl',   'idsituacao',
+        'Invertido em 22/set/2026 (decisão de negócio: GHL vira a fonte de verdade de onde o lead está, situação do CVCRM passa a refletir o estágio do pipeline "Pipeline de Leads" no GHL -- os 11 nomes de etapa são idênticos, na mesma ordem, dos dois lados, então o de-para é por ID de estágio, ver integracao.depara_situacao_ghl). Destino = campo idsituacao no corpo do POST /api/v1/comercial/leads do CVCRM (confirmado contra a API real: aceita qualquer id de situação, sem exigir ordem sequencial, diferente da tela). Antes disso, o campo era dono-CVCRM, indo pro Custom Field "Situacao Lead CV" no GHL (contact.situacao_lead_cv) -- esse Custom Field fica sem uso a partir de agora, a menos que seja reaproveitado depois.'),
     ('corretor_responsavel',     'cvcrm', 'MzBSUBH8ttuLVPCX16JU',
         'Nome do corretor responsável (texto, não o idcorretor -- decisão de 18/set/2026). Destino = Custom Field "Nome Corretor CVCRM" no GHL (contact.nome_corretor_cvcrm), criado em 18/set/2026 especificamente para isto (já existia um "ID Corretor CVCRM" com outro propósito).'),
     ('empreendimento_interesse', 'cvcrm', 'VU4yvq6ZFoJkAhzJhS26',
@@ -73,6 +73,33 @@ ON CONFLICT (campo) DO UPDATE SET dono = EXCLUDED.dono, campo_destino = EXCLUDED
 -- empreendimento_ultimo de bronze.leads (confirmado contra a API real em
 -- 18/set/2026), mas o ENVIO pra dentro do CVCRM (a direcao ghl->cvcrm) ainda
 -- não foi confirmado contra a API de escrita -- só a leitura foi validada.
+
+-- De-para de estágio do pipeline "Pipeline de Leads" do GHL (locationId
+-- QKKhoj5ZU9PHD4j66T0E, pipeline Sc3mUXtldce6M594bWXP) para o idsituacao do
+-- CVCRM. Os dois lados usam os mesmos 11 nomes de etapa, na mesma ordem --
+-- alguém já desenhou o pipeline do GHL pra espelhar a esteira do CVCRM antes
+-- deste projeto -- então o de-para é 1:1 por nome, confirmado contra as duas
+-- APIs reais em 22/set/2026. idsituacao 1 x 11 ("Aguardando Atendimento SDR"
+-- duplicado no CVCRM): testado ao vivo contra a API, 1 é o correto (11 deve
+-- ser um código legado/duplicado, não usado).
+CREATE TABLE IF NOT EXISTS integracao.depara_situacao_ghl (
+    pipeline_stage_id_ghl text PRIMARY KEY,
+    idsituacao_cvcrm      int NOT NULL,
+    nome                  text NOT NULL
+);
+INSERT INTO integracao.depara_situacao_ghl (pipeline_stage_id_ghl, idsituacao_cvcrm, nome) VALUES
+    ('961f8977-ad8a-41fd-9232-16fcccb9a6ca', 1,  'Aguardando Atendimento SDR'),
+    ('039ccdac-b4df-4e27-aa6a-7b0b15ea9082', 13, 'Aguardando Resposta Cliente SDR'),
+    ('ba2efb8c-9a23-4268-b14b-190761fbc4d4', 12, 'Atendimento SDR'),
+    ('2ce763b7-85fc-4006-b3eb-089c234736b7', 14, 'Interesse SDR'),
+    ('8b12d6de-6624-4111-a0bd-c6892508d9c7', 2,  'Aguardando Atendimento'),
+    ('fbeff8d6-18cf-42a1-b072-7e8e52ea60fc', 4,  'Em Contato'),
+    ('b456172f-1d97-428a-a0be-b96223bc1db7', 8,  'Em Negociação'),
+    ('4d1ceb68-40d5-41ef-b3b6-1e40b04b3ba2', 7,  'Em Análise de Crédito'),
+    ('94f15eb2-9b02-4872-b580-63430dc1b11e', 5,  'Com Reserva'),
+    ('c2e1084d-a95c-4133-8d63-984d0ce13250', 6,  'Venda Realizada'),
+    ('4f87718b-8e60-4ce6-8792-006c8655403a', 3,  'Perdido')
+ON CONFLICT (pipeline_stage_id_ghl) DO UPDATE SET idsituacao_cvcrm = EXCLUDED.idsituacao_cvcrm, nome = EXCLUDED.nome;
 
 -- Fila (outbox) de eventos recebidos por webhook, pendentes de decisão/despacho.
 CREATE TABLE IF NOT EXISTS integracao.fila_sync (

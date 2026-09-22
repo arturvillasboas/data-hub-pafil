@@ -350,6 +350,82 @@
 
     {
       "parameters": {
+        "httpMethod": "POST",
+        "path": "ghl-oportunidade-evento",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-ghl-oportunidade",
+      "name": "Webhook GHL Oportunidade",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-260, 1000],
+      "webhookId": "pafil-ghl-oportunidade-evento",
+      "notes": "Adicionado 22/set/2026: gatilho OpportunityStageUpdate do GHL, path separado do Webhook GHL de contato (payload e formato diferentes -- traz contactId/pipelineStageId, nao telefone/email/tags direto)."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT idsituacao_cvcrm, nome FROM integracao.depara_situacao_ghl WHERE pipeline_stage_id_ghl = $1;",
+        "options": {
+          "queryReplacement": "={{ [($json.body ?? $json).pipelineStageId] }}"
+        }
+      },
+      "id": "buscar-situacao-cvcrm",
+      "name": "Buscar situacao CVCRM",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-40, 1000],
+      "notes": "De-para 1:1 por nome de etapa (confirmado 22/set/2026, ver integracao.depara_situacao_ghl). Se nao achar (pipeline errado, ou fase fora do 'Pipeline de Leads'), idsituacao_cvcrm vem null e o evento e' normalizado sem situacao_lead."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://services.leadconnectorhq.com/contacts/{{ ($('Webhook GHL Oportunidade').item.json.body ?? $('Webhook GHL Oportunidade').item.json).contactId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Version", "value": "v3" }
+          ]
+        },
+        "options": { "timeout": 30000 }
+      },
+      "id": "buscar-contato-ghl-oportunidade",
+      "name": "Buscar contato GHL",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [180, 1000],
+      "notes": "O webhook de oportunidade so manda contactId, pipelineId, pipelineStageId -- sem telefone/email, que o fila_sync precisa pra resolver o contato. TODO: confirmar contra uma chamada real se a resposta vem envelopada em {contact: {...}} (padrao do POST de criacao) -- ainda nao testado ao vivo."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Combina o contato (telefone/email, buscado no node anterior) com a situacao\n// ja traduzida (node 'Buscar situacao CVCRM', rodou antes do GET e por isso\n// precisa ser referenciado explicitamente, senao o Postgres já sobrescreveu $json).\nconst contato = $json.contact ?? $json;\nconst idsituacao = $('Buscar situacao CVCRM').item.json.idsituacao_cvcrm ?? null;\n\nreturn {\n  json: {\n    origem: 'ghl',\n    tipo_evento: 'oportunidade_estagio_alterado',\n    telefone_bruto: contato.phone ?? null,\n    email_bruto: contato.email ?? null,\n    cpf_bruto: null,\n    campos: {\n      situacao_lead: idsituacao,\n    },\n  },\n};\n"
+      },
+      "id": "normalizar-ghl-oportunidade",
+      "name": "Normalizar evento GHL Oportunidade",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [400, 1000]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO integracao.fila_sync (origem, tipo_evento, telefone_bruto, email_bruto, cpf_bruto, campos)\nVALUES ($1, $2, $3, $4, $5, $6::jsonb)\nRETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [$json.origem, $json.tipo_evento, $json.telefone_bruto, $json.email_bruto, $json.cpf_bruto, JSON.stringify($json.campos)] }}"
+        }
+      },
+      "id": "gravar-fila-ghl-oportunidade",
+      "name": "Gravar fila (GHL Oportunidade)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [620, 1000]
+    },
+
+    {
+      "parameters": {
         "rule": {
           "interval": [
             { "field": "hours", "hoursInterval": 6 }
@@ -450,6 +526,18 @@
   "connections": {
     "Webhook GHL": {
       "main": [[{ "node": "Normalizar evento GHL", "type": "main", "index": 0 }]]
+    },
+    "Webhook GHL Oportunidade": {
+      "main": [[{ "node": "Buscar situacao CVCRM", "type": "main", "index": 0 }]]
+    },
+    "Buscar situacao CVCRM": {
+      "main": [[{ "node": "Buscar contato GHL", "type": "main", "index": 0 }]]
+    },
+    "Buscar contato GHL": {
+      "main": [[{ "node": "Normalizar evento GHL Oportunidade", "type": "main", "index": 0 }]]
+    },
+    "Normalizar evento GHL Oportunidade": {
+      "main": [[{ "node": "Gravar fila (GHL Oportunidade)", "type": "main", "index": 0 }]]
     },
     "Normalizar evento GHL": {
       "main": [[{ "node": "Gravar fila (GHL)", "type": "main", "index": 0 }]]
