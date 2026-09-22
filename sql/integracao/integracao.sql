@@ -360,7 +360,17 @@ SELECT
     )                                                      AS hash_conhecido
 FROM integracao.depara_contato c
 JOIN bronze.leads l ON l.idlead::text = c.idlead_cvcrm
-WHERE c.idlead_cvcrm IS NOT NULL;
+WHERE c.idlead_cvcrm IS NOT NULL
+  -- Trava de seguranca adicionada em 22/set/2026, depois de um incidente real:
+  -- o node Reconciliar CVCRM no n8n foi reativado sem querer (ou nunca ficou
+  -- desativado de verdade) e, como essa view nao tinha filtro de
+  -- empreendimento, varreu bronze.leads inteiro e criou ~90 contatos
+  -- indevidos no GHL, fora do escopo do piloto. Restringir aqui, na propria
+  -- view, garante que mesmo se o node for reativado por engano de novo, o
+  -- dano fica contido ao piloto. Remover esse filtro (ou trocar por uma
+  -- lista maior) so quando o escopo real da integracao for expandido pra
+  -- alem do piloto FIUSA 016 (ver issue #30 no GitHub).
+  AND l.empreendimento_ultimo = 'FIUSA 016';
 
 COMMENT ON VIEW integracao.v_reconciliacao_cvcrm IS
     'Compara bronze.leads (ja ingerido pelo CVDW) contra o ultimo hash que a integracao conhece por contato. Base da funcao rodar_reconciliacao_cvcrm().';
