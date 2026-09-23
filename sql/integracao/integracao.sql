@@ -44,6 +44,11 @@ CREATE INDEX IF NOT EXISTS ix_depara_contato_cpf   ON integracao.depara_contato 
 -- inteiro. Sem esse controle, a mesma anotacao antiga seria reenviada como
 -- nota nova no GHL toda vez que outro campo mudasse.
 ALTER TABLE integracao.depara_contato ADD COLUMN IF NOT EXISTS ultima_interacao_id_cvcrm bigint;
+-- Adicionada 23/set/2026: mesmo motivo de ultima_interacao_id_cvcrm, so que
+-- pra tarefa. lead.tarefa vem embutido no GET do lead (Buscar lead CVCRM),
+-- igual lead.interacao -- sem esse controle, a mesma tarefa seria recriada
+-- no GHL toda vez que outro campo do lead mudasse.
+ALTER TABLE integracao.depara_contato ADD COLUMN IF NOT EXISTS ultima_tarefa_id_cvcrm bigint;
 
 -- Dono do campo: por chave de campo do payload, quem tem autoridade para
 -- escrever nele. Fica em tabela (não hardcoded), no mesmo espírito dos de-para
@@ -73,7 +78,7 @@ INSERT INTO integracao.dono_campo (campo, dono, campo_destino, descricao) VALUES
     ('interacao_cvcrm',          'cvcrm', 'nota_ghl',
         'Adicionado 23/set/2026: interação/anotação do CVCRM virando nota na aba "Notas" do contato no GHL. campo_destino "nota_ghl" também é um marcador especial (não é um Custom Field ID) -- o desvio "Tem nota pra criar?" detecta essa chave e roteia pro node "Criar nota GHL" (POST /contacts/:id/notes), em vez de seguir pro "Enviar GHL" (PUT customFields).'),
     ('tarefa_cvcrm',              'cvcrm', 'tarefa_ghl',
-        'Adicionado 23/set/2026: tarefa criada no lead do CVCRM (aba "Tarefa") virando Task no GHL. Só direção CVCRM->GHL por enquanto -- o gatilho "Nova tarefa" do CVCRM funciona de verdade (diferente de "Nova interação") e manda idtarefa direto no corpo do webhook, sem precisar de piggyback/dedup. campo_destino "tarefa_ghl" é marcador especial (não é Custom Field ID) -- o desvio "Tem tarefa pra criar?" roteia pro node "Criar tarefa GHL" (POST /contacts/:id/tasks). Direção contrária (GHL->CVCRM) fica pendente: não achamos o endpoint de criação de tarefa no CVCRM ainda, ver RUNBOOK.md.')
+        'Adicionado 23/set/2026, corrigido no mesmo dia: tarefa criada no lead do CVCRM (aba "Tarefa") virando Task no GHL. Só direção CVCRM->GHL por enquanto. Primeira versão tentou um endpoint CVDW à parte pra buscar a tarefa (achando que precisava, já que o gatilho "Nova tarefa" manda idtarefa no corpo) -- corrigido ao perceber que lead.tarefa já vem embutido no GET do lead (Buscar lead CVCRM), igual lead.interacao. Mesmo padrão de carona+dedup por id (ver interacao_cvcrm e ultima_tarefa_id_cvcrm). campo_destino "tarefa_ghl" é marcador especial (não é Custom Field ID) -- o desvio "Tem tarefa pra criar?" roteia pro node "Criar tarefa GHL" (POST /contacts/:id/tasks). Direção contrária (GHL->CVCRM) fica pendente: não achamos o endpoint de criação de tarefa no CVCRM ainda, ver RUNBOOK.md.')
 ON CONFLICT (campo) DO UPDATE SET dono = EXCLUDED.dono, campo_destino = EXCLUDED.campo_destino, descricao = EXCLUDED.descricao;
 -- Achado em 18/set/2026: a sub-account do GHL já tinha, desde 28/mai/2026, um
 -- conjunto de Custom Fields pensados especificamente para uma integração com o
@@ -276,6 +281,8 @@ AS $$
 DECLARE
     v_interacao_id      bigint;
     v_ultima_interacao  bigint;
+    v_tarefa_id         bigint;
+    v_ultima_tarefa     bigint;
     v_ultimo_enviado    text;
 BEGIN
     NEW.contato_id := integracao.resolver_contato(
@@ -299,6 +306,23 @@ BEGIN
         ELSE
             UPDATE integracao.depara_contato
                SET ultima_interacao_id_cvcrm = v_interacao_id
+             WHERE id = NEW.contato_id;
+        END IF;
+    END IF;
+
+    IF NEW.origem = 'cvcrm' AND NEW.campos ? 'tarefa_cvcrm_id' THEN
+        v_tarefa_id := NULLIF(NEW.campos ->> 'tarefa_cvcrm_id', '')::bigint;
+
+        SELECT ultima_tarefa_id_cvcrm INTO v_ultima_tarefa
+          FROM integracao.depara_contato
+         WHERE id = NEW.contato_id;
+
+        IF v_tarefa_id IS NULL
+           OR (v_ultima_tarefa IS NOT NULL AND v_tarefa_id <= v_ultima_tarefa) THEN
+            NEW.campos := NEW.campos - 'tarefa_cvcrm';
+        ELSE
+            UPDATE integracao.depara_contato
+               SET ultima_tarefa_id_cvcrm = v_tarefa_id
              WHERE id = NEW.contato_id;
         END IF;
     END IF;

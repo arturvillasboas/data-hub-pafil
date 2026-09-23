@@ -77,51 +77,7 @@
     },
     {
       "parameters": {
-        "conditions": {
-          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
-          "conditions": [
-            {
-              "id": "cond-tem-tarefa",
-              "leftValue": "={{ ($('Webhook CVCRM').item.json.body ?? $('Webhook CVCRM').item.json).idtarefa }}",
-              "rightValue": "",
-              "operator": { "type": "string", "operation": "notEmpty", "singleValue": true }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "id": "tem-tarefa-cvcrm",
-      "name": "Tem tarefa?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
-      "position": [220, 220],
-      "notes": "Adicionado 23/set/2026: diferente de 'Nova interacao', o gatilho 'Nova tarefa' do CVCRM dispara de verdade e manda idtarefa junto no corpo ({idlead, idtarefa, idtransacao}, confirmado contra payload real) -- entao so busca a tarefa quando ela veio, em vez de chamar a API em todo evento (situacao, corretor etc. nao tem idtarefa)."
-    },
-    {
-      "parameters": {
-        "method": "GET",
-        "url": "=https://pafil.cvcrm.com.br/api/v1/cvdw/leads/tarefas?a_partir_data_referencia={{ $now.toFormat('yyyy-MM-dd') }}&registros_por_pagina=200",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "email", "value": "<CVCRM_EMAIL, mesma credencial ja usada por Enviar CVCRM>" }
-          ]
-        },
-        "options": { "timeout": 30000 }
-      },
-      "id": "buscar-tarefa-cvcrm",
-      "name": "Buscar tarefa CVCRM",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [460, 100],
-      "notes": "Confirmado ao vivo em 23/set/2026: /api/v1/cvdw/leads/tarefas e' um endpoint tipo CVDW (bulk, paginado), NAO tem busca por idlead/idtarefa -- so filtra por a_partir_data_referencia (nome do parametro tambem confirmado ao vivo, a doc geral sugeria 'a_partir_de', que nao existe). Com a data de hoje o volume fica pequeno (8 registros no teste), entao filtrar por idtarefa no node seguinte (client-side) e' viavel sem paginar. Endpoint de CRIACAO (POST, direcao GHL->CVCRM) ainda nao foi encontrado -- ver RUNBOOK.md."
-    },
-    {
-      "parameters": {
-        "jsCode": "// Confirmado contra uma resposta real do GET (node 'Buscar lead CVCRM') em\n// 18/set/2026: a resposta vem envelopada em {codigo, total, leads: [...]},\n// nao o lead direto -- e dentro do lead, 'situacao' e 'corretor' sao objetos\n// {id, nome[, email]}, nao campos escalares.\n// tipo_evento nao vem em lugar nenhum do payload do CVCRM (o webhook so manda\n// idlead) -- se for preciso distinguir o gatilho (criacao vs. mudanca de\n// situacao), a saida e cadastrar um Webhook por gatilho no painel do CVCRM,\n// cada um com uma query string diferente na URL (ex.: ?gatilho=criacao),\n// e ler isso do node 'Webhook CVCRM' original, nao deste.\n// TODO: 'empreendimento' veio como array vazio no lead de teste (sem nenhum\n// empreendimento vinculado) -- confirmar o formato dos itens (id/nome) contra\n// um lead real que tenha empreendimento antes de confiar nesse mapeamento.\n//\n// origem_campanha invertido em 21/set/2026: quem gerencia campanha e origem\n// de lead e o CVCRM, nao o GHL, entao o dono passou a ser cvcrm (ver\n// dono_campo). O 'origem' do lead CVCRM ja e uma lista fechada de valores\n// padronizados (Facebook, Google, Portais, Painel Gestor etc.), entao o\n// valor passa direto pro GHL, sem de-para -- o GHL aceita texto livre.\n//\n// situacao_lead removido daqui em 22/set/2026: o dono virou ghl (nao cvcrm\n// mais), entao mesmo se capturado aqui a view de despacho ignora (dono_campo\n// nao bate com origem=cvcrm). Ver situacao_lead em dono_campo.\n//\n// interacao_cvcrm adicionado 23/set/2026, corrigido no mesmo dia: o gatilho\n// dedicado \"Nova interacao\" do CVCRM nao dispara de verdade (confirmado ao\n// vivo -- varias anotacoes de teste, nenhum webhook chamado). A interacao\n// mais recente vem de carona em QUALQUER outro gatilho que ja funciona\n// (Associar Atendente, mudanca de situacao), porque esta busca sempre traz o\n// lead inteiro. Por isso manda tambem interacao_cvcrm_id (o id da ultima\n// interacao, assumindo ordem cronologica crescente no array -- observado nos\n// testes, nunca confirmado formalmente que e' sempre assim): e' contra esse\n// id que o trigger preencher_fila_sync (ver integracao.sql) decide se essa\n// interacao ja foi vista antes, pra nao reenviar a mesma nota antiga toda\n// vez que outro campo mudar.\n//\n// tarefa_cvcrm adicionado 23/set/2026: diferente da interacao, o gatilho\n// \"Nova tarefa\" dispara de verdade e manda idtarefa direto no corpo do\n// webhook -- sem piggyback, sem dedup por id (cada evento de tarefa nova e'\n// unico, nao se repete em outros gatilhos). O node \"Buscar tarefa CVCRM\" so\n// roda quando idtarefa veio (ver \"Tem tarefa?\"); o try/catch cobre o caso\n// de ele nao ter rodado (branch sem tarefa). Le sempre de 'Buscar lead\n// CVCRM' explicitamente (nao de $json): no branch com tarefa, $json vira a\n// saida de 'Buscar tarefa CVCRM' (a lista de tarefas), nao mais o lead.\nconst lead = ($('Buscar lead CVCRM').item.json.leads ?? [])[0] ?? {};\nconst interacoes = lead.interacao ?? [];\nconst ultimaInteracao = interacoes.length ? interacoes[interacoes.length - 1] : null;\n\nlet tarefaEncontrada = null;\ntry {\n  const idtarefaAlvo = ($('Webhook CVCRM').item.json.body ?? $('Webhook CVCRM').item.json).idtarefa;\n  if (idtarefaAlvo) {\n    const tarefas = $('Buscar tarefa CVCRM').item.json.dados ?? [];\n    tarefaEncontrada = tarefas.find((t) => t.idtarefa === idtarefaAlvo) ?? null;\n  }\n} catch (e) {\n  tarefaEncontrada = null;\n}\n\nreturn {\n  json: {\n    origem: 'cvcrm',\n    tipo_evento: $('Webhook CVCRM').item.json.query?.gatilho ?? 'desconhecido',\n    telefone_bruto: lead.telefone ?? null,\n    email_bruto: lead.email ?? null,\n    cpf_bruto: lead.documento_tipo === 'cpf' ? (lead.documento ?? null) : null,\n    campos: {\n      idlead_cvcrm: lead.idlead ?? null,\n      corretor_responsavel: lead.corretor?.nome ?? null,\n      empreendimento_interesse: lead.empreendimento?.[0]?.nome ?? null,\n      origem_campanha: lead.origem ?? null,\n      interacao_cvcrm: ultimaInteracao?.descricao ?? null,\n      interacao_cvcrm_id: ultimaInteracao?.id ?? null,\n      tarefa_cvcrm: tarefaEncontrada ? {\n        idtarefa: tarefaEncontrada.idtarefa,\n        descricao: tarefaEncontrada.descricao,\n        data: tarefaEncontrada.data,\n        situacao: tarefaEncontrada.situacao,\n      } : null,\n    },\n  },\n};\n"
+        "jsCode": "// Confirmado contra uma resposta real do GET (node 'Buscar lead CVCRM') em\n// 18/set/2026: a resposta vem envelopada em {codigo, total, leads: [...]},\n// nao o lead direto -- e dentro do lead, 'situacao' e 'corretor' sao objetos\n// {id, nome[, email]}, nao campos escalares.\n// tipo_evento nao vem em lugar nenhum do payload do CVCRM (o webhook so manda\n// idlead) -- se for preciso distinguir o gatilho (criacao vs. mudanca de\n// situacao), a saida e cadastrar um Webhook por gatilho no painel do CVCRM,\n// cada um com uma query string diferente na URL (ex.: ?gatilho=criacao),\n// e ler isso do node 'Webhook CVCRM' original, nao deste.\n// TODO: 'empreendimento' veio como array vazio no lead de teste (sem nenhum\n// empreendimento vinculado) -- confirmar o formato dos itens (id/nome) contra\n// um lead real que tenha empreendimento antes de confiar nesse mapeamento.\n//\n// origem_campanha invertido em 21/set/2026: quem gerencia campanha e origem\n// de lead e o CVCRM, nao o GHL, entao o dono passou a ser cvcrm (ver\n// dono_campo). O 'origem' do lead CVCRM ja e uma lista fechada de valores\n// padronizados (Facebook, Google, Portais, Painel Gestor etc.), entao o\n// valor passa direto pro GHL, sem de-para -- o GHL aceita texto livre.\n//\n// situacao_lead removido daqui em 22/set/2026: o dono virou ghl (nao cvcrm\n// mais), entao mesmo se capturado aqui a view de despacho ignora (dono_campo\n// nao bate com origem=cvcrm). Ver situacao_lead em dono_campo.\n//\n// interacao_cvcrm adicionado 23/set/2026, corrigido no mesmo dia: o gatilho\n// dedicado \"Nova interacao\" do CVCRM nao dispara de verdade (confirmado ao\n// vivo -- varias anotacoes de teste, nenhum webhook chamado). A interacao\n// mais recente vem de carona em QUALQUER outro gatilho que ja funciona\n// (Associar Atendente, mudanca de situacao), porque esta busca sempre traz o\n// lead inteiro. Por isso manda tambem interacao_cvcrm_id (o id da ultima\n// interacao, assumindo ordem cronologica crescente no array -- observado nos\n// testes, nunca confirmado formalmente que e' sempre assim): e' contra esse\n// id que o trigger preencher_fila_sync (ver integracao.sql) decide se essa\n// interacao ja foi vista antes, pra nao reenviar a mesma nota antiga toda\n// vez que outro campo mudar.\n//\n// tarefa_cvcrm corrigido 23/set/2026: primeira versao usava um endpoint\n// CVDW a parte (/leads/tarefas) so' porque o gatilho \"Nova tarefa\" manda\n// idtarefa no corpo do webhook -- so' que o Artur reparou que a tarefa ja'\n// vem de graca dentro do PROPRIO lead (campo lead.tarefa, mesmo GET que ja'\n// rodava pra tudo o resto), exatamente como interacao. Reescrito pro mesmo\n// padrao de carona+dedup por id (ver interacao_cvcrm_id acima e\n// ultima_tarefa_id_cvcrm em integracao.sql). Os campos aqui sao DIFERENTES\n// do endpoint CVDW antigo (esse array embutido nao tem 'situacao', so\n// data_conclusao/data_cancelamento) -- confirmado ao vivo.\nconst lead = ($('Buscar lead CVCRM').item.json.leads ?? [])[0] ?? {};\nconst interacoes = lead.interacao ?? [];\nconst ultimaInteracao = interacoes.length ? interacoes[interacoes.length - 1] : null;\nconst tarefas = lead.tarefa ?? [];\nconst ultimaTarefa = tarefas.length ? tarefas[tarefas.length - 1] : null;\n\nreturn {\n  json: {\n    origem: 'cvcrm',\n    tipo_evento: $('Webhook CVCRM').item.json.query?.gatilho ?? 'desconhecido',\n    telefone_bruto: lead.telefone ?? null,\n    email_bruto: lead.email ?? null,\n    cpf_bruto: lead.documento_tipo === 'cpf' ? (lead.documento ?? null) : null,\n    campos: {\n      idlead_cvcrm: lead.idlead ?? null,\n      corretor_responsavel: lead.corretor?.nome ?? null,\n      empreendimento_interesse: lead.empreendimento?.[0]?.nome ?? null,\n      origem_campanha: lead.origem ?? null,\n      interacao_cvcrm: ultimaInteracao?.descricao ?? null,\n      interacao_cvcrm_id: ultimaInteracao?.id ?? null,\n      tarefa_cvcrm: ultimaTarefa ? {\n        nome: ultimaTarefa.nome,\n        data: ultimaTarefa.data,\n        concluida: !!ultimaTarefa.data_conclusao,\n      } : null,\n      tarefa_cvcrm_id: ultimaTarefa?.id ?? null,\n    },\n  },\n};\n"
       },
       "id": "normalizar-cvcrm",
       "name": "Normalizar evento CVCRM",
@@ -381,7 +337,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [1420, 1400],
-      "notes": "Adicionado 23/set/2026: tarefa_cvcrm tem campo_destino='tarefa_ghl' (marcador especial, mesmo padrao de nota_ghl) -- precisa de POST /contacts/:id/tasks, nao PUT customFields. So roda quando o evento veio do gatilho 'Nova tarefa' do CVCRM (que manda idtarefa direto, sem piggyback -- ver Normalizar evento CVCRM)."
+      "notes": "Adicionado 23/set/2026: tarefa_cvcrm tem campo_destino='tarefa_ghl' (marcador especial, mesmo padrao de nota_ghl) -- precisa de POST /contacts/:id/tasks, nao PUT customFields. Igual interacao_cvcrm, a tarefa vem de carona em QUALQUER evento do CVCRM (Buscar lead CVCRM traz lead.tarefa sempre), com dedup por id em preencher_fila_sync."
     },
     {
       "parameters": {
@@ -397,7 +353,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ title: $json.campos_permitidos.tarefa_ghl.descricao, dueDate: $json.campos_permitidos.tarefa_ghl.data.replace(' ', 'T') + '-03:00', completed: $json.campos_permitidos.tarefa_ghl.situacao === 'C' }) }}",
+        "jsonBody": "={{ JSON.stringify({ title: $json.campos_permitidos.tarefa_ghl.nome, dueDate: $json.campos_permitidos.tarefa_ghl.data.replace(' ', 'T') + '-03:00', completed: $json.campos_permitidos.tarefa_ghl.concluida }) }}",
         "options": { "timeout": 30000 }
       },
       "id": "criar-tarefa-ghl",
@@ -409,7 +365,7 @@
       "maxTries": 3,
       "waitBetweenTries": 5000,
       "onError": "continueErrorOutput",
-      "notes": "Confirmado contra a doc oficial (23/set/2026, marketplace.gohighlevel.com/docs/ghl/contacts/create-task): POST /contacts/:contactId/tasks, header Version: v3, Bearer, corpo {title, dueDate (ISO 8601), completed (bool)}. situacao 'C' (Concluido) vira completed=true; P/A/CA viram completed=false -- GHL nao tem estado equivalente a cancelado, simplificacao deliberada. data do CVCRM ('2026-09-24 16:53:00', sem timezone) e' tratada como horario de Brasilia (-03:00) direto, sem lib de timezone. NAO tem a direcao contraria (GHL->CVCRM) ainda -- endpoint de criacao de tarefa no CVCRM nao foi encontrado, ver RUNBOOK.md."
+      "notes": "Confirmado contra a doc oficial (23/set/2026, marketplace.gohighlevel.com/docs/ghl/contacts/create-task): POST /contacts/:contactId/tasks, header Version: v3, Bearer, corpo {title, dueDate (ISO 8601), completed (bool)}. title vem de lead.tarefa[].nome (texto auto-gerado pelo CVCRM, tipo 'Tarefa. Lead #105118, Fulano' -- confirmado ao vivo que 'descricao' nesse array embutido e' so um rotulo fixo de categoria, tipo 'Tarefa Interação', nao texto livre). concluida = !!data_conclusao (o array embutido no lead nao tem 'situacao', so data_conclusao/data_cancelamento -- cancelado tambem vira completed=false, GHL nao tem estado equivalente). data do CVCRM ('2026-09-24 16:53:00', sem timezone) e' tratada como horario de Brasilia (-03:00) direto, sem lib de timezone. NAO tem a direcao contraria (GHL->CVCRM) ainda -- endpoint de criacao de tarefa no CVCRM nao foi encontrado, ver RUNBOOK.md."
     },
     {
       "parameters": {
@@ -714,15 +670,6 @@
       "main": [[{ "node": "Buscar lead CVCRM", "type": "main", "index": 0 }]]
     },
     "Buscar lead CVCRM": {
-      "main": [[{ "node": "Tem tarefa?", "type": "main", "index": 0 }]]
-    },
-    "Tem tarefa?": {
-      "main": [
-        [{ "node": "Buscar tarefa CVCRM", "type": "main", "index": 0 }],
-        [{ "node": "Normalizar evento CVCRM", "type": "main", "index": 0 }]
-      ]
-    },
-    "Buscar tarefa CVCRM": {
       "main": [[{ "node": "Normalizar evento CVCRM", "type": "main", "index": 0 }]]
     },
     "Normalizar evento CVCRM": {
