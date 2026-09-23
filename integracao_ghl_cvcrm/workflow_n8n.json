@@ -466,11 +466,11 @@
       "typeVersion": 2,
       "position": [-260, 1220],
       "webhookId": "pafil-ghl-nota-evento",
-      "notes": "Adicionado 23/set/2026. Gatilho no GHL: Workflow 'Nota adicionada' (Note Added), filtrado pela tag piloto-fiusa016-set2026 (mesma logica de escopo do piloto ja usada nos outros gatilhos -- nao mandar nota de contato fora do piloto). AINDA NAO CONFIRMADO contra payload real -- igual aconteceu com Oportunidade (doc oficial != payload real da acao Webhook dentro de Workflow), o nome exato do campo com o texto da nota precisa ser conferido dando um Test URL/disparando uma nota de teste e olhando o JSON bruto antes de confiar no normalizador abaixo."
+      "notes": "Adicionado 23/set/2026, confirmado contra payload real no mesmo dia. Gatilho no GHL: Workflow 'Nota adicionada' (Note Added), filtrado pela tag piloto-fiusa016-set2026 (mesma logica de escopo do piloto ja usada nos outros gatilhos -- nao mandar nota de contato fora do piloto)."
     },
     {
       "parameters": {
-        "jsCode": "// PROVISORIO (23/set/2026): mesmo formato achatado ja confirmado pro Webhook GHL\n// de contato (phone, email, tags, contact_id, workflow.name), mas o campo do\n// TEXTO DA NOTA ainda nao foi visto num payload real -- tentando os nomes mais\n// prováveis (notes/note/note_body/message) e guardando o corpo inteiro em\n// _debug_body_bruto pra conferir contra o payload de verdade assim que\n// dispararmos uma nota de teste no contato piloto. Depois de confirmar, trocar\n// a linha do textoNota pelo campo certo e apagar o _debug_body_bruto.\nconst body = $json.body ?? $json;\nconst textoNota = body.notes ?? body.note ?? body.note_body ?? body.message ?? null;\n\nreturn {\n  json: {\n    origem: 'ghl',\n    tipo_evento: 'nota_adicionada',\n    telefone_bruto: body.phone ?? null,\n    email_bruto: body.email ?? null,\n    cpf_bruto: null,\n    campos: {\n      nota_ghl: textoNota,\n    },\n    _debug_body_bruto: body,\n  },\n};\n"
+        "jsCode": "// Confirmado contra payload real em 23/set/2026: mesmo formato achatado ja\n// visto no Webhook GHL de contato (phone, email, tags, contact_id,\n// workflow.name) mais um objeto 'note' à parte (nao um campo solto como nos\n// outros webhooks) -- { note: { body, bodyHtml } }. Telefone/email ja vem no\n// corpo, igual ao webhook de Oportunidade -- nao precisa buscar o contato à\n// parte.\nconst body = $json.body ?? $json;\n\nreturn {\n  json: {\n    origem: 'ghl',\n    tipo_evento: 'nota_adicionada',\n    telefone_bruto: body.phone ?? null,\n    email_bruto: body.email ?? null,\n    cpf_bruto: null,\n    campos: {\n      nota_ghl: body.note?.body ?? null,\n    },\n  },\n};\n"
       },
       "id": "normalizar-ghl-nota",
       "name": "Normalizar evento GHL Nota",
@@ -491,7 +491,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [180, 1220],
-      "notes": "campos so tem nota_ghl (sem telefone/tags/etc que o gatilho de contato ja cobre) -- se o payload real nao trouxer phone/email diretos, vamos precisar de um Buscar contato GHL aqui, igual foi cogitado (e descartado por desnecessario) pro webhook de Oportunidade."
+      "notes": "campos so tem nota_ghl (sem telefone/tags/etc que o gatilho de contato ja cobre) -- confirmado 23/set/2026 que phone/email ja vem direto no corpo, igual ao webhook de Oportunidade, sem precisar de Buscar contato GHL."
     },
 
     {
