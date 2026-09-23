@@ -153,6 +153,34 @@ X desativado", ela vai falhar eventualmente. Preferir sempre restringir o
 escopo na fonte de dado (a query/view), que não pode ser "esquecida
 ativada" da mesma forma que um node num canvas.
 
+## Webhook de Oportunidade do GHL: o payload real não bate com a doc oficial
+
+A documentação formal da API do GHL (`OpportunityStageUpdate`) descreve um
+payload com `pipelineStageId` (um UUID) e `contactId`. **Isso não é o que a
+ação de Webhook dentro de um Workflow do GHL manda de verdade** (confirmado
+em 23/set/2026, testando contra o payload real). Essa ação achata o corpo
+do jeito de sempre (`phone`, `email`, `tags`, `contact_id`, os Custom
+Fields todos) e acrescenta os campos da oportunidade como texto solto,
+incluindo dois erros de digitação do próprio GHL (não são erros nossos):
+
+- `pipleline_stage`: nome da etapa **em texto** (ex.: `"Em Negociação"`),
+  não um ID
+- `pipleline_id`: ID do pipeline (esse funciona igual ao que a doc diz)
+
+Como o nome da etapa já vem pronto, o de-para em
+`integracao.depara_situacao_ghl` acabou não precisando do ID de estágio
+pra nada — a coluna `pipeline_stage_id_ghl` fica só de referência. E como
+telefone/email já vêm no corpo, não precisou de uma chamada `GET
+/contacts/:id` separada (um node inteiro foi construído e depois removido
+por causa dessa suposição errada).
+
+**Lição:** a documentação formal do GHL descreve o formato de um mecanismo
+de webhook (assinatura direta via API); a ação de "Webhook" dentro de um
+Workflow visual é outro mecanismo, com formato próprio, que não está
+documentado do mesmo jeito. Sempre testar contra o payload real antes de
+confiar na doc — já vimos isso acontecer também do lado do Contato (ver
+comentário no node `Normalizar evento GHL`).
+
 ## Reconciliação: pausada de propósito
 
 O workflow tem um segundo caminho, independente do webhook: `Gatilho
