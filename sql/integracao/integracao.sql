@@ -255,6 +255,18 @@ $$;
 -- pra nao reenviar a mesma nota de novo no GHL. interacao_cvcrm_id nunca vai
 -- pro dono_campo (nao e' um campo que se despacha, so controle), entao fica
 -- em campos so pra auditoria.
+--
+-- Eco de nota/interacao por TEXTO (23/set/2026, incidente ao vivo): o
+-- eh_eco generico (em v_fila_para_despachar) compara o hash de TODOS os
+-- campos entre origem e destino, e nunca bate pra esse par -- nota_ghl vem
+-- sozinho, interacao_cvcrm vem junto de corretor/empreendimento/origem, a
+-- forma nunca e' igual dos dois lados. Sem checagem dedicada, uma nota
+-- criada de um lado ecoa pro outro, que ecoa de volta, infinitamente (visto
+-- ao vivo: uma unica "oi" virou 4 notas/interacoes duplicadas em ~16min,
+-- uma a cada ciclo de despacho, ate o node de despacho ser desativado a
+-- mao). Aqui a comparacao e' por TEXTO contra o log_sync mais recente na
+-- direcao correspondente: se o texto que chegou e' exatamente o que a gente
+-- mesmo acabou de escrever no destino por ultimo, e' eco, nao repropaga.
 CREATE OR REPLACE FUNCTION integracao.preencher_fila_sync()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -262,6 +274,7 @@ AS $$
 DECLARE
     v_interacao_id      bigint;
     v_ultima_interacao  bigint;
+    v_ultimo_enviado    text;
 BEGIN
     NEW.contato_id := integracao.resolver_contato(
         NEW.telefone_bruto,
@@ -285,6 +298,30 @@ BEGIN
             UPDATE integracao.depara_contato
                SET ultima_interacao_id_cvcrm = v_interacao_id
              WHERE id = NEW.contato_id;
+        END IF;
+    END IF;
+
+    IF NEW.origem = 'ghl' AND NEW.campos ? 'nota_ghl' THEN
+        SELECT l.campos_enviados ->> 'interacoes' INTO v_ultimo_enviado
+          FROM integracao.log_sync l
+         WHERE l.contato_id = NEW.contato_id AND l.destino = 'cvcrm'
+         ORDER BY l.criado_em DESC
+         LIMIT 1;
+
+        IF v_ultimo_enviado IS NOT NULL AND v_ultimo_enviado = (NEW.campos ->> 'nota_ghl') THEN
+            NEW.campos := NEW.campos - 'nota_ghl';
+        END IF;
+    END IF;
+
+    IF NEW.origem = 'cvcrm' AND NEW.campos ? 'interacao_cvcrm' THEN
+        SELECT l.campos_enviados ->> 'nota_ghl' INTO v_ultimo_enviado
+          FROM integracao.log_sync l
+         WHERE l.contato_id = NEW.contato_id AND l.destino = 'ghl'
+         ORDER BY l.criado_em DESC
+         LIMIT 1;
+
+        IF v_ultimo_enviado IS NOT NULL AND v_ultimo_enviado = (NEW.campos ->> 'interacao_cvcrm') THEN
+            NEW.campos := NEW.campos - 'interacao_cvcrm';
         END IF;
     END IF;
 
