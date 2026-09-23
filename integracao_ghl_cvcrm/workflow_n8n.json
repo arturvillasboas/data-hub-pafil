@@ -361,14 +361,14 @@
       "typeVersion": 2,
       "position": [-260, 1000],
       "webhookId": "pafil-ghl-oportunidade-evento",
-      "notes": "Adicionado 22/set/2026: gatilho OpportunityStageUpdate do GHL, path separado do Webhook GHL de contato (payload e formato diferentes -- traz contactId/pipelineStageId, nao telefone/email/tags direto)."
+      "notes": "Adicionado 22/set/2026, corrigido 23/set/2026 apos ver o payload real: a acao de Webhook dentro de um Workflow do GHL (diferente do webhook de API formal que a doc descreve) manda o corpo achatado de sempre (phone, email, tags, contact_id) mais os campos da oportunidade: piplineline_stage (sic, nome da etapa em texto, nao um ID), pipleline_id (sic), pipeline_name, id, opportunity_name, status. Nao precisa buscar o contato à parte -- telefone/email ja vem no corpo."
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT idsituacao_cvcrm, nome FROM integracao.depara_situacao_ghl WHERE pipeline_stage_id_ghl = $1;",
+        "query": "SELECT idsituacao_cvcrm, nome FROM integracao.depara_situacao_ghl WHERE nome = $1;",
         "options": {
-          "queryReplacement": "={{ [($json.body ?? $json).pipelineStageId] }}"
+          "queryReplacement": "={{ [($json.body ?? $json).piplineline_stage] }}"
         }
       },
       "id": "buscar-situacao-cvcrm",
@@ -376,32 +376,11 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [-40, 1000],
-      "notes": "De-para 1:1 por nome de etapa (confirmado 22/set/2026, ver integracao.depara_situacao_ghl). Se nao achar (pipeline errado, ou fase fora do 'Pipeline de Leads'), idsituacao_cvcrm vem null e o evento e' normalizado sem situacao_lead."
+      "notes": "De-para 1:1 por NOME de etapa (corrigido 23/set/2026 -- o webhook manda o nome da etapa em texto direto, 'piplineline_stage', nao um ID; a coluna pipeline_stage_id_ghl em integracao.depara_situacao_ghl fica so de referencia/documentacao, sem uso na busca). Se nao achar (nome sem correspondencia), idsituacao_cvcrm vem null e o evento e' normalizado sem situacao_lead."
     },
     {
       "parameters": {
-        "method": "GET",
-        "url": "=https://services.leadconnectorhq.com/contacts/{{ ($('Webhook GHL Oportunidade').item.json.body ?? $('Webhook GHL Oportunidade').item.json).contactId }}",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpBearerAuth",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "Version", "value": "v3" }
-          ]
-        },
-        "options": { "timeout": 30000 }
-      },
-      "id": "buscar-contato-ghl-oportunidade",
-      "name": "Buscar contato GHL",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [180, 1000],
-      "notes": "O webhook de oportunidade so manda contactId, pipelineId, pipelineStageId -- sem telefone/email, que o fila_sync precisa pra resolver o contato. TODO: confirmar contra uma chamada real se a resposta vem envelopada em {contact: {...}} (padrao do POST de criacao) -- ainda nao testado ao vivo."
-    },
-    {
-      "parameters": {
-        "jsCode": "// Combina o contato (telefone/email, buscado no node anterior) com a situacao\n// ja traduzida (node 'Buscar situacao CVCRM', rodou antes do GET e por isso\n// precisa ser referenciado explicitamente, senao o Postgres já sobrescreveu $json).\nconst contato = $json.contact ?? $json;\nconst idsituacao = $('Buscar situacao CVCRM').item.json.idsituacao_cvcrm ?? null;\n\nreturn {\n  json: {\n    origem: 'ghl',\n    tipo_evento: 'oportunidade_estagio_alterado',\n    telefone_bruto: contato.phone ?? null,\n    email_bruto: contato.email ?? null,\n    cpf_bruto: null,\n    campos: {\n      situacao_lead: idsituacao,\n    },\n  },\n};\n"
+        "jsCode": "// Corrigido 23/set/2026: o webhook de oportunidade ja manda telefone/email/tags\n// no corpo (mesmo formato do Webhook GHL de contato) -- nao precisa buscar o\n// contato à parte. So a situacao precisa de traducao (node anterior).\nconst body = $('Webhook GHL Oportunidade').item.json.body ?? $('Webhook GHL Oportunidade').item.json;\nconst idsituacao = $json.idsituacao_cvcrm ?? null;\n\nreturn {\n  json: {\n    origem: 'ghl',\n    tipo_evento: 'oportunidade_estagio_alterado',\n    telefone_bruto: body.phone ?? null,\n    email_bruto: body.email ?? null,\n    cpf_bruto: null,\n    campos: {\n      situacao_lead: idsituacao,\n    },\n  },\n};\n"
       },
       "id": "normalizar-ghl-oportunidade",
       "name": "Normalizar evento GHL Oportunidade",
@@ -531,9 +510,6 @@
       "main": [[{ "node": "Buscar situacao CVCRM", "type": "main", "index": 0 }]]
     },
     "Buscar situacao CVCRM": {
-      "main": [[{ "node": "Buscar contato GHL", "type": "main", "index": 0 }]]
-    },
-    "Buscar contato GHL": {
       "main": [[{ "node": "Normalizar evento GHL Oportunidade", "type": "main", "index": 0 }]]
     },
     "Normalizar evento GHL Oportunidade": {
