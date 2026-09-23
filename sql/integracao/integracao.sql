@@ -68,7 +68,9 @@ INSERT INTO integracao.dono_campo (campo, dono, campo_destino, descricao) VALUES
     ('origem_campanha',          'cvcrm', 'X9HoukgKTYlebZNCSyvA',
         'Decisão de negócio fechada em 21/set/2026: quem gerencia campanha e origem de lead é o CVCRM, não o GHL, então o dono é cvcrm (invertido do que estava antes). O campo origem do CVCRM é uma lista fechada de ~30 valores padronizados (Facebook, Google, Portais, Painel Gestor etc. -- não aceita texto livre), então não precisa de de-para: o valor passa direto pro GHL, que aceita texto livre. Destino: Custom Field GHL "Midia CVCRM" (chave {{contact.midia_cv}}), criado em 28/mai/2026 junto com os outros três, mas nunca usado até agora.'),
     ('situacao_lead',            'ghl',   'idsituacao',
-        'Invertido em 22/set/2026 (decisão de negócio: GHL vira a fonte de verdade de onde o lead está, situação do CVCRM passa a refletir o estágio do pipeline "Pipeline de Leads" no GHL -- os 11 nomes de etapa são idênticos, na mesma ordem, dos dois lados, então o de-para é por ID de estágio, ver integracao.depara_situacao_ghl). Destino = campo idsituacao no corpo do POST /api/v1/comercial/leads do CVCRM (confirmado contra a API real: aceita qualquer id de situação, sem exigir ordem sequencial, diferente da tela). Antes disso, o campo era dono-CVCRM, indo pro Custom Field "Situacao Lead CV" no GHL (contact.situacao_lead_cv) -- esse Custom Field fica sem uso a partir de agora, a menos que seja reaproveitado depois.'),
+        'Invertido em 22/set/2026 (decisão de negócio: mudança de estágio no GHL reflete no CVCRM). Destino = campo idsituacao no corpo do POST /api/v1/comercial/leads do CVCRM (confirmado contra a API real: aceita qualquer id de situação, sem exigir ordem sequencial, diferente da tela). De-para por NOME da etapa (ver integracao.depara_situacao_ghl), porque o webhook do GHL manda o nome em texto, não um id. RECOLOCADO bidirecional em 23/set/2026 junto com situacao_cvcrm (ver abaixo) -- os 11 nomes de etapa são idênticos, na mesma ordem, dos dois lados, então dá pra sincronizar nos dois sentidos sem perder informação. Ver eco por valor em preencher_fila_sync (compara idsituacao numérico, não hash-de-todos-os-campos, mesmo motivo já documentado pro par nota/interação).'),
+    ('situacao_cvcrm',           'cvcrm', 'situacao_ghl',
+        'Adicionado 23/set/2026: mudança de situação feita direto no CVCRM reflete no estágio da Oportunidade no GHL (pipeline "Pipeline de Leads"). lead.situacao.id já é o idsituacao_cvcrm direto (sem de-para nessa ponta -- o de-para por nome só é necessário na direção contrária). campo_destino "situacao_ghl" é marcador especial (não é Custom Field ID) -- o desvio "Tem situacao pra mudar?" roteia pra um PUT /opportunities/:id (estágio do pipeline), não PUT customFields. Precisa resolver o id do estágio (integracao.depara_situacao_ghl) e o id da Oportunidade no GHL (GET /opportunities/search por contactId+pipelineId) antes do PUT -- ver nodes "Buscar estagio GHL"/"Buscar oportunidade GHL"/"Mudar estagio Oportunidade GHL".'),
     ('corretor_responsavel',     'cvcrm', 'MzBSUBH8ttuLVPCX16JU',
         'Nome do corretor responsável (texto, não o idcorretor -- decisão de 18/set/2026). Destino = Custom Field "Nome Corretor CVCRM" no GHL (contact.nome_corretor_cvcrm), criado em 18/set/2026 especificamente para isto (já existia um "ID Corretor CVCRM" com outro propósito).'),
     ('empreendimento_interesse', 'cvcrm', 'VU4yvq6ZFoJkAhzJhS26',
@@ -348,6 +350,38 @@ BEGIN
 
         IF v_ultimo_enviado IS NOT NULL AND v_ultimo_enviado = (NEW.campos ->> 'interacao_cvcrm') THEN
             NEW.campos := NEW.campos - 'interacao_cvcrm';
+        END IF;
+    END IF;
+
+    -- Eco de situacao por VALOR (idsituacao numerico, nao hash) -- 23/set/2026,
+    -- mesmo motivo/padrao do par nota_ghl/interacao_cvcrm: a forma do evento
+    -- muda de lado pro lado (situacao_lead sozinho vs situacao_cvcrm junto de
+    -- outros campos), entao o eh_eco generico nunca bate. Idempotente dos dois
+    -- lados (PUT customFields/opportunity com o mesmo valor nao duplica nada,
+    -- diferente de nota/interacao que sao append-only), entao mesmo se um eco
+    -- escapar por um ciclo o dano e' so uma chamada de API redundante, nao
+    -- dado duplicado visivel.
+    IF NEW.origem = 'ghl' AND NEW.campos ? 'situacao_lead' THEN
+        SELECT l.campos_enviados ->> 'idsituacao' INTO v_ultimo_enviado
+          FROM integracao.log_sync l
+         WHERE l.contato_id = NEW.contato_id AND l.destino = 'cvcrm'
+         ORDER BY l.criado_em DESC
+         LIMIT 1;
+
+        IF v_ultimo_enviado IS NOT NULL AND v_ultimo_enviado = (NEW.campos ->> 'situacao_lead') THEN
+            NEW.campos := NEW.campos - 'situacao_lead';
+        END IF;
+    END IF;
+
+    IF NEW.origem = 'cvcrm' AND NEW.campos ? 'situacao_cvcrm' THEN
+        SELECT l.campos_enviados ->> 'situacao_ghl' INTO v_ultimo_enviado
+          FROM integracao.log_sync l
+         WHERE l.contato_id = NEW.contato_id AND l.destino = 'ghl'
+         ORDER BY l.criado_em DESC
+         LIMIT 1;
+
+        IF v_ultimo_enviado IS NOT NULL AND v_ultimo_enviado = (NEW.campos ->> 'situacao_cvcrm') THEN
+            NEW.campos := NEW.campos - 'situacao_cvcrm';
         END IF;
     END IF;
 
