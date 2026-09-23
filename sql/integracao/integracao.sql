@@ -35,6 +35,15 @@ CREATE TABLE IF NOT EXISTS integracao.depara_contato (
 );
 CREATE INDEX IF NOT EXISTS ix_depara_contato_email ON integracao.depara_contato (email);
 CREATE INDEX IF NOT EXISTS ix_depara_contato_cpf   ON integracao.depara_contato (cpf);
+-- Adicionada 23/set/2026: guarda o id da ultima interacao (anotacao) do CVCRM
+-- ja processada por contato. Necessario porque o gatilho "Nova interacao" do
+-- CVCRM nao dispara de verdade (confirmado ao vivo -- nenhuma anotacao de
+-- teste chamou o webhook); em vez disso, a interacao mais recente vem de
+-- carona em QUALQUER evento do CVCRM que ja funciona (Associar Atendente,
+-- mudanca de situacao etc.), porque "Buscar lead CVCRM" sempre busca o lead
+-- inteiro. Sem esse controle, a mesma anotacao antiga seria reenviada como
+-- nota nova no GHL toda vez que outro campo mudasse.
+ALTER TABLE integracao.depara_contato ADD COLUMN IF NOT EXISTS ultima_interacao_id_cvcrm bigint;
 
 -- Dono do campo: por chave de campo do payload, quem tem autoridade para
 -- escrever nele. Fica em tabela (não hardcoded), no mesmo espírito dos de-para
@@ -237,10 +246,22 @@ $$;
 -- Preenche contato_id e hash_evento automaticamente em todo INSERT em
 -- fila_sync. É o que permite o n8n só gravar os campos crus do webhook, sem
 -- precisar chamar resolver_contato/calcular_hash_evento ele mesmo.
+--
+-- Dedup de interacao_cvcrm (23/set/2026): interacao_cvcrm/interacao_cvcrm_id
+-- chegam em TODO evento do CVCRM (Buscar lead CVCRM sempre busca o lead
+-- inteiro), nao so quando uma anotacao nova e' criada -- ver comentario em
+-- depara_contato.ultima_interacao_id_cvcrm. Se o id nao for mais novo que o
+-- ja visto pra esse contato, interacao_cvcrm sai de NEW.campos antes do hash,
+-- pra nao reenviar a mesma nota de novo no GHL. interacao_cvcrm_id nunca vai
+-- pro dono_campo (nao e' um campo que se despacha, so controle), entao fica
+-- em campos so pra auditoria.
 CREATE OR REPLACE FUNCTION integracao.preencher_fila_sync()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
+DECLARE
+    v_interacao_id      bigint;
+    v_ultima_interacao  bigint;
 BEGIN
     NEW.contato_id := integracao.resolver_contato(
         NEW.telefone_bruto,
@@ -249,6 +270,24 @@ BEGIN
         CASE WHEN NEW.origem = 'cvcrm' THEN NEW.campos ->> 'idlead_cvcrm' END,
         CASE WHEN NEW.origem = 'ghl'   THEN NEW.campos ->> 'id_contato_ghl' END
     );
+
+    IF NEW.origem = 'cvcrm' AND NEW.campos ? 'interacao_cvcrm_id' THEN
+        v_interacao_id := NULLIF(NEW.campos ->> 'interacao_cvcrm_id', '')::bigint;
+
+        SELECT ultima_interacao_id_cvcrm INTO v_ultima_interacao
+          FROM integracao.depara_contato
+         WHERE id = NEW.contato_id;
+
+        IF v_interacao_id IS NULL
+           OR (v_ultima_interacao IS NOT NULL AND v_interacao_id <= v_ultima_interacao) THEN
+            NEW.campos := NEW.campos - 'interacao_cvcrm';
+        ELSE
+            UPDATE integracao.depara_contato
+               SET ultima_interacao_id_cvcrm = v_interacao_id
+             WHERE id = NEW.contato_id;
+        END IF;
+    END IF;
+
     NEW.hash_evento := integracao.calcular_hash_evento(NEW.campos);
     RETURN NEW;
 END;
