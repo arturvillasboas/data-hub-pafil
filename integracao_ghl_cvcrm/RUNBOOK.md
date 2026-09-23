@@ -210,6 +210,37 @@ filtrado pela tag do piloto. O payload real desse gatilho manda o texto
 em `note.body` (objeto aninhado), diferente dos quatro nomes tentados
 antes de confirmar contra um teste ao vivo.
 
+## Incidente: loop infinito de eco entre nota GHL e interação CVCRM
+
+Descoberto ao vivo em 23/set/2026, pouco depois de validar o piggyback
+acima. Uma nota criada de um lado virava interação no outro, essa
+interação virava nota de novo no primeiro lado, e assim por diante, sem
+parar sozinho. Em cerca de 16 minutos, uma única mensagem de teste ("oi")
+virou 4 notas/interações duplicadas, uma a cada ciclo de despacho, até o
+node `Gatilho despacho` ser desativado a mão pra estancar.
+
+**Causa:** a detecção de eco genérica (`eh_eco`, em
+`v_fila_para_despachar`) compara o hash de TODOS os campos de um evento
+entre origem e destino. Isso nunca bate pra esse par de campos
+especificamente, porque a forma muda de lado pro lado: `nota_ghl` chega
+sozinho, `interacao_cvcrm` chega junto de `corretor_responsavel`,
+`empreendimento_interesse` e `origem_campanha`. Um hash calculado sobre
+formas diferentes nunca é igual, então o eco nunca era pego.
+
+**Correção:** duas checagens novas em `preencher_fila_sync()`, por TEXTO
+em vez de hash. Compara o valor que está chegando contra o `log_sync`
+mais recente na direção de destino correspondente (o que a própria
+integração acabou de escrever lá). Se for exatamente igual, é eco, o
+campo sai de `NEW.campos` antes do hash ser calculado. Validado ao vivo:
+uma nota de teste faz uma ida e volta (esperado), e a segunda tentativa
+de propagar de volta é corretamente descartada.
+
+**Lição:** a detecção de eco por hash-de-todos-os-campos só funciona
+quando o formato do evento é o mesmo nos dois sentidos. Qualquer campo
+novo que mude de forma entre origem e destino (como nota/interação, que
+vira um objeto solto de um lado e parte de um payload maior do outro)
+precisa de detecção de eco própria, não pode confiar na genérica.
+
 ## Reconciliação: pausada de propósito
 
 O workflow tem um segundo caminho, independente do webhook: `Gatilho
