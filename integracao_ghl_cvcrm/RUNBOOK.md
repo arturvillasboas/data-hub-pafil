@@ -181,6 +181,35 @@ documentado do mesmo jeito. Sempre testar contra o payload real antes de
 confiar na doc — já vimos isso acontecer também do lado do Contato (ver
 comentário no node `Normalizar evento GHL`).
 
+## Notas do GHL e interações do CVCRM: o gatilho "Nova interação" não existe de verdade
+
+Testado ao vivo em 23/set/2026: o gatilho "Nova interação" cadastrado no
+painel de webhooks do CVCRM não dispara nada. Foram feitas várias
+anotações de teste no lead piloto e nenhuma chamou o webhook, mesmo com
+o cadastro correto (URL certa, Ativo, escopo FIUSA 016). Não existe log
+de disparo no painel do CVCRM para confirmar se a causa é do lado deles;
+o webhook de teste foi apagado depois de confirmar que não adianta
+recriar.
+
+**A solução não depende desse gatilho.** O node `Buscar lead CVCRM`
+sempre busca o lead inteiro, então a última interação já vinha junto em
+qualquer outro gatilho que já funciona (Associar Atendente, mudança de
+situação). O ajuste ficou em duas partes:
+
+- `Normalizar evento CVCRM` manda também `interacao_cvcrm_id` (o id da
+  última interação), além do texto.
+- A função `preencher_fila_sync()` (em `sql/integracao/integracao.sql`)
+  compara esse id contra `depara_contato.ultima_interacao_id_cvcrm`. Se
+  não for mais novo, tira `interacao_cvcrm` do evento antes de calcular o
+  hash. Sem isso, a mesma anotação antiga seria reenviada como nota nova
+  no GHL toda vez que outro campo do lead mudasse.
+
+Do lado GHL, a direção contrária (nota do contato virando interação no
+CVCRM) usa um gatilho de verdade: o Workflow "Nota adicionada" no GHL,
+filtrado pela tag do piloto. O payload real desse gatilho manda o texto
+em `note.body` (objeto aninhado), diferente dos quatro nomes tentados
+antes de confirmar contra um teste ao vivo.
+
 ## Reconciliação: pausada de propósito
 
 O workflow tem um segundo caminho, independente do webhook: `Gatilho
