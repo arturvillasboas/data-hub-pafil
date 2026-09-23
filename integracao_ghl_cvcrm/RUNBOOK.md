@@ -241,6 +241,41 @@ novo que mude de forma entre origem e destino (como nota/interação, que
 vira um objeto solto de um lado e parte de um payload maior do outro)
 precisa de detecção de eco própria, não pode confiar na genérica.
 
+## Tarefa CVCRM → GHL: lead.tarefa já vem embutido, não precisa buscar à parte
+
+Implementado em 23/set/2026, com um desvio no meio do caminho que vale
+registrar. A primeira versão assumiu que precisava de uma chamada à API
+separada pra buscar a tarefa: o gatilho "Nova tarefa" do CVCRM (diferente
+de "Nova interação") dispara de verdade e manda `idtarefa` no corpo do
+webhook, então pareceu natural usar esse id para buscar a tarefa num
+endpoint dedicado (`GET /api/v1/cvdw/leads/tarefas`, tipo CVDW, bulk,
+paginado, sem busca por id — precisou filtrar client-side pela data de
+hoje).
+
+Isso funcionava, mas trouxe um bug: a tarefa só era buscada quando o
+webhook trazia `idtarefa` no corpo, e num teste real outro gatilho
+disparou primeiro (sem `idtarefa`), então a tarefa nunca chegou no GHL.
+Ao investigar esse bug junto com o Artur, saiu à tona que **`lead.tarefa`
+já vem embutido na resposta do `GET` do lead** (o mesmo `Buscar lead
+CVCRM` que já roda em todo evento), exatamente como `lead.interacao` --
+não tinha necessidade nenhuma do endpoint separado. Reescrito pro mesmo
+padrão de carona + dedup por id que a interação já usa
+(`ultima_tarefa_id_cvcrm` em `depara_contato`).
+
+**Lição, a mesma do "Nova interação" mas ao contrário desta vez:** antes
+de construir uma busca nova pra um dado do CVCRM, primeiro conferir se
+ele já não vem de graça no payload que já é buscado em todo evento. Nem
+todo campo precisa de gatilho dedicado nem de endpoint dedicado --
+"Nova tarefa" disparar de verdade não significava que fosse o caminho
+mais simples.
+
+Detalhe menor, mas registrado porque já aconteceu duas vezes: reaplicar
+o SQL (`aplicar_integracao.py`) bem no meio de uma sequência de testes
+pode deixar 1 evento "de transição" passar sem dedup (a coluna de
+controle começa vazia e o primeiro evento pós-fix é tratado como
+primeira vez vendo aquele id). Não é bug, é só questão de sequência --
+o efeito desaparece a partir do próximo evento.
+
 ## Reconciliação: pausada de propósito
 
 O workflow tem um segundo caminho, independente do webhook: `Gatilho
