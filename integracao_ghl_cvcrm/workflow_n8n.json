@@ -361,14 +361,14 @@
       "typeVersion": 2,
       "position": [-260, 1000],
       "webhookId": "pafil-ghl-oportunidade-evento",
-      "notes": "Adicionado 22/set/2026, corrigido 23/set/2026 apos ver o payload real: a acao de Webhook dentro de um Workflow do GHL (diferente do webhook de API formal que a doc descreve) manda o corpo achatado de sempre (phone, email, tags, contact_id) mais os campos da oportunidade: piplineline_stage (sic, nome da etapa em texto, nao um ID), pipleline_id (sic), pipeline_name, id, opportunity_name, status. Nao precisa buscar o contato à parte -- telefone/email ja vem no corpo."
+      "notes": "Adicionado 22/set/2026, corrigido 23/set/2026 apos ver o payload real: a acao de Webhook dentro de um Workflow do GHL (diferente do webhook de API formal que a doc descreve) manda o corpo achatado de sempre (phone, email, tags, contact_id) mais os campos da oportunidade: pipleline_stage (sic, nome da etapa em texto, nao um ID), pipleline_id (sic), pipeline_name, id, opportunity_name, status. Nao precisa buscar o contato à parte -- telefone/email ja vem no corpo."
     },
     {
       "parameters": {
         "operation": "executeQuery",
         "query": "SELECT idsituacao_cvcrm, nome FROM integracao.depara_situacao_ghl WHERE nome = $1;",
         "options": {
-          "queryReplacement": "={{ [($json.body ?? $json).piplineline_stage] }}"
+          "queryReplacement": "={{ [($json.body ?? $json).pipleline_stage] }}"
         }
       },
       "id": "buscar-situacao-cvcrm",
@@ -376,7 +376,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [-40, 1000],
-      "notes": "De-para 1:1 por NOME de etapa (corrigido 23/set/2026 -- o webhook manda o nome da etapa em texto direto, 'piplineline_stage', nao um ID; a coluna pipeline_stage_id_ghl em integracao.depara_situacao_ghl fica so de referencia/documentacao, sem uso na busca). Se nao achar (nome sem correspondencia), idsituacao_cvcrm vem null e o evento e' normalizado sem situacao_lead."
+      "notes": "De-para 1:1 por NOME de etapa (corrigido 23/set/2026 -- o webhook manda o nome da etapa em texto direto, 'pipleline_stage', nao um ID; a coluna pipeline_stage_id_ghl em integracao.depara_situacao_ghl fica so de referencia/documentacao, sem uso na busca). Se nao achar (nome sem correspondencia), idsituacao_cvcrm vem null e o evento e' normalizado sem situacao_lead."
     },
     {
       "parameters": {
