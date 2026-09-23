@@ -58,7 +58,11 @@ INSERT INTO integracao.dono_campo (campo, dono, campo_destino, descricao) VALUES
     ('corretor_responsavel',     'cvcrm', 'MzBSUBH8ttuLVPCX16JU',
         'Nome do corretor responsável (texto, não o idcorretor -- decisão de 18/set/2026). Destino = Custom Field "Nome Corretor CVCRM" no GHL (contact.nome_corretor_cvcrm), criado em 18/set/2026 especificamente para isto (já existia um "ID Corretor CVCRM" com outro propósito).'),
     ('empreendimento_interesse', 'cvcrm', 'VU4yvq6ZFoJkAhzJhS26',
-        'Destino = Custom Field "Empreendimento CV" no GHL (contact.empreendimento_cv), já existia na sub-account desde 28/mai/2026.')
+        'Destino = Custom Field "Empreendimento CV" no GHL (contact.empreendimento_cv), já existia na sub-account desde 28/mai/2026.'),
+    ('nota_ghl',                 'ghl',   'interacoes',
+        'Adicionado 23/set/2026: nota/observação da aba "Notas" do contato no GHL, virando interação no CVCRM. Nota não é um campo simples -- campo_destino "interacoes" não é uma chave de corpo comum, é um marcador especial que o node Enviar CVCRM trata separado (empacota como [{tipo: ''A'', descricao: valor}], formato exigido pela API). Escopado ao piloto (tag piloto-fiusa016-set2026 no gatilho do GHL), porque mandar interação pra um lead sem idlead_cvcrm resolvido corre o mesmo risco do incidente do lead 105112 (CVCRM cria lead novo em vez de falhar).'),
+    ('interacao_cvcrm',          'cvcrm', 'nota_ghl',
+        'Adicionado 23/set/2026: interação/anotação do CVCRM virando nota na aba "Notas" do contato no GHL. campo_destino "nota_ghl" também é um marcador especial (não é um Custom Field ID) -- o desvio "Tem nota pra criar?" detecta essa chave e roteia pro node "Criar nota GHL" (POST /contacts/:id/notes), em vez de seguir pro "Enviar GHL" (PUT customFields).')
 ON CONFLICT (campo) DO UPDATE SET dono = EXCLUDED.dono, campo_destino = EXCLUDED.campo_destino, descricao = EXCLUDED.descricao;
 -- Achado em 18/set/2026: a sub-account do GHL já tinha, desde 28/mai/2026, um
 -- conjunto de Custom Fields pensados especificamente para uma integração com o

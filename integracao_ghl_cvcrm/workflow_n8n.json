@@ -77,7 +77,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Confirmado contra uma resposta real do GET (node 'Buscar lead CVCRM') em\n// 18/set/2026: a resposta vem envelopada em {codigo, total, leads: [...]},\n// nao o lead direto -- e dentro do lead, 'situacao' e 'corretor' sao objetos\n// {id, nome[, email]}, nao campos escalares.\n// tipo_evento nao vem em lugar nenhum do payload do CVCRM (o webhook so manda\n// idlead) -- se for preciso distinguir o gatilho (criacao vs. mudanca de\n// situacao), a saida e cadastrar um Webhook por gatilho no painel do CVCRM,\n// cada um com uma query string diferente na URL (ex.: ?gatilho=criacao),\n// e ler isso do node 'Webhook CVCRM' original, nao deste.\n// TODO: 'empreendimento' veio como array vazio no lead de teste (sem nenhum\n// empreendimento vinculado) -- confirmar o formato dos itens (id/nome) contra\n// um lead real que tenha empreendimento antes de confiar nesse mapeamento.\n//\n// origem_campanha invertido em 21/set/2026: quem gerencia campanha e origem\n// de lead e o CVCRM, nao o GHL, entao o dono passou a ser cvcrm (ver\n// dono_campo). O 'origem' do lead CVCRM ja e uma lista fechada de valores\n// padronizados (Facebook, Google, Portais, Painel Gestor etc.), entao o\n// valor passa direto pro GHL, sem de-para -- o GHL aceita texto livre.\nconst lead = ($json.leads ?? [])[0] ?? {};\n\nreturn {\n  json: {\n    origem: 'cvcrm',\n    tipo_evento: $('Webhook CVCRM').item.json.query?.gatilho ?? 'desconhecido',\n    telefone_bruto: lead.telefone ?? null,\n    email_bruto: lead.email ?? null,\n    cpf_bruto: lead.documento_tipo === 'cpf' ? (lead.documento ?? null) : null,\n    campos: {\n      idlead_cvcrm: lead.idlead ?? null,\n      situacao_lead: lead.situacao?.id ?? null,\n      corretor_responsavel: lead.corretor?.nome ?? null,\n      empreendimento_interesse: lead.empreendimento?.[0]?.nome ?? null,\n      origem_campanha: lead.origem ?? null,\n    },\n  },\n};\n"
+        "jsCode": "// Confirmado contra uma resposta real do GET (node 'Buscar lead CVCRM') em\n// 18/set/2026: a resposta vem envelopada em {codigo, total, leads: [...]},\n// nao o lead direto -- e dentro do lead, 'situacao' e 'corretor' sao objetos\n// {id, nome[, email]}, nao campos escalares.\n// tipo_evento nao vem em lugar nenhum do payload do CVCRM (o webhook so manda\n// idlead) -- se for preciso distinguir o gatilho (criacao vs. mudanca de\n// situacao), a saida e cadastrar um Webhook por gatilho no painel do CVCRM,\n// cada um com uma query string diferente na URL (ex.: ?gatilho=criacao),\n// e ler isso do node 'Webhook CVCRM' original, nao deste.\n// TODO: 'empreendimento' veio como array vazio no lead de teste (sem nenhum\n// empreendimento vinculado) -- confirmar o formato dos itens (id/nome) contra\n// um lead real que tenha empreendimento antes de confiar nesse mapeamento.\n//\n// origem_campanha invertido em 21/set/2026: quem gerencia campanha e origem\n// de lead e o CVCRM, nao o GHL, entao o dono passou a ser cvcrm (ver\n// dono_campo). O 'origem' do lead CVCRM ja e uma lista fechada de valores\n// padronizados (Facebook, Google, Portais, Painel Gestor etc.), entao o\n// valor passa direto pro GHL, sem de-para -- o GHL aceita texto livre.\n//\n// situacao_lead removido daqui em 22/set/2026: o dono virou ghl (nao cvcrm\n// mais), entao mesmo se capturado aqui a view de despacho ignora (dono_campo\n// nao bate com origem=cvcrm). Ver situacao_lead em dono_campo.\n//\n// interacao_cvcrm adicionado 23/set/2026: pega a ULTIMA interacao do array\n// (assumindo que vem em ordem cronologica crescente, id/data_cad -- e o que\n// foi observado nos testes de 18/set/2026, nunca confirmado formalmente que\n// e' sempre assim). So faz sentido quando o gatilho for 'Nova interacao';\n// nos outros gatilhos (situacao, corretor), a ultima interacao do array so\n// reflete uma anotacao antiga que ja foi sincronizada antes -- o hash de eco\n// evita reenvio duplicado quando nao mudou nada.\nconst lead = ($json.leads ?? [])[0] ?? {};\nconst interacoes = lead.interacao ?? [];\nconst ultimaInteracao = interacoes.length ? interacoes[interacoes.length - 1] : null;\n\nreturn {\n  json: {\n    origem: 'cvcrm',\n    tipo_evento: $('Webhook CVCRM').item.json.query?.gatilho ?? 'desconhecido',\n    telefone_bruto: lead.telefone ?? null,\n    email_bruto: lead.email ?? null,\n    cpf_bruto: lead.documento_tipo === 'cpf' ? (lead.documento ?? null) : null,\n    campos: {\n      idlead_cvcrm: lead.idlead ?? null,\n      corretor_responsavel: lead.corretor?.nome ?? null,\n      empreendimento_interesse: lead.empreendimento?.[0]?.nome ?? null,\n      origem_campanha: lead.origem ?? null,\n      interacao_cvcrm: ultimaInteracao?.descricao ?? null,\n    },\n  },\n};\n"
       },
       "id": "normalizar-cvcrm",
       "name": "Normalizar evento CVCRM",
@@ -200,7 +200,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ idlead: $json.idlead_cvcrm, permitir_alteracao: true, email: $json.contato_email, telefone: $json.contato_telefone, ...Object.fromEntries(Object.entries($json.campos_permitidos).map(([k, v]) => [k, Array.isArray(v) ? v.join(',') : v])) }) }}",
+        "jsonBody": "={{ JSON.stringify({ idlead: $json.idlead_cvcrm, permitir_alteracao: true, email: $json.contato_email, telefone: $json.contato_telefone, ...Object.fromEntries(Object.entries($json.campos_permitidos).map(([k, v]) => k === 'interacoes' ? [k, [{ tipo: 'A', descricao: v }]] : [k, Array.isArray(v) ? v.join(',') : v])) }) }}",
         "options": { "timeout": 30000 }
       },
       "id": "enviar-cvcrm",
@@ -212,7 +212,7 @@
       "maxTries": 3,
       "waitBetweenTries": 5000,
       "onError": "continueErrorOutput",
-      "notes": "Confirmado via docs oficiais (16/set/2026): POST /api/v1/comercial/leads (o /api/cvio/lead esta descontinuado), auth por headers email+token, corpo exige idlead + permitir_alteracao=true. Mapeamento de campo fechado em 18/set/2026 (ver integracao.dono_campo): campos_permitidos ja chega com as chaves reais do CVCRM (ex.: 'tags'), so precisa converter array->string separada por virgula quando aplicavel (ja feito no jsonBody). Falta so testar o envio de verdade contra um lead real -- confirmado ate agora e a permissao de CRIACAO (ver issue #26), nao a edicao de um lead existente."
+      "notes": "Confirmado via docs oficiais (16/set/2026): POST /api/v1/comercial/leads (o /api/cvio/lead esta descontinuado), auth por headers email+token, corpo exige idlead + permitir_alteracao=true. Mapeamento de campo fechado em 18/set/2026 (ver integracao.dono_campo): campos_permitidos ja chega com as chaves reais do CVCRM (ex.: 'tags'), so precisa converter array->string separada por virgula quando aplicavel (ja feito no jsonBody). Adicionado 23/set/2026: a chave 'interacoes' (nota do GHL) tem tratamento especial -- vira [{tipo:'A', descricao: valor}], formato exigido pela API (confirmado via ajuda.cvcrm.com.br), nao um valor escalar como os outros campos."
     },
     {
       "parameters": {
@@ -264,6 +264,57 @@
       "typeVersion": 2,
       "position": [840, 700],
       "notes": "Adicionado 21/set/2026: lead novo do CVCRM (via gatilho de Criacao/primeira situacao) chega sem id_contato_ghl, porque nunca teve contato no GHL. Sem esse desvio, 'Enviar GHL' (PUT) sempre falhava com 404 pra lead genuinamente novo."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "cond-tem-nota",
+              "leftValue": "={{ $json.campos_permitidos.nota_ghl }}",
+              "rightValue": "",
+              "operator": { "type": "string", "operation": "notEmpty", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "tem-nota-ghl",
+      "name": "Tem nota pra criar?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [840, 780],
+      "notes": "Adicionado 23/set/2026: interacao do CVCRM tem campo_destino='nota_ghl' (marcador especial em dono_campo, nao um Custom Field ID de verdade) -- precisa de POST /contacts/:id/notes, endpoint diferente do PUT customFields normal. Quando tem nota, so a nota e criada nesse despacho (outros campos cvcrm-donos do mesmo evento, se houver, ficam pra proximo disparo do gatilho deles -- simplificacao deliberada pra nao ter que combinar duas chamadas HTTP num so item)."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://services.leadconnectorhq.com/contacts/{{ $json.id_contato_ghl }}/notes",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Version", "value": "v3" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: $json.campos_permitidos.nota_ghl }) }}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "criar-nota-ghl",
+      "name": "Criar nota GHL",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1060, 780],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput",
+      "notes": "Confirmado contra a doc oficial (23/set/2026, marketplace.gohighlevel.com/docs/ghl/contacts/create-note): POST /contacts/:contactId/notes, header Version: v3, Bearer, corpo so precisa de {body: texto}. Resposta vem envelopada em {note: {...}}."
     },
     {
       "parameters": {
@@ -402,6 +453,46 @@
       "typeVersion": 2.5,
       "position": [620, 1000]
     },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ghl-nota-evento",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-ghl-nota",
+      "name": "Webhook GHL Nota",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-260, 1220],
+      "webhookId": "pafil-ghl-nota-evento",
+      "notes": "Adicionado 23/set/2026. Gatilho no GHL: Workflow 'Nota adicionada' (Note Added), filtrado pela tag piloto-fiusa016-set2026 (mesma logica de escopo do piloto ja usada nos outros gatilhos -- nao mandar nota de contato fora do piloto). AINDA NAO CONFIRMADO contra payload real -- igual aconteceu com Oportunidade (doc oficial != payload real da acao Webhook dentro de Workflow), o nome exato do campo com o texto da nota precisa ser conferido dando um Test URL/disparando uma nota de teste e olhando o JSON bruto antes de confiar no normalizador abaixo."
+    },
+    {
+      "parameters": {
+        "jsCode": "// PROVISORIO (23/set/2026): mesmo formato achatado ja confirmado pro Webhook GHL\n// de contato (phone, email, tags, contact_id, workflow.name), mas o campo do\n// TEXTO DA NOTA ainda nao foi visto num payload real -- tentando os nomes mais\n// prováveis (notes/note/note_body/message) e guardando o corpo inteiro em\n// _debug_body_bruto pra conferir contra o payload de verdade assim que\n// dispararmos uma nota de teste no contato piloto. Depois de confirmar, trocar\n// a linha do textoNota pelo campo certo e apagar o _debug_body_bruto.\nconst body = $json.body ?? $json;\nconst textoNota = body.notes ?? body.note ?? body.note_body ?? body.message ?? null;\n\nreturn {\n  json: {\n    origem: 'ghl',\n    tipo_evento: 'nota_adicionada',\n    telefone_bruto: body.phone ?? null,\n    email_bruto: body.email ?? null,\n    cpf_bruto: null,\n    campos: {\n      nota_ghl: textoNota,\n    },\n    _debug_body_bruto: body,\n  },\n};\n"
+      },
+      "id": "normalizar-ghl-nota",
+      "name": "Normalizar evento GHL Nota",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-40, 1220]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO integracao.fila_sync (origem, tipo_evento, telefone_bruto, email_bruto, cpf_bruto, campos)\nVALUES ($1, $2, $3, $4, $5, $6::jsonb)\nRETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [$json.origem, $json.tipo_evento, $json.telefone_bruto, $json.email_bruto, $json.cpf_bruto, JSON.stringify($json.campos)] }}"
+        }
+      },
+      "id": "gravar-fila-ghl-nota",
+      "name": "Gravar fila (GHL Nota)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [180, 1220],
+      "notes": "campos so tem nota_ghl (sem telefone/tags/etc que o gatilho de contato ja cobre) -- se o payload real nao trouxer phone/email diretos, vamos precisar de um Buscar contato GHL aqui, igual foi cogitado (e descartado por desnecessario) pro webhook de Oportunidade."
+    },
 
     {
       "parameters": {
@@ -506,6 +597,12 @@
     "Webhook GHL": {
       "main": [[{ "node": "Normalizar evento GHL", "type": "main", "index": 0 }]]
     },
+    "Webhook GHL Nota": {
+      "main": [[{ "node": "Normalizar evento GHL Nota", "type": "main", "index": 0 }]]
+    },
+    "Normalizar evento GHL Nota": {
+      "main": [[{ "node": "Gravar fila (GHL Nota)", "type": "main", "index": 0 }]]
+    },
     "Webhook GHL Oportunidade": {
       "main": [[{ "node": "Buscar situacao CVCRM", "type": "main", "index": 0 }]]
     },
@@ -556,8 +653,20 @@
     },
     "Tem contato GHL?": {
       "main": [
-        [{ "node": "Enviar GHL", "type": "main", "index": 0 }],
+        [{ "node": "Tem nota pra criar?", "type": "main", "index": 0 }],
         [{ "node": "Criar contato GHL", "type": "main", "index": 0 }]
+      ]
+    },
+    "Tem nota pra criar?": {
+      "main": [
+        [{ "node": "Criar nota GHL", "type": "main", "index": 0 }],
+        [{ "node": "Enviar GHL", "type": "main", "index": 0 }]
+      ]
+    },
+    "Criar nota GHL": {
+      "main": [
+        [{ "node": "Rotular despacho", "type": "main", "index": 0 }],
+        [{ "node": "Rotular despacho", "type": "main", "index": 0 }]
       ]
     },
     "Criar contato GHL": {
