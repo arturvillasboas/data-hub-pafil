@@ -374,7 +374,7 @@
           "conditions": [
             {
               "id": "cond-tem-situacao-ghl",
-              "leftValue": "={{ $json.campos_permitidos.situacao_ghl }}",
+              "leftValue": "={{ String($json.campos_permitidos.situacao_ghl ?? '') }}",
               "rightValue": "",
               "operator": { "type": "string", "operation": "notEmpty", "singleValue": true }
             }
