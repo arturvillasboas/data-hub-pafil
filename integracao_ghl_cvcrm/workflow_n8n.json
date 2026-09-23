@@ -23,7 +23,7 @@
       "name": "Normalizar evento GHL",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-40, 0]
+      "position": [-20, 0]
     },
     {
       "parameters": {
@@ -37,7 +37,7 @@
       "name": "Gravar fila (GHL)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [180, 0]
+      "position": [220, 0]
     },
 
     {
@@ -72,7 +72,7 @@
       "name": "Buscar lead CVCRM",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [-150, 220],
+      "position": [-20, 220],
       "notes": "Confirmado na doc oficial (18/set/2026, https://ajuda.cvcrm.com.br - 'Webhooks de Leads'): o webhook de Leads do CVCRM manda so {\"idlead\": N}, nenhum outro campo. Por isso esta busca e obrigatoria antes de normalizar -- o node 'Normalizar evento CVCRM' nao pode mais ler telefone/email/situacao direto do corpo do webhook. TODO: confirmar contra uma chamada real -- a doc do desenvolvedor (desenvolvedor.cvcrm.com.br/reference/getlead) confirma que idlead/email/telefone sao aceitos como query param (um por vez), mas o formato da resposta (nomes de campo do lead) ainda nao foi visto ao vivo."
     },
     {
@@ -95,7 +95,7 @@
       "name": "Tem tarefa?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [-30, 300],
+      "position": [220, 220],
       "notes": "Adicionado 23/set/2026: diferente de 'Nova interacao', o gatilho 'Nova tarefa' do CVCRM dispara de verdade e manda idtarefa junto no corpo ({idlead, idtarefa, idtransacao}, confirmado contra payload real) -- entao so busca a tarefa quando ela veio, em vez de chamar a API em todo evento (situacao, corretor etc. nao tem idtarefa)."
     },
     {
@@ -116,7 +116,7 @@
       "name": "Buscar tarefa CVCRM",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [190, 260],
+      "position": [460, 100],
       "notes": "Confirmado ao vivo em 23/set/2026: /api/v1/cvdw/leads/tarefas e' um endpoint tipo CVDW (bulk, paginado), NAO tem busca por idlead/idtarefa -- so filtra por a_partir_data_referencia (nome do parametro tambem confirmado ao vivo, a doc geral sugeria 'a_partir_de', que nao existe). Com a data de hoje o volume fica pequeno (8 registros no teste), entao filtrar por idtarefa no node seguinte (client-side) e' viavel sem paginar. Endpoint de CRIACAO (POST, direcao GHL->CVCRM) ainda nao foi encontrado -- ver RUNBOOK.md."
     },
     {
@@ -127,7 +127,7 @@
       "name": "Normalizar evento CVCRM",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [40, 220]
+      "position": [700, 220]
     },
     {
       "parameters": {
@@ -141,7 +141,7 @@
       "name": "Gravar fila (CVCRM)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [260, 220]
+      "position": [940, 220]
     },
 
     {
@@ -156,7 +156,7 @@
       "name": "Gatilho despacho",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [-260, 460]
+      "position": [-260, 1180]
     },
     {
       "parameters": {
@@ -168,7 +168,7 @@
       "name": "Fila para despachar",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [-40, 460]
+      "position": [-20, 1180]
     },
     {
       "parameters": {
@@ -179,7 +179,7 @@
       "name": "Loop fila",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
-      "position": [180, 460]
+      "position": [220, 1180]
     },
     {
       "parameters": {
@@ -201,7 +201,7 @@
       "name": "Eh eco?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [400, 460]
+      "position": [460, 1180]
     },
     {
       "parameters": {
@@ -215,7 +215,7 @@
       "name": "Marcar descartado (eco)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [620, 380]
+      "position": [700, 1080]
     },
     {
       "parameters": {
@@ -228,7 +228,7 @@
       "name": "Canal destino",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3,
-      "position": [620, 540]
+      "position": [700, 1280]
     },
     {
       "parameters": {
@@ -251,7 +251,7 @@
       "name": "Enviar CVCRM",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [840, 460],
+      "position": [940, 1180],
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 5000,
@@ -279,7 +279,7 @@
       "name": "Enviar GHL",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [840, 620],
+      "position": [1660, 1460],
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 5000,
@@ -306,7 +306,7 @@
       "name": "Tem contato GHL?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [840, 700],
+      "position": [940, 1360],
       "notes": "Adicionado 21/set/2026: lead novo do CVCRM (via gatilho de Criacao/primeira situacao) chega sem id_contato_ghl, porque nunca teve contato no GHL. Sem esse desvio, 'Enviar GHL' (PUT) sempre falhava com 404 pra lead genuinamente novo."
     },
     {
@@ -329,7 +329,7 @@
       "name": "Tem nota pra criar?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [840, 780],
+      "position": [1180, 1320],
       "notes": "Adicionado 23/set/2026: interacao do CVCRM tem campo_destino='nota_ghl' (marcador especial em dono_campo, nao um Custom Field ID de verdade) -- precisa de POST /contacts/:id/notes, endpoint diferente do PUT customFields normal. Quando tem nota, so a nota e criada nesse despacho (outros campos cvcrm-donos do mesmo evento, se houver, ficam pra proximo disparo do gatilho deles -- simplificacao deliberada pra nao ter que combinar duas chamadas HTTP num so item)."
     },
     {
@@ -353,7 +353,7 @@
       "name": "Criar nota GHL",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1060, 780],
+      "position": [1420, 1260],
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 5000,
@@ -380,7 +380,7 @@
       "name": "Tem tarefa pra criar?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [840, 860],
+      "position": [1420, 1400],
       "notes": "Adicionado 23/set/2026: tarefa_cvcrm tem campo_destino='tarefa_ghl' (marcador especial, mesmo padrao de nota_ghl) -- precisa de POST /contacts/:id/tasks, nao PUT customFields. So roda quando o evento veio do gatilho 'Nova tarefa' do CVCRM (que manda idtarefa direto, sem piggyback -- ver Normalizar evento CVCRM)."
     },
     {
@@ -404,7 +404,7 @@
       "name": "Criar tarefa GHL",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1060, 860],
+      "position": [1660, 1340],
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 5000,
@@ -432,7 +432,7 @@
       "name": "Criar contato GHL",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1060, 760],
+      "position": [1180, 1500],
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 5000,
@@ -451,7 +451,7 @@
       "name": "Registrar novo contato GHL",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [1280, 700],
+      "position": [1420, 1500],
       "notes": "So roda no output de sucesso de 'Criar contato GHL'. Grava o id_contato_ghl novo em depara_contato, pra proximos despachos desse mesmo contato usarem PUT (Enviar GHL) em vez de criar duplicado."
     },
     {
@@ -463,7 +463,7 @@
       "name": "Rotular despacho",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1060, 540]
+      "position": [1900, 1180]
     },
     {
       "parameters": {
@@ -477,7 +477,7 @@
       "name": "Marcar processada",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [1280, 540]
+      "position": [2140, 1180]
     },
     {
       "parameters": {
@@ -491,7 +491,7 @@
       "name": "Registrar envio",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [1500, 540]
+      "position": [2380, 1180]
     },
 
     {
@@ -505,7 +505,7 @@
       "name": "Webhook GHL Oportunidade",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [-260, 1000],
+      "position": [-260, 440],
       "webhookId": "pafil-ghl-oportunidade-evento",
       "notes": "Adicionado 22/set/2026, corrigido 23/set/2026 apos ver o payload real: a acao de Webhook dentro de um Workflow do GHL (diferente do webhook de API formal que a doc descreve) manda o corpo achatado de sempre (phone, email, tags, contact_id) mais os campos da oportunidade: pipleline_stage (sic, nome da etapa em texto, nao um ID), pipleline_id (sic), pipeline_name, id, opportunity_name, status. Nao precisa buscar o contato à parte -- telefone/email ja vem no corpo."
     },
@@ -521,7 +521,7 @@
       "name": "Buscar situacao CVCRM",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [-40, 1000],
+      "position": [-20, 440],
       "notes": "De-para 1:1 por NOME de etapa (corrigido 23/set/2026 -- o webhook manda o nome da etapa em texto direto, 'pipleline_stage', nao um ID; a coluna pipeline_stage_id_ghl em integracao.depara_situacao_ghl fica so de referencia/documentacao, sem uso na busca). Se nao achar (nome sem correspondencia), idsituacao_cvcrm vem null e o evento e' normalizado sem situacao_lead."
     },
     {
@@ -532,7 +532,7 @@
       "name": "Normalizar evento GHL Oportunidade",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [400, 1000]
+      "position": [220, 440]
     },
     {
       "parameters": {
@@ -546,7 +546,7 @@
       "name": "Gravar fila (GHL Oportunidade)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [620, 1000]
+      "position": [460, 440]
     },
     {
       "parameters": {
@@ -559,7 +559,7 @@
       "name": "Webhook GHL Nota",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [-260, 1220],
+      "position": [-260, 620],
       "webhookId": "pafil-ghl-nota-evento",
       "notes": "Adicionado 23/set/2026, confirmado contra payload real no mesmo dia. Gatilho no GHL: Workflow 'Nota adicionada' (Note Added), filtrado pela tag piloto-fiusa016-set2026 (mesma logica de escopo do piloto ja usada nos outros gatilhos -- nao mandar nota de contato fora do piloto)."
     },
@@ -571,7 +571,7 @@
       "name": "Normalizar evento GHL Nota",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-40, 1220]
+      "position": [-20, 620]
     },
     {
       "parameters": {
@@ -585,7 +585,7 @@
       "name": "Gravar fila (GHL Nota)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [180, 1220],
+      "position": [220, 620],
       "notes": "campos so tem nota_ghl (sem telefone/tags/etc que o gatilho de contato ja cobre) -- confirmado 23/set/2026 que phone/email ja vem direto no corpo, igual ao webhook de Oportunidade, sem precisar de Buscar contato GHL."
     },
 
@@ -601,7 +601,7 @@
       "name": "Gatilho reconciliacao",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [-260, 760]
+      "position": [-260, 800]
     },
     {
       "parameters": {
@@ -613,7 +613,7 @@
       "name": "Reconciliar CVCRM",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [-40, 680],
+      "position": [-20, 800],
       "notes": "Sem chamada de API: compara bronze.leads (ja ingerido pelo CVDW) contra o que a integracao ja conhece. Toda a logica esta em integracao.rodar_reconciliacao_cvcrm()."
     },
     {
@@ -637,7 +637,7 @@
       "name": "Buscar contatos GHL atualizados",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [-40, 840],
+      "position": [-20, 960],
       "notes": "Validado contra a API real (16/set/2026): endpoint, headers e filtro (field=dateUpdated, operator=range, value={gte:...}) confirmados, resposta 200 com {contacts:[], total:0, traceId:...}. Ainda falta ver o formato de um contato de verdade dentro de 'contacts' (o teste rodou sem nenhum resultado no periodo)."
     },
     {
@@ -649,7 +649,7 @@
       "name": "Separar contatos GHL",
       "type": "n8n-nodes-base.splitOut",
       "typeVersion": 1,
-      "position": [180, 840],
+      "position": [220, 960],
       "notes": "Confirmado (16/set/2026): a resposta real vem mesmo em 'contacts'."
     },
     {
@@ -661,7 +661,7 @@
       "name": "Loop contatos GHL",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
-      "position": [400, 840]
+      "position": [460, 960]
     },
     {
       "parameters": {
@@ -671,7 +671,7 @@
       "name": "Normalizar contato GHL (reconciliacao)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [620, 840]
+      "position": [700, 960]
     },
     {
       "parameters": {
@@ -685,7 +685,7 @@
       "name": "Registrar reconciliacao GHL",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [840, 840]
+      "position": [940, 960]
     }
   ],
   "connections": {
