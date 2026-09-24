@@ -80,7 +80,9 @@ INSERT INTO integracao.dono_campo (campo, dono, campo_destino, descricao) VALUES
     ('interacao_cvcrm',          'cvcrm', 'nota_ghl',
         'Adicionado 23/set/2026: interação/anotação do CVCRM virando nota na aba "Notas" do contato no GHL. campo_destino "nota_ghl" também é um marcador especial (não é um Custom Field ID) -- o desvio "Tem nota pra criar?" detecta essa chave e roteia pro node "Criar nota GHL" (POST /contacts/:id/notes), em vez de seguir pro "Enviar GHL" (PUT customFields).'),
     ('tarefa_cvcrm',              'cvcrm', 'tarefa_ghl',
-        'Adicionado 23/set/2026, corrigido no mesmo dia: tarefa criada no lead do CVCRM (aba "Tarefa") virando Task no GHL. Só direção CVCRM->GHL por enquanto. Primeira versão tentou um endpoint CVDW à parte pra buscar a tarefa (achando que precisava, já que o gatilho "Nova tarefa" manda idtarefa no corpo) -- corrigido ao perceber que lead.tarefa já vem embutido no GET do lead (Buscar lead CVCRM), igual lead.interacao. Mesmo padrão de carona+dedup por id (ver interacao_cvcrm e ultima_tarefa_id_cvcrm). campo_destino "tarefa_ghl" é marcador especial (não é Custom Field ID) -- o desvio "Tem tarefa pra criar?" roteia pro node "Criar tarefa GHL" (POST /contacts/:id/tasks). Direção contrária (GHL->CVCRM) fica pendente: não achamos o endpoint de criação de tarefa no CVCRM ainda, ver RUNBOOK.md.')
+        'Adicionado 23/set/2026, corrigido duas vezes desde então. Primeira versão usou um endpoint CVDW à parte (motivo errado: achou que precisava por causa do gatilho "Nova tarefa"), corrigida pra usar lead.tarefa embutido no GET do lead. Segunda correção (24/set/2026): lead.tarefa não tem campo de tipo, então voltou pro endpoint CVDW (/leads/tarefas) -- dessa vez com motivo real, é o único lugar que tem tipo_interacao, necessário pra separar Visita (ver visita_cvcrm) de Tarefa genérica. Tarefa criada no lead do CVCRM vira Task no GHL, só direção CVCRM->GHL por enquanto. campo_destino "tarefa_ghl" é marcador especial (não é Custom Field ID) -- o desvio "Tem tarefa pra criar?" roteia pro node "Criar tarefa GHL" (POST /contacts/:id/tasks). Direção contrária (GHL->CVCRM) fica pendente: não achamos o endpoint de criação de tarefa no CVCRM ainda, ver RUNBOOK.md.'),
+    ('visita_cvcrm',              'cvcrm', 'visita_ghl',
+        'Adicionado 24/set/2026: Visita é uma Tarefa do CVCRM com tipo_interacao=''V'' (mesmo formulário da aba "Tarefa", só um tipo diferente) -- vira Compromisso (Calendar) no GHL em vez de Task. Compartilha o campo de controle tarefa_cvcrm_id com tarefa_cvcrm (mesma sequência de id no CVCRM, só um dos dois vem preenchido por vez). campo_destino "visita_ghl" é marcador especial -- o desvio "Tem visita pra criar?" (depois de "Tem tarefa pra criar?" na cadeia, ordem não importa já que os dois campos são mutuamente exclusivos) roteia pro node "Criar compromisso GHL" (POST /calendars/events/appointments). Só direção CVCRM->GHL. calendarId do GHL pendente de confirmação com o Artur.')
 ON CONFLICT (campo) DO UPDATE SET dono = EXCLUDED.dono, campo_destino = EXCLUDED.campo_destino, descricao = EXCLUDED.descricao;
 -- Achado em 18/set/2026: a sub-account do GHL já tinha, desde 28/mai/2026, um
 -- conjunto de Custom Fields pensados especificamente para uma integração com o
@@ -312,6 +314,10 @@ BEGIN
         END IF;
     END IF;
 
+    -- tarefa_cvcrm_id cobre tanto tarefa_cvcrm quanto visita_cvcrm (24/set/2026):
+    -- Visita e' uma Tarefa do CVCRM com tipo_interacao='V', compartilha a MESMA
+    -- sequencia de id (idtarefa) -- so' um dos dois campos vem preenchido por
+    -- vez (ver Normalizar evento CVCRM), mas o dedup e' um so' watermark.
     IF NEW.origem = 'cvcrm' AND NEW.campos ? 'tarefa_cvcrm_id' THEN
         v_tarefa_id := NULLIF(NEW.campos ->> 'tarefa_cvcrm_id', '')::bigint;
 
@@ -321,7 +327,7 @@ BEGIN
 
         IF v_tarefa_id IS NULL
            OR (v_ultima_tarefa IS NOT NULL AND v_tarefa_id <= v_ultima_tarefa) THEN
-            NEW.campos := NEW.campos - 'tarefa_cvcrm';
+            NEW.campos := NEW.campos - 'tarefa_cvcrm' - 'visita_cvcrm';
         ELSE
             UPDATE integracao.depara_contato
                SET ultima_tarefa_id_cvcrm = v_tarefa_id
