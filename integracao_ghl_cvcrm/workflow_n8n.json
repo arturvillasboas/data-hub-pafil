@@ -425,7 +425,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ calendarId: '<PREENCHER: id do calendario no GHL>', locationId: 'QKKhoj5ZU9PHD4j66T0E', contactId: $json.id_contato_ghl, title: $json.campos_permitidos.visita_ghl.titulo, startTime: $json.campos_permitidos.visita_ghl.data.replace(' ', 'T') + '-03:00' }) }}",
+        "jsonBody": "={{ JSON.stringify({ calendarId: 'ZRMWjSeM1gLMohv055zH', locationId: 'QKKhoj5ZU9PHD4j66T0E', contactId: $json.id_contato_ghl, title: $json.campos_permitidos.visita_ghl.titulo, startTime: $json.campos_permitidos.visita_ghl.data.replace(' ', 'T') + '-03:00' }) }}",
         "options": { "timeout": 30000 }
       },
       "id": "criar-compromisso-ghl",
@@ -437,7 +437,7 @@
       "maxTries": 3,
       "waitBetweenTries": 5000,
       "onError": "continueErrorOutput",
-      "notes": "Confirmado contra doc oficial (24/set/2026, marketplace.gohighlevel.com/docs/ghl/calendars/create-appointment): POST /calendars/events/appointments, corpo {calendarId, locationId, contactId, startTime (ISO 8601), title}, endTime/assignedUserId/etc opcionais (nao mandados por enquanto). calendarId AINDA PRECISA SER PREENCHIDO -- pendente de resposta do Artur sobre qual calendario do GHL recebe as Visitas. data do CVCRM tratada como horario de Brasilia (-03:00) direto, mesmo padrao de Criar tarefa GHL."
+      "notes": "Confirmado contra doc oficial (24/set/2026, marketplace.gohighlevel.com/docs/ghl/calendars/create-appointment): POST /calendars/events/appointments, corpo {calendarId, locationId, contactId, startTime (ISO 8601), title}, endTime/assignedUserId/etc opcionais (nao mandados por enquanto). calendarId hardcoded pro calendario do Artur Filho ('Artur Villas's Personal Calendar', ZRMWjSeM1gLMohv055zH) -- so' serve pro lead de teste (responsavel = Artur Filho). PENDENCIA REAL: o GHL tem um calendario PESSOAL POR CORRETOR (8 calendarios vistos em 24/set/2026), nao um unico compartilhado -- falta um de-para corretor(CVCRM)->calendarId(GHL) pra funcionar fora do piloto/teste. data do CVCRM tratada como horario de Brasilia (-03:00) direto, mesmo padrao de Criar tarefa GHL."
     },
     {
       "parameters": {
