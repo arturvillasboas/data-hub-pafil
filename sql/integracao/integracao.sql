@@ -82,7 +82,11 @@ INSERT INTO integracao.dono_campo (campo, dono, campo_destino, descricao) VALUES
     ('tarefa_cvcrm',              'cvcrm', 'tarefa_ghl',
         'Adicionado 23/set/2026, corrigido duas vezes desde então. Primeira versão usou um endpoint CVDW à parte (motivo errado: achou que precisava por causa do gatilho "Nova tarefa"), corrigida pra usar lead.tarefa embutido no GET do lead. Segunda correção (24/set/2026): lead.tarefa não tem campo de tipo, então voltou pro endpoint CVDW (/leads/tarefas) -- dessa vez com motivo real, é o único lugar que tem tipo_interacao, necessário pra separar Visita (ver visita_cvcrm) de Tarefa genérica. Tarefa criada no lead do CVCRM vira Task no GHL, só direção CVCRM->GHL por enquanto. campo_destino "tarefa_ghl" é marcador especial (não é Custom Field ID) -- o desvio "Tem tarefa pra criar?" roteia pro node "Criar tarefa GHL" (POST /contacts/:id/tasks). Direção contrária (GHL->CVCRM) fica pendente: não achamos o endpoint de criação de tarefa no CVCRM ainda, ver RUNBOOK.md.'),
     ('visita_cvcrm',              'cvcrm', 'visita_ghl',
-        'Adicionado 24/set/2026: Visita é uma Tarefa do CVCRM com tipo_interacao=''V'' (mesmo formulário da aba "Tarefa", só um tipo diferente) -- vira Compromisso (Calendar) no GHL em vez de Task. Compartilha o campo de controle tarefa_cvcrm_id com tarefa_cvcrm (mesma sequência de id no CVCRM, só um dos dois vem preenchido por vez). campo_destino "visita_ghl" é marcador especial -- o desvio "Tem visita pra criar?" (depois de "Tem tarefa pra criar?" na cadeia, ordem não importa já que os dois campos são mutuamente exclusivos) roteia pro node "Criar compromisso GHL" (POST /calendars/events/appointments). Só direção CVCRM->GHL. calendarId E assignedUserId (esse último exigido de verdade pela API, apesar de opcional na doc -- 422 "assignedUserId is missing") hardcoded pro calendário/usuário do Artur Filho (piloto/teste) -- o GHL tem um calendário por corretor (8 vistos em 24/set/2026), falta de-para corretor->(calendarId, assignedUserId) pra funcionar fora do teste.')
+        'Adicionado 24/set/2026: Visita é uma Tarefa do CVCRM com tipo_interacao=''V'' (mesmo formulário da aba "Tarefa", só um tipo diferente) -- vira Compromisso (Calendar) no GHL em vez de Task. Compartilha o campo de controle tarefa_cvcrm_id com tarefa_cvcrm (mesma sequência de id no CVCRM, só um dos dois vem preenchido por vez). campo_destino "visita_ghl" é marcador especial -- o desvio "Tem visita pra criar?" (depois de "Tem tarefa pra criar?" na cadeia, ordem não importa já que os dois campos são mutuamente exclusivos) roteia pro node "Criar compromisso GHL" (POST /calendars/events/appointments). Só direção CVCRM->GHL. calendarId E assignedUserId (esse último exigido de verdade pela API, apesar de opcional na doc -- 422 "assignedUserId is missing") hardcoded pro calendário/usuário do Artur Filho (piloto/teste) -- o GHL tem um calendário por corretor (8 vistos em 24/set/2026), falta de-para corretor->(calendarId, assignedUserId) pra funcionar fora do teste.'),
+    ('tarefa_criada_ghl',         'ghl',   'tarefa_cvcrm_criar',
+        'Adicionado 24/set/2026: Task criada no GHL virando tarefa no CVCRM (direção GHL->CVCRM, completando o par de tarefa_cvcrm). Usa a API v3 do CVCRM (POST /api/v3/comercial/leads/{id}/tarefas, Bearer JWT via login -- ver [[cvcrm-api-v3-bearer-jwt]] e RUNBOOK.md), diferente da v1 que o resto da integração usa, porque a v1 não tem esse endpoint. campo_destino "tarefa_cvcrm_criar" é marcador especial -- o desvio "Tem tarefa pra criar no CVCRM?" (antes de "Enviar CVCRM" na cadeia) roteia pro login + criação. idresponsavel/tipoResponsavel hardcoded pro piloto/teste (mesma pendência de de-para corretor que nota_ghl/tarefa_ghl/visita_ghl já têm do lado GHL). Payload real do gatilho do GHL (Workflow Webhook pra "Task Created" ou equivalente) ainda não confirmado -- normalizador pode precisar de ajuste.'),
+    ('compromisso_criado_ghl',    'ghl',   'visita_cvcrm_criar',
+        'Adicionado 24/set/2026: Compromisso (Calendar) criado no GHL virando Visita no CVCRM (tipoInteracao=''V'' na API v3, mesma lógica de visita_cvcrm mas no sentido contrário). campo_destino "visita_cvcrm_criar" é marcador especial -- desvio "Tem visita pra criar no CVCRM?" (mesma cadeia de tarefa_criada_ghl). Payload real do gatilho do GHL ainda não confirmado.')
 ON CONFLICT (campo) DO UPDATE SET dono = EXCLUDED.dono, campo_destino = EXCLUDED.campo_destino, descricao = EXCLUDED.descricao;
 -- Achado em 18/set/2026: a sub-account do GHL já tinha, desde 28/mai/2026, um
 -- conjunto de Custom Fields pensados especificamente para uma integração com o
@@ -332,6 +336,31 @@ BEGIN
             UPDATE integracao.depara_contato
                SET ultima_tarefa_id_cvcrm = v_tarefa_id
              WHERE id = NEW.contato_id;
+        END IF;
+    END IF;
+
+    -- Eco de tarefa/visita por VALOR (24/set/2026, mesmo motivo do par
+    -- nota_ghl/interacao_cvcrm): sem isso, uma tarefa/visita criada no
+    -- CVCRM pela ponte nova GHL->CVCRM (tarefa_criada_ghl/
+    -- compromisso_criado_ghl) seria repescada pela carona que ja existe
+    -- (tarefa_cvcrm/visita_cvcrm, que le QUALQUER tarefa nova do lead,
+    -- sem saber a origem) e mandada de volta pro GHL como duplicada.
+    IF NEW.origem = 'cvcrm' AND (NEW.campos ? 'tarefa_cvcrm' OR NEW.campos ? 'visita_cvcrm') THEN
+        SELECT COALESCE(
+                 l.campos_enviados -> 'tarefa_cvcrm_criar' ->> 'nome',
+                 l.campos_enviados -> 'visita_cvcrm_criar' ->> 'titulo'
+               )
+          INTO v_ultimo_enviado
+          FROM integracao.log_sync l
+         WHERE l.contato_id = NEW.contato_id AND l.destino = 'cvcrm'
+         ORDER BY l.criado_em DESC
+         LIMIT 1;
+
+        IF v_ultimo_enviado IS NOT NULL AND (
+            v_ultimo_enviado = (NEW.campos -> 'tarefa_cvcrm' ->> 'nome')
+            OR v_ultimo_enviado = (NEW.campos -> 'visita_cvcrm' ->> 'titulo')
+        ) THEN
+            NEW.campos := NEW.campos - 'tarefa_cvcrm' - 'visita_cvcrm';
         END IF;
     END IF;
 
