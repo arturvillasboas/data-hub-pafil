@@ -356,6 +356,47 @@ sugere, o atalho mais rápido é capturar o payload real de uma ação
 manual bem-sucedida pelo Network do navegador (F12) e comparar campo a
 campo, em vez de ir testando parâmetro por parâmetro às cegas.
 
+## GHL → CVCRM: por que tarefa/visita não têm o caminho de volta
+
+Investigado a fundo em 24/set/2026, depois do Artur notar que o projeto
+tinha progredido quase só CVCRM→GHL naquele dia (3 gatilhos GHL→CVCRM
+ativos -- tags, situação, nota -- contra 7 campos CVCRM→GHL). Faltava
+fechar tarefa/visita criadas no GHL virando tarefa/visita no CVCRM.
+
+Toda tentativa de achar o endpoint de criação na API pública do CVCRM
+(`/api/v1/comercial/...`) falhou com `"Lead não existe na base de
+dados"`, não importa o nome do campo ou o formato da URL tentado.
+Capturando o payload real de uma criação de tarefa bem-sucedida (F12 no
+Network do navegador, filtrando por `105118` no conteúdo -- não só na
+URL, porque a URL de save não tinha "tarefa" nela), a causa apareceu:
+
+```
+POST /gestor/comercial/leads/105118/administrar?tk=<token>
+Content-Type: application/x-www-form-urlencoded
+
+acao=salvar_tarefa&nome=...&data=2026-09-25T15:10&prioridade=N&
+situacao=P&tipo_responsavel=G&idresponsavel=196&lembrete_tarefa=N
+```
+
+Duas coisas que explicam por que nunca ia funcionar do jeito que estava
+sendo tentado:
+
+- **Não é a API pública.** É a rota interna da própria tela
+  (`/gestor/comercial/...`, form-urlencoded, não JSON), diferente de
+  `/api/v1/comercial/...` (JSON, autenticado por email+token) que o
+  resto da integração usa.
+- **`tk` é um token de sessão/CSRF**, não uma credencial fixa -- muda a
+  cada requisição, amarrado ao login ativo no navegador. Automatizar
+  isso via n8n exigiria simular login completo (usuário/senha) e
+  capturar um token novo a cada chamada.
+
+**Conclusão: a API pública do CVCRM não tem endpoint de criação de
+tarefa/visita.** Não é "ainda não achamos" -- é uma lacuna real da
+plataforma. O caminho que sobra é abrir chamado com o suporte do CVCRM
+pedindo esse endpoint (ou aceitar automatizar contra a rota interna,
+frágil e fora do uso oficial, o que não é recomendado). Até lá,
+tarefa/visita continuam só CVCRM→GHL.
+
 ## Reconciliação: pausada de propósito
 
 O workflow tem um segundo caminho, independente do webhook: `Gatilho
