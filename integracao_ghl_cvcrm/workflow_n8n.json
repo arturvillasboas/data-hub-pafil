@@ -236,7 +236,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [-20, 1900],
-      "notes": "Confirmado contra doc oficial (24/set/2026, desenvolvedor.cvcrm.com.br/docs/como-autenticar-nas-apis-do-cv-crm-com-bearer-token): POST /api/v3/auth/token, corpo {email, senha, painel: gestor|corretor|imobiliaria}, sem autenticacao previa. Resposta: {access_token, token_type: Bearer, expires_in: 21600 (6h)}. IMPORTANTE: senha e' a senha de LOGIN de verdade, diferente do token permanente da v1 -- por isso o valor fica so' aqui no n8n (preenchido direto na tela, nunca no arquivo commitado no git). Sem sistema formal de Credencial do n8n porque o corpo custom (email+senha+painel via JSON) nao encaixa limpo nos tipos prontos (Basic/Header/OAuth2) sem workaround. AINDA NAO TESTADO ao vivo -- rodar via 'Teste manual: Login CVCRM v3' antes de confiar."
+      "notes": "Confirmado contra doc oficial (24/set/2026, desenvolvedor.cvcrm.com.br/docs/como-autenticar-nas-apis-do-cv-crm-com-bearer-token): POST /api/v3/auth/token, corpo {email, senha, painel: gestor|corretor|imobiliaria}, sem autenticacao previa. LOGIN CONFIRMADO FUNCIONANDO AO VIVO em 24/set/2026 -- mas a resposta real diverge da doc: vem envelopada em {status, code, data: {access_token, token_type, expires_in, refresh_token, refresh_token_expires_in}}, nao {access_token, token_type, expires_in} direto na raiz como a doc mostra. expires_in tambem veio como string parecendo timestamp unix (\"1790297799\"), nao os 21600 segundos que a doc descreve -- ainda nao investigado a fundo, mas os nodes que usam esse token leem de $json.data.access_token, nao $json.access_token. IMPORTANTE: senha e' a senha de LOGIN de verdade, diferente do token permanente da v1 -- por isso o valor fica so' aqui no n8n (preenchido direto na tela, nunca no arquivo commitado no git). Sem sistema formal de Credencial do n8n porque o corpo custom (email+senha+painel via JSON) nao encaixa limpo nos tipos prontos (Basic/Header/OAuth2) sem workaround."
     },
     {
       "parameters": {
@@ -245,7 +245,7 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Authorization", "value": "={{ 'Bearer ' + $('Login CVCRM v3').item.json.access_token }}" },
+            { "name": "Authorization", "value": "={{ 'Bearer ' + $('Login CVCRM v3').item.json.data.access_token }}" },
             { "name": "Content-Type", "value": "application/json" }
           ]
         },
