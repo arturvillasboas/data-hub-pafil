@@ -276,6 +276,86 @@ controle começa vazia e o primeiro evento pós-fix é tratado como
 primeira vez vendo aquele id). Não é bug, é só questão de sequência --
 o efeito desaparece a partir do próximo evento.
 
+## Situação: recolocada bidirecional em 24/set/2026
+
+A inversão de 22/set/2026 (ver seção do webhook de Oportunidade) tinha
+deixado situação de mão única, GHL→CVCRM. Isso contrariava o objetivo
+real do projeto (sincronização bidirecional de verdade), e foi corrigido
+em 24/set/2026: agora mudar a situação em qualquer lado reflete no
+outro, no mesmo padrão de nota/interação e tarefa (campo `situacao_cvcrm`,
+dono cvcrm, destino `situacao_ghl`, marcador especial).
+
+A escrita no GHL não é um Custom Field, é um `PUT /opportunities/:id`
+mudando o estágio do pipeline. Isso exigiu resolver duas coisas antes de
+poder escrever:
+
+- **O id do estágio no GHL**, via `integracao.depara_situacao_ghl`
+  (coluna `pipeline_stage_id_ghl`, capturada em 16-18/set/2026 mas nunca
+  exercitada numa escrita real até esse dia).
+- **O id da Oportunidade do contato no GHL**, via `GET
+  /opportunities/search?contactId=X&pipelineId=Y` (confirmado contra a
+  doc oficial), já que o PUT precisa do id da Oportunidade, não do
+  contato.
+
+A detecção de eco é por VALOR (idsituacao numérico), mesmo padrão
+já usado pro par nota/interação — a genérica por hash não serve aqui
+pelo mesmo motivo (forma diferente entre origem e destino). A diferença
+importante: situação é idempotente dos dois lados (escrever o mesmo
+valor de novo não duplica nada, ao contrário de nota/interação, que são
+append-only), então o risco de um eco escapar por 1 ciclo é bem mais
+baixo.
+
+**Pegadinha de tipo encontrada ao vivo:** a condição do desvio "Tem
+situação pra mudar?" comparava um valor number (`situacao_ghl`) usando
+tipo `string` com validação estrita no n8n — deu erro "Wrong type: X is
+a number but was expecting a string" antes mesmo de avaliar a condição.
+Resolvido envolvendo o valor em `String(...)` na própria expressão.
+
+## Visita CVCRM → Compromisso GHL: três rodadas até funcionar
+
+Implementado em 24/set/2026. Visita é uma Tarefa do CVCRM com
+`tipo_interacao='V'` (mesmo formulário da aba "Tarefa", só um tipo
+diferente) — o array `lead.tarefa` embutido no GET do lead (usado pra
+tarefa genérica) não tem esse campo de tipo, então foi preciso trazer de
+volta o endpoint CVDW `/leads/tarefas` especificamente por causa disso
+(dessa vez com motivo real, ver seção da Tarefa acima). Sem lag
+perceptível — testado ao vivo, tarefa criada e encontrada na mesma
+consulta, segundos depois.
+
+Do lado GHL, "Compromissos" é a API de Calendário
+(`POST /calendars/events/appointments`), bem diferente de Tasks. O GHL
+tem **um calendário pessoal por corretor** (8 vistos em 24/set/2026),
+não um único compartilhado — hoje o `calendarId`/`assignedUserId` estão
+hardcoded pro corretor de teste (Artur Filho), e falta um de-para
+corretor(CVCRM)→(calendarId, assignedUserId) do GHL pra funcionar fora
+do piloto.
+
+**A chamada mínima documentada não funcionou.** Precisou de três
+rodadas de erro real até funcionar:
+
+1. `400 "The slot you have selected is no longer available"` — o
+   calendário é do tipo "Dinâmico" (agenda de disponibilidade real,
+   tipo Calendly), não um bloqueio de horário livre. Primeira suspeita
+   (desalinhamento de slot de 30min) foi descartada ao vivo, via F12 no
+   agendamento manual pela tela do GHL — os slots batiam certinho mesmo
+   assim. A causa real só apareceu comparando contra o payload de um
+   agendamento manual bem-sucedido (capturado pelo Network do
+   navegador): faltava o campo `ignoreFreeSlotValidation: true`
+   (`ignoreDateRange`, que já estava sendo mandado, só pula a validação
+   de antecedência mínima — são flags diferentes, a doc não deixa isso
+   claro).
+2. `422 "A team member needs to be selected. assignedUserId is
+   missing"` — campo listado como opcional na doc oficial, mas exigido
+   de verdade por esse tipo de calendário. O agendamento manual pela
+   tela não precisa mandar porque o backend preenche pela sessão
+   logada; a API direta, sem sessão, exige explícito.
+
+**Lição, reforça a de hoje mais cedo com nota/tarefa:** quando uma
+chamada de API documentada como simples não funciona do jeito que a doc
+sugere, o atalho mais rápido é capturar o payload real de uma ação
+manual bem-sucedida pelo Network do navegador (F12) e comparar campo a
+campo, em vez de ir testando parâmetro por parâmetro às cegas.
+
 ## Reconciliação: pausada de propósito
 
 O workflow tem um segundo caminho, independente do webhook: `Gatilho
