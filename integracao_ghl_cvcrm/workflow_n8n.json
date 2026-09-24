@@ -133,7 +133,7 @@
       "name": "Gatilho despacho",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [-260, 1640]
+      "position": [-260, 1720]
     },
     {
       "parameters": {
@@ -145,7 +145,7 @@
       "name": "Fila para despachar",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [-20, 1640]
+      "position": [-20, 1720]
     },
     {
       "parameters": {
@@ -156,7 +156,7 @@
       "name": "Loop fila",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
-      "position": [220, 1640]
+      "position": [220, 1720]
     },
     {
       "parameters": {
@@ -178,7 +178,7 @@
       "name": "Eh eco?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [460, 1640]
+      "position": [460, 1720]
     },
     {
       "parameters": {
@@ -192,7 +192,7 @@
       "name": "Marcar descartado (eco)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [700, 1540]
+      "position": [460, 1520]
     },
     {
       "parameters": {
@@ -205,7 +205,7 @@
       "name": "Canal destino",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3,
-      "position": [700, 1740]
+      "position": [700, 1720]
     },
     {
       "parameters": {},
@@ -213,7 +213,7 @@
       "name": "Teste manual: Login CVCRM v3",
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
-      "position": [-260, 1400],
+      "position": [-260, 1500],
       "notes": "Node de teste isolado, nao conectado ao fluxo principal ainda. Roda esse gatilho manual (botao 'Test step'/'Execute Node') so pra validar o login v3 + criacao de tarefa antes de integrar no despacho de verdade."
     },
     {
@@ -235,7 +235,7 @@
       "name": "Login CVCRM v3",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [-20, 1400],
+      "position": [-20, 1500],
       "notes": "Confirmado contra doc oficial (24/set/2026, desenvolvedor.cvcrm.com.br/docs/como-autenticar-nas-apis-do-cv-crm-com-bearer-token): POST /api/v3/auth/token, corpo {email, senha, painel: gestor|corretor|imobiliaria}, sem autenticacao previa. LOGIN CONFIRMADO FUNCIONANDO AO VIVO em 24/set/2026 -- mas a resposta real diverge da doc: vem envelopada em {status, code, data: {access_token, token_type, expires_in, refresh_token, refresh_token_expires_in}}, nao {access_token, token_type, expires_in} direto na raiz como a doc mostra. expires_in tambem veio como string parecendo timestamp unix (\"1790297799\"), nao os 21600 segundos que a doc descreve -- ainda nao investigado a fundo, mas os nodes que usam esse token leem de $json.data.access_token, nao $json.access_token. IMPORTANTE: senha e' a senha de LOGIN de verdade, diferente do token permanente da v1 -- por isso o valor fica so' aqui no n8n (preenchido direto na tela, nunca no arquivo commitado no git). Sem sistema formal de Credencial do n8n porque o corpo custom (email+senha+painel via JSON) nao encaixa limpo nos tipos prontos (Basic/Header/OAuth2) sem workaround."
     },
     {
@@ -258,7 +258,7 @@
       "name": "Teste: Criar tarefa CVCRM v3",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [220, 1400],
+      "position": [220, 1500],
       "notes": "Corrigido ao vivo em 24/set/2026: a doc oficial (desenvolvedor.cvcrm.com.br/reference/criartarefalead) mostra o path sem '/api/' (/v3/comercial/leads/{idLead}/tarefas), mas isso deu 404 real -- igual o login, que usa /api/v3/auth/token, o path certo tambem precisa do /api/ no meio (/api/v3/comercial/leads/{idLead}/tarefas). Mais um caso de doc divergindo da chamada real, mesmo padrao de hoje mais cedo. Corpo minimo: tipoInteracao ('T' ou 'V'), nome, data, idresponsavel, tipoResponsavel. Login (access_token) ja confirmado funcionando -- essa correcao de URL ainda precisa ser testada de novo."
     },
     {
@@ -282,7 +282,7 @@
       "name": "Enviar CVCRM",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1660, 1760],
+      "position": [1900, 1860],
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 5000,
@@ -309,7 +309,7 @@
       "name": "Tem tarefa pra criar no CVCRM?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [940, 1640],
+      "position": [1000, 1660],
       "notes": "Adicionado 24/set/2026: tarefa_criada_ghl tem campo_destino='tarefa_cvcrm_criar' (marcador especial) -- precisa da API v3 do CVCRM (login + POST /tarefas), nao o PUT /leads simples do Enviar CVCRM. Fica ANTES de Enviar CVCRM na cadeia."
     },
     {
@@ -331,7 +331,7 @@
       "name": "Login CVCRM v3 (tarefa)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1180, 1580],
+      "position": [1300, 1560],
       "notes": "Mesma chamada validada ao vivo em 24/set/2026 (ver node de teste 'Login CVCRM v3'). Relogar a cada despacho (em vez de cachear/renovar o token) e' a opcao mais simples, dado que criar tarefa/visita a partir do GHL nao deve ser um caminho de alta frequencia. Preencher email/senha direto aqui na tela, nunca no arquivo commitado -- mesma senha do outro node de login, duplicada aqui so' por simplicidade de fiacao (evita um no compartilhado com dois callers)."
     },
     {
@@ -354,7 +354,7 @@
       "name": "Criar tarefa CVCRM v3",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1420, 1580],
+      "position": [1600, 1560],
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 5000,
@@ -381,7 +381,7 @@
       "name": "Tem visita pra criar no CVCRM?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1180, 1700],
+      "position": [1300, 1760],
       "notes": "Adicionado 24/set/2026: compromisso_criado_ghl tem campo_destino='visita_cvcrm_criar' -- mesma API v3 de tarefa_criada_ghl, so' com tipoInteracao='V'. Ordem em relacao a 'Tem tarefa pra criar no CVCRM?' nao importa (mutuamente exclusivos)."
     },
     {
@@ -403,7 +403,7 @@
       "name": "Login CVCRM v3 (visita)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1420, 1640],
+      "position": [1600, 1660],
       "notes": "Mesma chamada de 'Login CVCRM v3 (tarefa)', duplicada so' por simplicidade de fiacao. Preencher email/senha direto aqui."
     },
     {
@@ -426,7 +426,7 @@
       "name": "Criar visita CVCRM v3",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1660, 1640],
+      "position": [1900, 1660],
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 5000,
@@ -454,7 +454,7 @@
       "name": "Enviar GHL",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2620, 2060],
+      "position": [3100, 2270],
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 5000,
@@ -481,7 +481,7 @@
       "name": "Tem contato GHL?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1420, 1880],
+      "position": [1900, 2120],
       "notes": "Adicionado 21/set/2026: lead novo do CVCRM (via gatilho de Criacao/primeira situacao) chega sem id_contato_ghl, porque nunca teve contato no GHL. Sem esse desvio, 'Enviar GHL' (PUT) sempre falhava com 404 pra lead genuinamente novo."
     },
     {
@@ -504,7 +504,7 @@
       "name": "Tem nota pra criar?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1660, 1820],
+      "position": [2200, 2120],
       "notes": "Adicionado 23/set/2026: interacao do CVCRM tem campo_destino='nota_ghl' (marcador especial em dono_campo, nao um Custom Field ID de verdade) -- precisa de POST /contacts/:id/notes, endpoint diferente do PUT customFields normal. Quando tem nota, so a nota e criada nesse despacho (outros campos cvcrm-donos do mesmo evento, se houver, ficam pra proximo disparo do gatilho deles -- simplificacao deliberada pra nao ter que combinar duas chamadas HTTP num so item)."
     },
     {
@@ -528,7 +528,7 @@
       "name": "Criar nota GHL",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1900, 1760],
+      "position": [2200, 1970],
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 5000,
@@ -555,7 +555,7 @@
       "name": "Tem tarefa pra criar?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1900, 1880],
+      "position": [2500, 2120],
       "notes": "Adicionado 23/set/2026: tarefa_cvcrm tem campo_destino='tarefa_ghl' (marcador especial, mesmo padrao de nota_ghl) -- precisa de POST /contacts/:id/tasks, nao PUT customFields. Igual interacao_cvcrm, a tarefa vem de carona em QUALQUER evento do CVCRM (Buscar lead CVCRM traz lead.tarefa sempre), com dedup por id em preencher_fila_sync."
     },
     {
@@ -579,7 +579,7 @@
       "name": "Criar tarefa GHL",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2140, 1820],
+      "position": [2500, 1970],
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 5000,
@@ -606,7 +606,7 @@
       "name": "Tem visita pra criar?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [2140, 1940],
+      "position": [2800, 2120],
       "notes": "Adicionado 24/set/2026: visita_cvcrm tem campo_destino='visita_ghl' (marcador especial) -- precisa de POST /calendars/events/appointments (Compromisso), nao PUT customFields nem POST /tasks. Visita e' uma Tarefa do CVCRM com tipo_interacao='V' (ver Normalizar evento CVCRM) -- visita_cvcrm e tarefa_cvcrm sao mutuamente exclusivos (nunca os dois preenchidos no mesmo evento), entao a ordem desse desvio em relacao a 'Tem tarefa pra criar?' nao importa funcionalmente."
     },
     {
@@ -630,7 +630,7 @@
       "name": "Criar compromisso GHL",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2380, 1880],
+      "position": [2800, 1970],
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 5000,
@@ -657,7 +657,7 @@
       "name": "Tem situacao pra mudar?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [2380, 2000],
+      "position": [3100, 2120],
       "notes": "Adicionado 23/set/2026: situacao_cvcrm tem campo_destino='situacao_ghl' (marcador especial, mesmo padrao de nota_ghl/tarefa_ghl) -- precisa de PUT /opportunities/:id (estagio do pipeline), nao PUT customFields. Reintroduzido depois de 22/set/2026 ter deixado situacao de mao unica (GHL->CVCRM) -- objetivo do projeto e' sincronizacao bidirecional de verdade."
     },
     {
@@ -672,7 +672,7 @@
       "name": "Buscar estagio GHL",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [2620, 1940],
+      "position": [3100, 1970],
       "notes": "De-para pelo id do CVCRM (nao pelo nome, ao contrario da direcao GHL->CVCRM -- aqui ja' temos o id direto de lead.situacao.id, sem precisar de nome). pipeline_stage_id_ghl foi capturado em 16-18/set/2026 via GET /opportunities/pipelines mas NUNCA validado contra uma escrita real ate' agora -- primeira vez que essa coluna e' de fato usada pra alguma coisa."
     },
     {
@@ -693,7 +693,7 @@
       "name": "Buscar oportunidade GHL",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2860, 1940],
+      "position": [3400, 1970],
       "notes": "Confirmado contra doc oficial (23/set/2026, marketplace.gohighlevel.com/docs/ghl/opportunities/search-opportunity): GET /opportunities/search, filtra por contactId + pipelineId (restringe ao 'Pipeline de Leads', ja' que um contato podia ter oportunidade em outro pipeline). Resposta: {opportunities: [{id, pipelineStageId, ...}]}. Le id_contato_ghl explicitamente do node 'Tem situacao pra mudar?' (passthrough do IF anterior), porque o node Postgres anterior ja substituiu $json."
     },
     {
@@ -717,7 +717,7 @@
       "name": "Mudar estagio Oportunidade GHL",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [3100, 1940],
+      "position": [3700, 1970],
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 5000,
@@ -745,7 +745,7 @@
       "name": "Criar contato GHL",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1660, 2060],
+      "position": [1900, 2420],
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 5000,
@@ -764,7 +764,7 @@
       "name": "Registrar novo contato GHL",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [1900, 2060],
+      "position": [2200, 2420],
       "notes": "So roda no output de sucesso de 'Criar contato GHL'. Grava o id_contato_ghl novo em depara_contato, pra proximos despachos desse mesmo contato usarem PUT (Enviar GHL) em vez de criar duplicado."
     },
     {
@@ -776,7 +776,7 @@
       "name": "Rotular despacho",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [3340, 1640]
+      "position": [4000, 1720]
     },
     {
       "parameters": {
@@ -790,7 +790,7 @@
       "name": "Marcar processada",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [3580, 1640]
+      "position": [4300, 1720]
     },
     {
       "parameters": {
@@ -804,7 +804,7 @@
       "name": "Registrar envio",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [3820, 1640]
+      "position": [4600, 1720]
     },
 
     {
@@ -927,7 +927,7 @@
       "name": "Webhook GHL Compromisso",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [-260, 880],
+      "position": [-260, 980],
       "webhookId": "pafil-ghl-compromisso-evento",
       "notes": "Adicionado 24/set/2026. Gatilho no GHL: Workflow 'Status do compromisso' (Appointment Status), filtrado pela tag do piloto. AINDA SEM NORMALIZADOR/DESPACHO CONECTADO DE PROPOSITO -- payload real ainda nao visto. Testar disparando o gatilho e olhando o Output desse node antes de escrever o normalizador. Esse gatilho dispara em QUALQUER mudanca de status (nao so criacao) -- conferir no payload real se da pra distinguir 'criado agora' de 'status mudou depois', e se precisa filtrar por status (ex.: so 'confirmed'/'new')."
     },
@@ -944,7 +944,7 @@
       "name": "Gatilho reconciliacao",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [-260, 1060]
+      "position": [-260, 1160]
     },
     {
       "parameters": {
@@ -956,7 +956,7 @@
       "name": "Reconciliar CVCRM",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [-20, 1060],
+      "position": [-20, 1160],
       "notes": "Sem chamada de API: compara bronze.leads (ja ingerido pelo CVDW) contra o que a integracao ja conhece. Toda a logica esta em integracao.rodar_reconciliacao_cvcrm()."
     },
     {
@@ -980,7 +980,7 @@
       "name": "Buscar contatos GHL atualizados",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [-20, 1220],
+      "position": [-20, 1320],
       "notes": "Validado contra a API real (16/set/2026): endpoint, headers e filtro (field=dateUpdated, operator=range, value={gte:...}) confirmados, resposta 200 com {contacts:[], total:0, traceId:...}. Ainda falta ver o formato de um contato de verdade dentro de 'contacts' (o teste rodou sem nenhum resultado no periodo)."
     },
     {
@@ -992,7 +992,7 @@
       "name": "Separar contatos GHL",
       "type": "n8n-nodes-base.splitOut",
       "typeVersion": 1,
-      "position": [220, 1220],
+      "position": [220, 1320],
       "notes": "Confirmado (16/set/2026): a resposta real vem mesmo em 'contacts'."
     },
     {
@@ -1004,7 +1004,7 @@
       "name": "Loop contatos GHL",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
-      "position": [460, 1220]
+      "position": [460, 1320]
     },
     {
       "parameters": {
@@ -1014,7 +1014,7 @@
       "name": "Normalizar contato GHL (reconciliacao)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [700, 1220]
+      "position": [700, 1320]
     },
     {
       "parameters": {
@@ -1028,7 +1028,7 @@
       "name": "Registrar reconciliacao GHL",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [940, 1220]
+      "position": [940, 1320]
     }
   ],
   "connections": {
