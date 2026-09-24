@@ -356,46 +356,76 @@ sugere, o atalho mais rápido é capturar o payload real de uma ação
 manual bem-sucedida pelo Network do navegador (F12) e comparar campo a
 campo, em vez de ir testando parâmetro por parâmetro às cegas.
 
-## GHL → CVCRM: por que tarefa/visita não têm o caminho de volta
+## GHL → CVCRM: criar tarefa/visita precisa da API v3, não a v1
 
 Investigado a fundo em 24/set/2026, depois do Artur notar que o projeto
 tinha progredido quase só CVCRM→GHL naquele dia (3 gatilhos GHL→CVCRM
 ativos -- tags, situação, nota -- contra 7 campos CVCRM→GHL). Faltava
 fechar tarefa/visita criadas no GHL virando tarefa/visita no CVCRM.
 
-Toda tentativa de achar o endpoint de criação na API pública do CVCRM
+Toda tentativa de achar o endpoint de criação na API v1 do CVCRM
 (`/api/v1/comercial/...`) falhou com `"Lead não existe na base de
 dados"`, não importa o nome do campo ou o formato da URL tentado.
-Capturando o payload real de uma criação de tarefa bem-sucedida (F12 no
-Network do navegador, filtrando por `105118` no conteúdo -- não só na
-URL, porque a URL de save não tinha "tarefa" nela), a causa apareceu:
+Capturando o payload real de uma criação de tarefa bem-sucedida pela
+tela (F12 no Network do navegador, filtrando por `105118` no conteúdo
+-- não só na URL, porque a URL de save não tinha "tarefa" nela), a causa
+apareceu: a tela usa uma rota interna própria
+(`POST /gestor/comercial/leads/105118/administrar?tk=<token>`,
+form-urlencoded, protegida por token de sessão/CSRF que muda a cada
+requisição), bem diferente da API v1 (JSON, email+token fixo). Isso
+levou a uma primeira conclusão, **corrigida logo em seguida**: que a API
+pública do CVCRM simplesmente não tinha esse endpoint.
 
-```
-POST /gestor/comercial/leads/105118/administrar?tk=<token>
-Content-Type: application/x-www-form-urlencoded
+**Correção:** o Artur achou a referência certa
+(`desenvolvedor.cvcrm.com.br/reference/criartarefalead`) -- existe sim
+um endpoint de criação de tarefa/visita na API pública, só que na
+**v3**, não na v1 que o resto da integração usa até agora. A v3 tem
+autenticação totalmente diferente: em vez do par email+token fixo (que
+já vive no `.env`), usa **Bearer JWT obtido por login** (email + senha
+de verdade + painel), válido por um tempo limitado.
 
-acao=salvar_tarefa&nome=...&data=2026-09-25T15:10&prioridade=N&
-situacao=P&tipo_responsavel=G&idresponsavel=196&lembrete_tarefa=N
-```
+Confirmado ao vivo em 24/set/2026, incluindo duas divergências da doc
+(terceira e quarta do dia, mesmo padrão de hoje inteiro):
 
-Duas coisas que explicam por que nunca ia funcionar do jeito que estava
-sendo tentado:
+- **Login:** `POST /api/v3/auth/token`, corpo `{email, senha, painel:
+  "gestor"|"corretor"|"imobiliaria"}`. Funcionou de primeira, mas a
+  resposta real vem envelopada em `{status, code, data: {access_token,
+  token_type, expires_in, refresh_token, refresh_token_expires_in}}`,
+  não `{access_token, token_type, expires_in}` direto na raiz como a
+  doc mostra. `expires_in` também veio como string parecendo timestamp
+  Unix (`"1790297799"`), não os "21600 segundos" que a doc descreve --
+  ainda não investigado a fundo (fica pendente pra quando desenhar a
+  renovação do token).
+- **Criar tarefa:** a doc mostra `POST
+  /v3/comercial/leads/{idLead}/tarefas` (sem `/api/`), que deu 404 real
+  -- o path certo precisa do `/api/` no meio, igual o login
+  (`/api/v3/comercial/leads/{idLead}/tarefas`). Corpo mínimo:
+  `{tipoInteracao: "T"|"V", nome, data, idresponsavel,
+  tipoResponsavel}`. Primeira tentativa também deu 403 "Wrong number of
+  segments" (erro de parser de JWT) porque a expressão lia
+  `access_token` direto da raiz da resposta do login (undefined, por
+  causa do envelope `data` acima) -- corrigido lendo de
+  `$json.data.access_token`. Depois disso, **201 confirmado, tarefa
+  criada de verdade** (`idtarefa: 13629`).
 
-- **Não é a API pública.** É a rota interna da própria tela
-  (`/gestor/comercial/...`, form-urlencoded, não JSON), diferente de
-  `/api/v1/comercial/...` (JSON, autenticado por email+token) que o
-  resto da integração usa.
-- **`tk` é um token de sessão/CSRF**, não uma credencial fixa -- muda a
-  cada requisição, amarrado ao login ativo no navegador. Automatizar
-  isso via n8n exigiria simular login completo (usuário/senha) e
-  capturar um token novo a cada chamada.
+**Sobre a senha:** a v3 pede a senha de login de verdade, não o token
+permanente da v1. Por decisão deliberada, essa senha nunca passa pelo
+Claude nem é commitada no repositório -- fica só no corpo do node
+"Login CVCRM v3" dentro do próprio n8n (preenchida direto na tela pelo
+Artur), o mesmo tratamento que outros segredos sensíveis já recebem
+nesse projeto. Ainda não existe uma conta de serviço dedicada pra isso
+(hoje usa o login pessoal do Artur) -- considerar pedir ao CVCRM uma
+conta separada só pra integração, separando a automação de uma conta de
+pessoa física.
 
-**Conclusão: a API pública do CVCRM não tem endpoint de criação de
-tarefa/visita.** Não é "ainda não achamos" -- é uma lacuna real da
-plataforma. O caminho que sobra é abrir chamado com o suporte do CVCRM
-pedindo esse endpoint (ou aceitar automatizar contra a rota interna,
-frágil e fora do uso oficial, o que não é recomendado). Até lá,
-tarefa/visita continuam só CVCRM→GHL.
+**Estado em 24/set/2026:** login + criação de tarefa validados
+isoladamente (nodes de teste "Teste manual: Login CVCRM v3" → "Login
+CVCRM v3" → "Teste: Criar tarefa CVCRM v3", ainda não conectados ao
+despacho de verdade). Falta: desenhar a renovação do token (relogar a
+cada despacho é a opção mais simples, dado que expira em horas, não
+minutos), o gatilho do lado GHL (Task/Compromisso criado no GHL ainda
+não tem webhook nenhum apontando pra cá), e os `dono_campo`
+correspondentes.
 
 ## Reconciliação: pausada de propósito
 
