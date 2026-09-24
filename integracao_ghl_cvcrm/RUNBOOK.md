@@ -418,14 +418,48 @@ nesse projeto. Ainda não existe uma conta de serviço dedicada pra isso
 conta separada só pra integração, separando a automação de uma conta de
 pessoa física.
 
-**Estado em 24/set/2026:** login + criação de tarefa validados
-isoladamente (nodes de teste "Teste manual: Login CVCRM v3" → "Login
-CVCRM v3" → "Teste: Criar tarefa CVCRM v3", ainda não conectados ao
-despacho de verdade). Falta: desenhar a renovação do token (relogar a
-cada despacho é a opção mais simples, dado que expira em horas, não
-minutos), o gatilho do lado GHL (Task/Compromisso criado no GHL ainda
-não tem webhook nenhum apontando pra cá), e os `dono_campo`
-correspondentes.
+**Estado em 24/set/2026:** ligado no despacho de verdade (desvios "Tem
+tarefa/visita pra criar no CVCRM?" antes de "Enviar CVCRM", cada um
+relogando na v3 antes de criar -- relogar a cada despacho é a opção
+mais simples, dado que o token expira em horas, não minutos). Gatilho
+do lado GHL construído e validado: Workflow "Tarefa Adicionada" (Task
+Added), payload real confirmado com um objeto `task: {title, body,
+dueDate}` aninhado, mesmo padrão de `note` no webhook de Nota. Testado
+de ponta a ponta (GHL → n8n → CVCRM v3 → tarefa criada de verdade).
+Gatilho de Compromisso ("Status do compromisso") criado mas ainda sem
+payload confirmado.
+
+## Incidente: eco de tarefa/visita escapava por causa de HTML-encoding
+
+Descoberto ao vivo em 24/set/2026, testando a proteção de eco logo
+depois de validar a criação de tarefa GHL→CVCRM de ponta a ponta. Uma
+tarefa criada a partir do GHL ("Tarefa Teste #2 - GHL -> CVCRM")
+duplicou no CVCRM (dois `idtarefa` diferentes, mesmo texto).
+
+**Causa:** o endpoint CVDW (`/leads/tarefas`, usado pra ler a tarefa de
+volta) devolve o campo `descricao` com **HTML-escapado** -- o `>` que a
+gente mandou virou `&gt;` na leitura. A checagem de eco por valor (ver
+seção de nota/interação acima) compara string exata; como o texto lido
+de volta (`"...-&gt;..."`) nunca batia com o que foi originalmente
+enviado pro GHL (`"...->..."`), a tarefa nunca era reconhecida como
+eco, e ecoava de volta pro GHL como uma Task duplicada -- que, por sua
+vez, disparava "Tarefa Adicionada" de novo, criando uma segunda tarefa
+no CVCRM. Parou em 2 (não virou loop infinito) porque, depois da
+primeira volta, o texto já escapado passou a bater consigo mesmo nas
+comparações seguintes.
+
+**Correção:** um `decodeHtml()` simples (substituição de `&amp;`,
+`&lt;`, `&gt;`, `&quot;`, `&#39;`) aplicado em `Normalizar evento
+CVCRM` sobre `tarefa_cvcrm.nome`, `visita_cvcrm.titulo` e
+`interacao_cvcrm` (esse último por precaução, mesma fonte de dado, sem
+incidente confirmado ainda) antes de guardar em `campos`. Efeito
+colateral bom: sem isso, o título da Task/nota que aparecia no GHL
+também mostraria `&gt;` literal em vez de `>`.
+
+**Lição:** ao comparar texto vindo e voltando de uma API externa pra
+detectar eco, não basta confiar que o valor volta idêntico -- normalizar
+(decodificar entidades, aparar espaço, etc.) antes de comparar é mais
+seguro que assumir round-trip perfeito.
 
 ## Reconciliação: pausada de propósito
 
