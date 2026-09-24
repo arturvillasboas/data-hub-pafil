@@ -208,6 +208,60 @@
       "position": [700, 1280]
     },
     {
+      "parameters": {},
+      "id": "teste-manual-login-cvcrm-v3",
+      "name": "Teste manual: Login CVCRM v3",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-260, 1900],
+      "notes": "Node de teste isolado, nao conectado ao fluxo principal ainda. Roda esse gatilho manual (botao 'Test step'/'Execute Node') so pra validar o login v3 + criacao de tarefa antes de integrar no despacho de verdade."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://pafil.cvcrm.com.br/api/v3/auth/token",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ email: '<PREENCHER: seu email de login no CVCRM>', senha: '<PREENCHER DIRETO AQUI NO N8N -- NUNCA commitar isso no git>', painel: 'gestor' }) }}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "login-cvcrm-v3",
+      "name": "Login CVCRM v3",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-20, 1900],
+      "notes": "Confirmado contra doc oficial (24/set/2026, desenvolvedor.cvcrm.com.br/docs/como-autenticar-nas-apis-do-cv-crm-com-bearer-token): POST /api/v3/auth/token, corpo {email, senha, painel: gestor|corretor|imobiliaria}, sem autenticacao previa. Resposta: {access_token, token_type: Bearer, expires_in: 21600 (6h)}. IMPORTANTE: senha e' a senha de LOGIN de verdade, diferente do token permanente da v1 -- por isso o valor fica so' aqui no n8n (preenchido direto na tela, nunca no arquivo commitado no git). Sem sistema formal de Credencial do n8n porque o corpo custom (email+senha+painel via JSON) nao encaixa limpo nos tipos prontos (Basic/Header/OAuth2) sem workaround. AINDA NAO TESTADO ao vivo -- rodar via 'Teste manual: Login CVCRM v3' antes de confiar."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://pafil.cvcrm.com.br/v3/comercial/leads/105118/tarefas",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "={{ 'Bearer ' + $('Login CVCRM v3').item.json.access_token }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ tipoInteracao: 'T', nome: 'Teste API v3 -- pode apagar', data: '2026-09-26 10:00:00', idresponsavel: 196, tipoResponsavel: 'G' }) }}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "teste-criar-tarefa-cvcrm-v3",
+      "name": "Teste: Criar tarefa CVCRM v3",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 1900],
+      "notes": "Confirmado contra doc oficial (24/set/2026, desenvolvedor.cvcrm.com.br/reference/criartarefalead): POST /v3/comercial/leads/{idLead}/tarefas (nota: sem /api/ no path, diferente da v1 -- confirmar se funciona assim ou se precisa de /api/v3/... na pratica, a doc as vezes diverge da URL real de chamada, ja vimos isso hoje). Corpo minimo: tipoInteracao ('T' ou 'V'), nome, data, idresponsavel, tipoResponsavel. AINDA NAO TESTADO -- esse node e' so' pra validar o fluxo de ponta a ponta (login -> criar) antes de integrar no despacho de verdade. Testa contra o lead de teste (105118), apaga a tarefa criada depois."
+    },
+    {
       "parameters": {
         "method": "POST",
         "url": "https://pafil.cvcrm.com.br/api/v1/comercial/leads",
@@ -863,6 +917,12 @@
         [{ "node": "Enviar CVCRM", "type": "main", "index": 0 }],
         [{ "node": "Tem contato GHL?", "type": "main", "index": 0 }]
       ]
+    },
+    "Teste manual: Login CVCRM v3": {
+      "main": [[{ "node": "Login CVCRM v3", "type": "main", "index": 0 }]]
+    },
+    "Login CVCRM v3": {
+      "main": [[{ "node": "Teste: Criar tarefa CVCRM v3", "type": "main", "index": 0 }]]
     },
     "Tem contato GHL?": {
       "main": [
