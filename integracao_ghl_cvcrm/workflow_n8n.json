@@ -241,7 +241,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://pafil.cvcrm.com.br/v3/comercial/leads/105118/tarefas",
+        "url": "https://pafil.cvcrm.com.br/api/v3/comercial/leads/105118/tarefas",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -259,7 +259,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [220, 1900],
-      "notes": "Confirmado contra doc oficial (24/set/2026, desenvolvedor.cvcrm.com.br/reference/criartarefalead): POST /v3/comercial/leads/{idLead}/tarefas (nota: sem /api/ no path, diferente da v1 -- confirmar se funciona assim ou se precisa de /api/v3/... na pratica, a doc as vezes diverge da URL real de chamada, ja vimos isso hoje). Corpo minimo: tipoInteracao ('T' ou 'V'), nome, data, idresponsavel, tipoResponsavel. AINDA NAO TESTADO -- esse node e' so' pra validar o fluxo de ponta a ponta (login -> criar) antes de integrar no despacho de verdade. Testa contra o lead de teste (105118), apaga a tarefa criada depois."
+      "notes": "Corrigido ao vivo em 24/set/2026: a doc oficial (desenvolvedor.cvcrm.com.br/reference/criartarefalead) mostra o path sem '/api/' (/v3/comercial/leads/{idLead}/tarefas), mas isso deu 404 real -- igual o login, que usa /api/v3/auth/token, o path certo tambem precisa do /api/ no meio (/api/v3/comercial/leads/{idLead}/tarefas). Mais um caso de doc divergindo da chamada real, mesmo padrao de hoje mais cedo. Corpo minimo: tipoInteracao ('T' ou 'V'), nome, data, idresponsavel, tipoResponsavel. Login (access_token) ja confirmado funcionando -- essa correcao de URL ainda precisa ser testada de novo."
     },
     {
       "parameters": {
