@@ -776,7 +776,25 @@
       "name": "Rotular despacho",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [4000, 1720]
+      "position": [4260, 1900]
+    },
+    {
+      "parameters": {},
+      "id": "juntar-despacho-cvcrm",
+      "name": "Juntar despacho CVCRM",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [2200, 1700],
+      "notes": "Adicionado 24/set/2026, so' pra organizar o canvas: junta as ~6 saidas do ramo de criacao no CVCRM (Criar tarefa/visita CVCRM v3, Enviar CVCRM) antes de Rotular despacho, em vez de cada uma linkar direto la e criar um emaranhado de linhas. Nao muda comportamento nenhum."
+    },
+    {
+      "parameters": {},
+      "id": "juntar-despacho-ghl",
+      "name": "Juntar despacho GHL",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [3960, 2120],
+      "notes": "Adicionado 24/set/2026, so' pra organizar o canvas: junta as ~13 saidas do ramo de despacho pro GHL (Criar nota/tarefa/compromisso GHL, Mudar estagio Oportunidade, Enviar GHL, Registrar novo contato GHL) antes de Rotular despacho. Nao muda comportamento nenhum."
     },
     {
       "parameters": {
@@ -790,7 +808,7 @@
       "name": "Marcar processada",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [4300, 1720]
+      "position": [4560, 1900]
     },
     {
       "parameters": {
@@ -804,7 +822,7 @@
       "name": "Registrar envio",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [4600, 1720]
+      "position": [4860, 1900]
     },
 
     {
@@ -1103,8 +1121,8 @@
     },
     "Criar tarefa CVCRM v3": {
       "main": [
-        [{ "node": "Rotular despacho", "type": "main", "index": 0 }],
-        [{ "node": "Rotular despacho", "type": "main", "index": 0 }]
+        [{ "node": "Juntar despacho CVCRM", "type": "main", "index": 0 }],
+        [{ "node": "Juntar despacho CVCRM", "type": "main", "index": 0 }]
       ]
     },
     "Tem visita pra criar no CVCRM?": {
@@ -1118,8 +1136,8 @@
     },
     "Criar visita CVCRM v3": {
       "main": [
-        [{ "node": "Rotular despacho", "type": "main", "index": 0 }],
-        [{ "node": "Rotular despacho", "type": "main", "index": 0 }]
+        [{ "node": "Juntar despacho CVCRM", "type": "main", "index": 0 }],
+        [{ "node": "Juntar despacho CVCRM", "type": "main", "index": 0 }]
       ]
     },
     "Teste manual: Login CVCRM v3": {
@@ -1154,8 +1172,8 @@
     },
     "Criar compromisso GHL": {
       "main": [
-        [{ "node": "Rotular despacho", "type": "main", "index": 0 }],
-        [{ "node": "Rotular despacho", "type": "main", "index": 0 }]
+        [{ "node": "Juntar despacho GHL", "type": "main", "index": 0 }],
+        [{ "node": "Juntar despacho GHL", "type": "main", "index": 0 }]
       ]
     },
     "Tem situacao pra mudar?": {
@@ -1172,44 +1190,50 @@
     },
     "Mudar estagio Oportunidade GHL": {
       "main": [
-        [{ "node": "Rotular despacho", "type": "main", "index": 0 }],
-        [{ "node": "Rotular despacho", "type": "main", "index": 0 }]
+        [{ "node": "Juntar despacho GHL", "type": "main", "index": 0 }],
+        [{ "node": "Juntar despacho GHL", "type": "main", "index": 0 }]
       ]
     },
     "Criar tarefa GHL": {
       "main": [
-        [{ "node": "Rotular despacho", "type": "main", "index": 0 }],
-        [{ "node": "Rotular despacho", "type": "main", "index": 0 }]
+        [{ "node": "Juntar despacho GHL", "type": "main", "index": 0 }],
+        [{ "node": "Juntar despacho GHL", "type": "main", "index": 0 }]
       ]
     },
     "Criar nota GHL": {
       "main": [
-        [{ "node": "Rotular despacho", "type": "main", "index": 0 }],
-        [{ "node": "Rotular despacho", "type": "main", "index": 0 }]
+        [{ "node": "Juntar despacho GHL", "type": "main", "index": 0 }],
+        [{ "node": "Juntar despacho GHL", "type": "main", "index": 0 }]
       ]
     },
     "Criar contato GHL": {
       "main": [
         [{ "node": "Registrar novo contato GHL", "type": "main", "index": 0 }],
-        [{ "node": "Rotular despacho", "type": "main", "index": 0 }]
+        [{ "node": "Juntar despacho GHL", "type": "main", "index": 0 }]
       ]
     },
     "Registrar novo contato GHL": {
       "main": [
-        [{ "node": "Rotular despacho", "type": "main", "index": 0 }]
+        [{ "node": "Juntar despacho GHL", "type": "main", "index": 0 }]
       ]
     },
     "Enviar CVCRM": {
       "main": [
-        [{ "node": "Rotular despacho", "type": "main", "index": 0 }],
-        [{ "node": "Rotular despacho", "type": "main", "index": 0 }]
+        [{ "node": "Juntar despacho CVCRM", "type": "main", "index": 0 }],
+        [{ "node": "Juntar despacho CVCRM", "type": "main", "index": 0 }]
       ]
     },
     "Enviar GHL": {
       "main": [
-        [{ "node": "Rotular despacho", "type": "main", "index": 0 }],
-        [{ "node": "Rotular despacho", "type": "main", "index": 0 }]
+        [{ "node": "Juntar despacho GHL", "type": "main", "index": 0 }],
+        [{ "node": "Juntar despacho GHL", "type": "main", "index": 0 }]
       ]
+    },
+    "Juntar despacho CVCRM": {
+      "main": [[{ "node": "Rotular despacho", "type": "main", "index": 0 }]]
+    },
+    "Juntar despacho GHL": {
+      "main": [[{ "node": "Rotular despacho", "type": "main", "index": 0 }]]
     },
     "Rotular despacho": {
       "main": [[{ "node": "Marcar processada", "type": "main", "index": 0 }]]
