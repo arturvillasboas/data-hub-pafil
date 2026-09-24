@@ -932,7 +932,31 @@
       "typeVersion": 2,
       "position": [-260, 800],
       "webhookId": "pafil-ghl-tarefa-evento",
-      "notes": "Adicionado 24/set/2026. Gatilho no GHL: Workflow 'Tarefa Adicionada' (Task Added), filtrado pela tag do piloto (mesma logica ja usada nos outros gatilhos). AINDA SEM NORMALIZADOR/DESPACHO CONECTADO DE PROPOSITO -- payload real ainda nao visto (a doc formal do GHL nao cobre a acao de Webhook dentro de Workflow, ja vimos isso divergir 3x hoje: Oportunidade, Nota, Compromisso). Testar disparando o gatilho e olhando o Output desse node antes de escrever o normalizador."
+      "notes": "Confirmado contra payload real em 24/set/2026: mesmo formato achatado (phone, email, tags, contact_id, workflow.name) mais um objeto 'task' a parte -- { task: { title, body, dueDate } }, mesmo padrao aninhado de 'note' no webhook de Nota. Telefone/email ja vem no corpo, sem precisar buscar o contato a parte."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Confirmado contra payload real em 24/set/2026: { task: { title, body,\n// dueDate } }, dueDate em ISO sem timezone (\"2026-09-25T11:00:00\") --\n// convertido pra 'YYYY-MM-DD HH:MM:SS' (formato que a API v3 do CVCRM\n// espera, ver Criar tarefa CVCRM v3), tratado como horario de Brasilia\n// direto, mesmo padrao ja usado pros outros campos de data.\nconst body = $json.body ?? $json;\n\nreturn {\n  json: {\n    origem: 'ghl',\n    tipo_evento: 'tarefa_adicionada',\n    telefone_bruto: body.phone ?? null,\n    email_bruto: body.email ?? null,\n    cpf_bruto: null,\n    campos: {\n      tarefa_criada_ghl: {\n        nome: body.task?.title ?? null,\n        data: body.task?.dueDate ? body.task.dueDate.replace('T', ' ') : null,\n      },\n    },\n  },\n};\n"
+      },
+      "id": "normalizar-ghl-tarefa",
+      "name": "Normalizar evento GHL Tarefa",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-20, 800]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO integracao.fila_sync (origem, tipo_evento, telefone_bruto, email_bruto, cpf_bruto, campos)\nVALUES ($1, $2, $3, $4, $5, $6::jsonb)\nRETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [$json.origem, $json.tipo_evento, $json.telefone_bruto, $json.email_bruto, $json.cpf_bruto, JSON.stringify($json.campos)] }}"
+        }
+      },
+      "id": "gravar-fila-ghl-tarefa",
+      "name": "Gravar fila (GHL Tarefa)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [220, 800]
     },
     {
       "parameters": {
@@ -1058,6 +1082,12 @@
     },
     "Normalizar evento GHL Nota": {
       "main": [[{ "node": "Gravar fila (GHL Nota)", "type": "main", "index": 0 }]]
+    },
+    "Webhook GHL Tarefa": {
+      "main": [[{ "node": "Normalizar evento GHL Tarefa", "type": "main", "index": 0 }]]
+    },
+    "Normalizar evento GHL Tarefa": {
+      "main": [[{ "node": "Gravar fila (GHL Tarefa)", "type": "main", "index": 0 }]]
     },
     "Webhook GHL Oportunidade": {
       "main": [[{ "node": "Buscar situacao CVCRM", "type": "main", "index": 0 }]]
