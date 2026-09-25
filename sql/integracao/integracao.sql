@@ -188,6 +188,22 @@ AS $$
     END;
 $$;
 
+-- Normaliza texto antes de comparar por igualdade nas checagens de eco por
+-- VALOR (nota/interacao, tarefa/visita -- ver preencher_fila_sync). Incidente
+-- ao vivo em 25/set/2026: uma interacao real do CVCRM tinha quebra de linha
+-- dupla (\n\n) entre paragrafos; o GHL devolveu o texto da nota com espaco
+-- simples no lugar (achatando a formatacao ao guardar/devolver a nota) --
+-- string diferente, o eco nao foi reconhecido, e a interacao voltou
+-- duplicada pro CVCRM. Colapsa qualquer sequencia de espaco/quebra de linha
+-- em um espaco so, e apara as pontas, dos dois lados da comparacao.
+CREATE OR REPLACE FUNCTION integracao.normalizar_texto_eco(p_texto text)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+AS $$
+    SELECT NULLIF(btrim(regexp_replace(COALESCE(p_texto, ''), '\s+', ' ', 'g')), '');
+$$;
+
 -- Hash estável de um conjunto de campos (chave:valor, ordenado por chave), usado
 -- tanto para gravar o que foi enviado (log_sync) quanto para comparar um evento
 -- recebido contra o último envio (detecção de eco). Hashear campos específicos,
@@ -346,10 +362,10 @@ BEGIN
     -- (tarefa_cvcrm/visita_cvcrm, que le QUALQUER tarefa nova do lead,
     -- sem saber a origem) e mandada de volta pro GHL como duplicada.
     IF NEW.origem = 'cvcrm' AND (NEW.campos ? 'tarefa_cvcrm' OR NEW.campos ? 'visita_cvcrm') THEN
-        SELECT COALESCE(
+        SELECT integracao.normalizar_texto_eco(COALESCE(
                  l.campos_enviados -> 'tarefa_cvcrm_criar' ->> 'nome',
                  l.campos_enviados -> 'visita_cvcrm_criar' ->> 'titulo'
-               )
+               ))
           INTO v_ultimo_enviado
           FROM integracao.log_sync l
          WHERE l.contato_id = NEW.contato_id AND l.destino = 'cvcrm'
@@ -357,33 +373,33 @@ BEGIN
          LIMIT 1;
 
         IF v_ultimo_enviado IS NOT NULL AND (
-            v_ultimo_enviado = (NEW.campos -> 'tarefa_cvcrm' ->> 'nome')
-            OR v_ultimo_enviado = (NEW.campos -> 'visita_cvcrm' ->> 'titulo')
+            v_ultimo_enviado = integracao.normalizar_texto_eco(NEW.campos -> 'tarefa_cvcrm' ->> 'nome')
+            OR v_ultimo_enviado = integracao.normalizar_texto_eco(NEW.campos -> 'visita_cvcrm' ->> 'titulo')
         ) THEN
             NEW.campos := NEW.campos - 'tarefa_cvcrm' - 'visita_cvcrm';
         END IF;
     END IF;
 
     IF NEW.origem = 'ghl' AND NEW.campos ? 'nota_ghl' THEN
-        SELECT l.campos_enviados ->> 'interacoes' INTO v_ultimo_enviado
+        SELECT integracao.normalizar_texto_eco(l.campos_enviados ->> 'interacoes') INTO v_ultimo_enviado
           FROM integracao.log_sync l
          WHERE l.contato_id = NEW.contato_id AND l.destino = 'cvcrm'
          ORDER BY l.criado_em DESC
          LIMIT 1;
 
-        IF v_ultimo_enviado IS NOT NULL AND v_ultimo_enviado = (NEW.campos ->> 'nota_ghl') THEN
+        IF v_ultimo_enviado IS NOT NULL AND v_ultimo_enviado = integracao.normalizar_texto_eco(NEW.campos ->> 'nota_ghl') THEN
             NEW.campos := NEW.campos - 'nota_ghl';
         END IF;
     END IF;
 
     IF NEW.origem = 'cvcrm' AND NEW.campos ? 'interacao_cvcrm' THEN
-        SELECT l.campos_enviados ->> 'nota_ghl' INTO v_ultimo_enviado
+        SELECT integracao.normalizar_texto_eco(l.campos_enviados ->> 'nota_ghl') INTO v_ultimo_enviado
           FROM integracao.log_sync l
          WHERE l.contato_id = NEW.contato_id AND l.destino = 'ghl'
          ORDER BY l.criado_em DESC
          LIMIT 1;
 
-        IF v_ultimo_enviado IS NOT NULL AND v_ultimo_enviado = (NEW.campos ->> 'interacao_cvcrm') THEN
+        IF v_ultimo_enviado IS NOT NULL AND v_ultimo_enviado = integracao.normalizar_texto_eco(NEW.campos ->> 'interacao_cvcrm') THEN
             NEW.campos := NEW.campos - 'interacao_cvcrm';
         END IF;
     END IF;

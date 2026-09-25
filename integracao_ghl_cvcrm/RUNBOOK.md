@@ -461,6 +461,30 @@ detectar eco, não basta confiar que o valor volta idêntico -- normalizar
 (decodificar entidades, aparar espaço, etc.) antes de comparar é mais
 seguro que assumir round-trip perfeito.
 
+## Incidente: eco de nota/interação escapava por causa de quebra de linha achatada
+
+A lição acima se confirmou na prática horas depois, em produção de
+verdade (25/set/2026, não mais o lead de teste): uma interação real do
+CVCRM (uma anotação de WhatsApp de um corretor, com parágrafos
+separados por linha em branco, `\n\n`) virou nota no GHL, e essa nota
+ecoou de volta pro CVCRM como uma interação nova, duplicada,
+erroneamente atribuída ao usuário da integração ("Artur Filho -
+Gestor") em vez de ficar só a original do corretor.
+
+**Causa:** o GHL achata a formatação da nota ao guardar/devolver o
+campo `body` -- o texto que chegou de volta via webhook tinha espaço
+simples entre frases onde o original tinha `\n\n` entre parágrafos.
+Sem HTML-escape envolvido dessa vez (motivo diferente do incidente de
+tarefa/visita acima), mas o mesmo resultado: string diferente, eco não
+reconhecido.
+
+**Correção:** nova função `integracao.normalizar_texto_eco()` (colapsa
+qualquer sequência de espaço/quebra de linha em um espaço só, apara as
+pontas) aplicada dos dois lados de toda comparação de eco por texto em
+`preencher_fila_sync()` -- nota/interação e tarefa/visita. Mais
+robusta que o `decodeHtml()` isolado do incidente anterior, porque
+normaliza espaçamento além de entidades HTML.
+
 ## Reconciliação: pausada de propósito
 
 O workflow tem um segundo caminho, independente do webhook: `Gatilho
