@@ -263,6 +263,25 @@
     },
     {
       "parameters": {
+        "method": "DELETE",
+        "url": "https://pafil.cvcrm.com.br/api/v3/comercial/leads/105118/tarefas/13635",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "={{ 'Bearer ' + $('Login CVCRM v3').item.json.data.access_token }}" }
+          ]
+        },
+        "options": { "timeout": 30000 }
+      },
+      "id": "teste-excluir-tarefa-cvcrm-v3",
+      "name": "Teste: Excluir tarefa CVCRM v3",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 1500],
+      "notes": "Adicionado 25/set/2026, limpeza pontual: DELETE /api/v3/comercial/leads/{idLead}/tarefas/{idTarefa} (confirmado contra doc oficial, desenvolvedor.cvcrm.com.br/reference/excluirtarefalead -- soft-delete, mesma autenticacao Bearer JWT da criacao). idtarefa=13635 e' a duplicata do incidente de eco de 24/set/2026 ('Tarefa Teste #2 - GHL -> CVCRM', ver RUNBOOK.md) -- apagar so' essa execucao manual, node de uso pontual, nao faz parte do fluxo principal."
+    },
+    {
+      "parameters": {
         "method": "POST",
         "url": "https://pafil.cvcrm.com.br/api/v1/comercial/leads",
         "authentication": "genericCredentialType",
@@ -1174,7 +1193,10 @@
       "main": [[{ "node": "Login CVCRM v3", "type": "main", "index": 0 }]]
     },
     "Login CVCRM v3": {
-      "main": [[{ "node": "Teste: Criar tarefa CVCRM v3", "type": "main", "index": 0 }]]
+      "main": [[
+        { "node": "Teste: Criar tarefa CVCRM v3", "type": "main", "index": 0 },
+        { "node": "Teste: Excluir tarefa CVCRM v3", "type": "main", "index": 0 }
+      ]]
     },
     "Tem contato GHL?": {
       "main": [
