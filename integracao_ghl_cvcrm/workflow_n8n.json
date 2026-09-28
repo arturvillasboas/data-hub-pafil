@@ -268,7 +268,7 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Authorization", "value": "={{ 'Bearer ' + $('Login CVCRM v3').item.json.data.access_token }}" }
+            { "name": "Authorization", "value": "={{ 'Bearer ' + $('Login CVCRM v3 (tarefa)').item.json.data.access_token }}" }
           ]
         },
         "options": { "timeout": 30000 }
@@ -1193,10 +1193,7 @@
       "main": [[{ "node": "Login CVCRM v3", "type": "main", "index": 0 }]]
     },
     "Login CVCRM v3": {
-      "main": [[
-        { "node": "Teste: Criar tarefa CVCRM v3", "type": "main", "index": 0 },
-        { "node": "Teste: Excluir tarefa CVCRM v3", "type": "main", "index": 0 }
-      ]]
+      "main": [[{ "node": "Teste: Criar tarefa CVCRM v3", "type": "main", "index": 0 }]]
     },
     "Tem contato GHL?": {
       "main": [
