@@ -86,15 +86,30 @@ INSERT INTO integracao.dono_campo (campo, dono, campo_destino, descricao) VALUES
     ('tarefa_criada_ghl',         'ghl',   'tarefa_cvcrm_criar',
         'Adicionado 24/set/2026: Task criada no GHL virando tarefa no CVCRM (direção GHL->CVCRM, completando o par de tarefa_cvcrm). Usa a API v3 do CVCRM (POST /api/v3/comercial/leads/{id}/tarefas, Bearer JWT via login -- ver [[cvcrm-api-v3-bearer-jwt]] e RUNBOOK.md), diferente da v1 que o resto da integração usa, porque a v1 não tem esse endpoint. campo_destino "tarefa_cvcrm_criar" é marcador especial -- o desvio "Tem tarefa pra criar no CVCRM?" (antes de "Enviar CVCRM" na cadeia) roteia pro login + criação. idresponsavel/tipoResponsavel hardcoded pro piloto/teste (mesma pendência de de-para corretor que nota_ghl/tarefa_ghl/visita_ghl já têm do lado GHL). Payload real do gatilho do GHL (Workflow Webhook pra "Task Created" ou equivalente) ainda não confirmado -- normalizador pode precisar de ajuste.'),
     ('compromisso_criado_ghl',    'ghl',   'visita_cvcrm_criar',
-        'Adicionado 24/set/2026: Compromisso (Calendar) criado no GHL virando Visita no CVCRM (tipoInteracao=''V'' na API v3, mesma lógica de visita_cvcrm mas no sentido contrário). campo_destino "visita_cvcrm_criar" é marcador especial -- desvio "Tem visita pra criar no CVCRM?" (mesma cadeia de tarefa_criada_ghl). Payload real do gatilho do GHL ainda não confirmado.')
+        'Adicionado 24/set/2026, payload confirmado ao vivo em 28/set/2026: Compromisso (Calendar) criado no GHL virando Visita no CVCRM (tipoInteracao=''V'' na API v3, mesma lógica de visita_cvcrm mas no sentido contrário). campo_destino "visita_cvcrm_criar" é marcador especial -- desvio "Tem visita pra criar no CVCRM?" (mesma cadeia de tarefa_criada_ghl). O gatilho do GHL ("Status do compromisso") dispara em QUALQUER mudança de status, não só criação -- dedup por appointment_id_ghl em preencher_fila_sync() garante que só a primeira ocorrência crie a visita no CVCRM.'),
+    ('nome_lead',                 'cvcrm', 'nome_ghl',
+        'Adicionado 29/set/2026: lead novo do CVCRM virava contato no GHL sem nome nenhum (só telefone aparecia na tela). campo_destino "nome_ghl" é marcador especial (não é Custom Field) -- tratado à parte do PUT customFields normal em "Criar contato GHL"/"Enviar GHL", vai pro campo nativo firstName do contato.'),
+    ('idlead_cvcrm',               'cvcrm', 'hIm5WvQINtMIIMg8hCXw',
+        'Adicionado 29/set/2026: já vinha em todo evento do CVCRM (uso interno pra resolver contato), nunca tinha dono_campo pra ser despachado de verdade. Destino = Custom Field "ID Lead CVCRM" (contact.idlead_cv), existia desde 28/mai/2026, nunca usado até agora.'),
+    ('idcorretor_cvcrm',           'cvcrm', '1Z31GvHKM0AzhzVSWxa6',
+        'Adicionado 29/set/2026: id numérico do corretor (lead.corretor.id), diferente de corretor_responsavel (o nome, que já tinha seu próprio Custom Field "Nome Corretor CVCRM"). Destino = Custom Field "ID Corretor CVCRM" (contact.idcorretor_cv), existia desde 28/mai/2026, nunca usado até agora.'),
+    ('idimobiliaria_cvcrm',        'cvcrm', 'I7XgMujTR1b2wf6eMIv8',
+        'Adicionado 29/set/2026: id da imobiliária do lead (lead.imobiliaria.id). Destino = Custom Field "ID Imobiliaria CVCRM" (contact.idimobiliaria_cv), existia desde 28/mai/2026, nunca usado até agora.'),
+    ('cpf_lead',                   'cvcrm', 'JJ77uXsII71YOszDC6AG',
+        'Adicionado 29/set/2026: só preenchido quando documento_tipo=''cpf'' (mesma condição já usada pra cpf_bruto, usado na resolução de contato). Destino = Custom Field "CPF" (contact.cpf_cv), existia desde 28/mai/2026, nunca usado até agora.'),
+    ('situacao_lead_nome',         'cvcrm', 'SX73VVvBKW0S2UEfGu43',
+        'Adicionado 29/set/2026: NOME da etapa (texto, lead.situacao.nome) -- diferente de situacao_cvcrm (o id numérico, usado pra mudar o estágio real da Oportunidade via PUT /opportunities/:id). Este é só um Custom Field de exibição. Destino = Custom Field "Situacao Lead CV" (contact.situacao_lead_cv), existia desde 28/mai/2026, nunca usado até agora.')
 ON CONFLICT (campo) DO UPDATE SET dono = EXCLUDED.dono, campo_destino = EXCLUDED.campo_destino, descricao = EXCLUDED.descricao;
 -- Achado em 18/set/2026: a sub-account do GHL já tinha, desde 28/mai/2026, um
 -- conjunto de Custom Fields pensados especificamente para uma integração com o
 -- CVCRM (situacao_lead_cv, empreendimento_cv, midia_cv, idcorretor_cv,
 -- idlead_cv, idreserva_cv, idimobiliaria_cv, idprecadastro_cv, cpf_cv, entre
--- outros) -- alguem ja tinha planejado isso antes deste projeto. Usamos os que
--- fazem sentido pro escopo atual (lead); o resto fica disponivel pra quando o
--- escopo crescer (reserva, pre-cadastro).
+-- outros) -- alguem ja tinha planejado isso antes deste projeto. Mapeados em
+-- 29/set/2026: idlead_cv, idcorretor_cv, idimobiliaria_cv, cpf_cv,
+-- situacao_lead_cv (todos vem no mesmo GET do lead, sem chamada nova).
+-- idreserva_cv e idprecadastro_cv ficam pendentes -- exigiriam um endpoint
+-- novo (reserva/pre-cadastro por lead nao vem no GET do lead), pro backlog
+-- de quando o escopo crescer.
 --
 -- Do lado CVCRM, os nomes internos (situacao_lead/corretor_responsavel/
 -- empreendimento_interesse) correspondem as colunas situacao/corretor/
@@ -380,10 +395,61 @@ BEGIN
         END IF;
     END IF;
 
-    IF NEW.origem = 'ghl' AND NEW.campos ? 'nota_ghl' THEN
-        SELECT integracao.normalizar_texto_eco(l.campos_enviados ->> 'interacoes') INTO v_ultimo_enviado
+    -- Dedup de compromisso_criado_ghl por appointment_id_ghl (28/set/2026):
+    -- o gatilho "Status do compromisso" do GHL dispara em QUALQUER mudança de
+    -- status do compromisso (booked -> confirmed -> ...), não só na criação
+    -- -- confirmado ao vivo. Sem isso, cada mudança de status criaria uma
+    -- visita nova no CVCRM pro mesmo compromisso. Diferente do par
+    -- nota_ghl/interacao_cvcrm (texto muda de forma entre plataformas), aqui
+    -- o compromisso tem um id estável no GHL (appointmentId) que viaja
+    -- dentro do próprio campos_enviados só pra essa checagem -- se já existe
+    -- um envio anterior pro CVCRM com o mesmo appointment_id_ghl, é só status
+    -- mudando, não um compromisso novo. Reagendamento (mesmo appointmentId,
+    -- data nova) fica de fora de propósito: só a primeira ocorrência cria a
+    -- visita no CVCRM.
+    IF NEW.origem = 'ghl' AND NEW.campos ? 'compromisso_criado_ghl' THEN
+        SELECT l.campos_enviados -> 'visita_cvcrm_criar' ->> 'appointment_id_ghl'
+          INTO v_ultimo_enviado
           FROM integracao.log_sync l
          WHERE l.contato_id = NEW.contato_id AND l.destino = 'cvcrm'
+           AND l.campos_enviados ? 'visita_cvcrm_criar'
+         ORDER BY l.criado_em DESC
+         LIMIT 1;
+
+        IF v_ultimo_enviado IS NOT NULL
+           AND v_ultimo_enviado = (NEW.campos -> 'compromisso_criado_ghl' ->> 'appointment_id_ghl') THEN
+            NEW.campos := NEW.campos - 'compromisso_criado_ghl';
+        END IF;
+    END IF;
+
+    -- CORRIGIDO 28/set/2026: os 4 blocos abaixo (nota/interacao e situacao)
+    -- comparavam contra o DESTINO ERRADO desde a origem (23/set/2026) -- um
+    -- eco so faz sentido comparado contra o que NOS MESMOS escrevemos na
+    -- MESMA plataforma de onde o evento agora chegou (mesmo padrao do bloco
+    -- de tarefa/visita acima, que sempre esteve certo). Estava invertido:
+    -- nota_ghl (chegando do ghl) comparava contra destino='cvcrm', e
+    -- interacao_cvcrm (chegando do cvcrm) comparava contra destino='ghl' --
+    -- ou seja, nunca contra o proprio envio que causou o eco. Confirmado ao
+    -- vivo com fila_sync #3418/#3422 e log_sync #3722/#3726 (lead 99666,
+    -- Anne Santos): a nota criada por NOS no GHL as 17:44 disparou o
+    -- webhook de volta 3s depois, a checagem comparou contra destino=cvcrm
+    -- (nao tinha nada la, deu NULL) em vez de destino=ghl (onde estava o
+    -- log certo), nao suprimiu, e virou anotacao duplicada #196310 no
+    -- CVCRM as 17:46. Isso explica por que o incidente de 25/set (Danilo
+    -- Ruiz Carvalho) voltou a acontecer mesmo depois do fix de
+    -- normalizar_texto_eco -- aquele fix era necessario mas nao suficiente,
+    -- a comparacao nunca encontrava o log certo pra normalizar em primeiro
+    -- lugar. Nos dois blocos de situacao o mesmo defeito sempre existiu,
+    -- so nunca foi percebido porque o PUT e' idempotente (eco escapando so'
+    -- gera chamada de API redundante, nao duplicata visivel). Adicionado
+    -- tambem "AND l.campos_enviados ? 'chave'" em cada SELECT, pra pegar o
+    -- ultimo envio que realmente tem aquele campo (nao so' a linha mais
+    -- recente pro destino, que pode ser de outro campo intercalado).
+    IF NEW.origem = 'ghl' AND NEW.campos ? 'nota_ghl' THEN
+        SELECT integracao.normalizar_texto_eco(l.campos_enviados ->> 'nota_ghl') INTO v_ultimo_enviado
+          FROM integracao.log_sync l
+         WHERE l.contato_id = NEW.contato_id AND l.destino = 'ghl'
+           AND l.campos_enviados ? 'nota_ghl'
          ORDER BY l.criado_em DESC
          LIMIT 1;
 
@@ -393,9 +459,10 @@ BEGIN
     END IF;
 
     IF NEW.origem = 'cvcrm' AND NEW.campos ? 'interacao_cvcrm' THEN
-        SELECT integracao.normalizar_texto_eco(l.campos_enviados ->> 'nota_ghl') INTO v_ultimo_enviado
+        SELECT integracao.normalizar_texto_eco(l.campos_enviados ->> 'interacoes') INTO v_ultimo_enviado
           FROM integracao.log_sync l
-         WHERE l.contato_id = NEW.contato_id AND l.destino = 'ghl'
+         WHERE l.contato_id = NEW.contato_id AND l.destino = 'cvcrm'
+           AND l.campos_enviados ? 'interacoes'
          ORDER BY l.criado_em DESC
          LIMIT 1;
 
@@ -413,9 +480,10 @@ BEGIN
     -- escapar por um ciclo o dano e' so uma chamada de API redundante, nao
     -- dado duplicado visivel.
     IF NEW.origem = 'ghl' AND NEW.campos ? 'situacao_lead' THEN
-        SELECT l.campos_enviados ->> 'idsituacao' INTO v_ultimo_enviado
+        SELECT l.campos_enviados ->> 'situacao_ghl' INTO v_ultimo_enviado
           FROM integracao.log_sync l
-         WHERE l.contato_id = NEW.contato_id AND l.destino = 'cvcrm'
+         WHERE l.contato_id = NEW.contato_id AND l.destino = 'ghl'
+           AND l.campos_enviados ? 'situacao_ghl'
          ORDER BY l.criado_em DESC
          LIMIT 1;
 
@@ -425,9 +493,10 @@ BEGIN
     END IF;
 
     IF NEW.origem = 'cvcrm' AND NEW.campos ? 'situacao_cvcrm' THEN
-        SELECT l.campos_enviados ->> 'situacao_ghl' INTO v_ultimo_enviado
+        SELECT l.campos_enviados ->> 'idsituacao' INTO v_ultimo_enviado
           FROM integracao.log_sync l
-         WHERE l.contato_id = NEW.contato_id AND l.destino = 'ghl'
+         WHERE l.contato_id = NEW.contato_id AND l.destino = 'cvcrm'
+           AND l.campos_enviados ? 'idsituacao'
          ORDER BY l.criado_em DESC
          LIMIT 1;
 

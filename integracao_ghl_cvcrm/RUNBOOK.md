@@ -485,6 +485,153 @@ pontas) aplicada dos dois lados de toda comparação de eco por texto em
 robusta que o `decodeHtml()` isolado do incidente anterior, porque
 normaliza espaçamento além de entidades HTML.
 
+## Incidente: a checagem de eco de nota/interação e situação comparava contra o destino errado
+
+Achado em 28/set/2026, num lead REAL (99666, Anne Santos, corretor Wallace
+Bueno Costa) -- não o lead de teste. O mesmo sintoma do incidente de
+25/set (uma anotação duplicada, atribuída ao usuário da integração)
+voltou a acontecer mesmo depois do fix de `normalizar_texto_eco()`. Isso
+não fazia sentido se aquele fix estivesse completo, e não estava.
+
+**Causa raiz:** os blocos de eco de `nota_ghl`/`interacao_cvcrm` e dos dois
+lados de `situacao` sempre compararam contra o **destino errado** desde que
+foram escritos em 23/set/2026 -- um eco só faz sentido comparado contra o
+que a própria integração escreveu na **mesma plataforma de onde o evento
+agora chegou** (é assim que o bloco de tarefa/visita, escrito depois em
+24/set, sempre funcionou certo). Estava invertido: `nota_ghl` (chegando do
+GHL) comparava contra `destino='cvcrm'`, e `interacao_cvcrm` (chegando do
+CVCRM) comparava contra `destino='ghl'` -- nunca contra o próprio envio que
+tinha acabado de causar o eco.
+
+Rastreado com o script `diagnosticar_contato.py` (novo, pra investigações
+como essa) contra `fila_sync`/`log_sync` reais do lead 99666:
+
+- `17:41:05` -- interação de WhatsApp (#196307, recurso nativo do CVCRM,
+  nada a ver com a integração) chega de carona, junto com uma Tarefa
+  também nativa do CVCRM ("Tarefa do whatsapp").
+- `17:44:04` -- despachada pro GHL: cria a nota (`nota_ghl`) e a tarefa
+  (`tarefa_ghl`) lá.
+- `17:44:07`, só 3 segundos depois -- a criação da nota dispara o webhook
+  "Nota adicionada" do próprio GHL de volta. Isso deveria ter sido
+  reconhecido como eco.
+- Não foi: a checagem comparou contra `destino='cvcrm'` (não tinha nada lá
+  com a chave `interacoes` ainda -- deu `NULL`) em vez de `destino='ghl'`
+  (onde estava o log certo, escrito 3 segundos antes).
+- `17:46:06` -- vira a anotação duplicada #196310 no CVCRM, atribuída ao
+  usuário da integração.
+
+Isso explica por que o fix de 25/set pareceu funcionar na hora mas não
+resolveu de verdade: `normalizar_texto_eco()` era necessário, mas a
+comparação nunca chegava a encontrar o log certo pra normalizar contra, em
+primeiro lugar. Nos dois blocos de `situacao` o mesmo defeito sempre
+existiu, só nunca foi percebido -- o `PUT` de situação é idempotente
+(escrever o mesmo valor duas vezes não duplica nada), então um eco
+escapando ali só gerava uma chamada de API redundante, sem sintoma visível.
+
+**Correção:** os 4 blocos trocados de destino (`nota_ghl`, `interacao_cvcrm`,
+`situacao_lead`, `situacao_cvcrm`). Aproveitado pra adicionar
+`AND l.campos_enviados ? 'chave'` em cada `SELECT`, pra sempre pegar o
+último envio que de fato tem aquele campo -- não só a linha mais recente
+pro destino, que podia ser de outro campo despachado no meio (ex.: `tags`),
+mascarando o log certo.
+
+**Não tratado:** a anotação duplicada #196310, já criada no CVCRM antes do
+fix, continua lá (interação no CVCRM não tem exclusão pela API, só
+append -- mesma limitação já documentada no incidente de 24/set).
+
+## Compromisso GHL → Visita CVCRM: o gatilho dispara em toda mudança de status
+
+Fechado em 28/set/2026. O node `Webhook GHL Compromisso` ficou de propósito
+sem normalizador conectado desde 24/set, esperando ver o payload real do
+gatilho "Status do compromisso" antes de escrever qualquer lógica (mesma
+disciplina do incidente de Tarefa Adicionada, ver seção acima).
+
+O payload real confirmou duas coisas:
+
+- O corpo tem um objeto `calendar` com `title`, `startTime` (ISO sem
+  timezone, tratado direto como horário de Brasília, igual `dueDate` da
+  Tarefa), `appointmentId`, `status` e `appoinmentStatus` (esse é o nome real
+  do campo que o próprio GHL manda -- com o erro de grafia, sem o "t" antes
+  do "ment"; não é gambiarra minha, é assim que chega).
+- **O gatilho dispara em qualquer mudança de status do compromisso**, não só
+  na criação -- o teste ao vivo pegou o próprio evento de criação
+  (`status: "booked"`, `appoinmentStatus: "confirmed"`), mas o mesmo
+  Workflow do GHL fica escutando toda vez que o status mudar depois disso
+  (reagendado, confirmado, cancelado, etc.).
+
+Sem tratar isso, cada mudança de status criaria uma Visita nova no CVCRM pro
+mesmo compromisso -- o mesmo tipo de duplicidade dos incidentes de eco
+acima, só que por um motivo diferente (aqui não é eco entre plataformas, é
+o mesmo evento do GHL disparando várias vezes pro mesmo compromisso).
+
+**Correção:** `appointmentId` viaja dentro de `compromisso_criado_ghl` como
+`appointment_id_ghl`, só para controle -- nunca vai pro corpo da chamada
+`POST .../tarefas` da API v3 do CVCRM, que só lê `titulo`/`data`. Em
+`preencher_fila_sync()`, antes de deixar `compromisso_criado_ghl` passar,
+compara esse id contra o último envio pro CVCRM que teve `visita_cvcrm_criar`
+no `campos_enviados`; se bater, é só o status mudando, e o campo é
+descartado. Só a primeira ocorrência de cada `appointmentId` cria a visita.
+
+**Limitação aceita:** reagendamento (mesmo `appointmentId`, `startTime`
+novo) não atualiza a data da visita no CVCRM, porque a segunda ocorrência é
+deduplicada junto com qualquer outra mudança de status. Não tratado agora --
+se isso virar problema real no piloto, dá pra refinar comparando também
+`startTime`, não só o id.
+
+## Lead novo sem nome, e corrida entre dois eventos criando o contato em duplicidade
+
+Dois achados de 29/set/2026, testando "lead novo" de novo (funcionalidade
+original da Fase 1, 21/set) depois de meses de expansão da integração.
+
+**Nome vazio:** contato novo no GHL aparecia só com o telefone, sem nome
+nenhum -- documentado desde 21/set em "Criar contato GHL" ("Sem 'nome':
+v_fila_para_despachar não traz nome do lead hoje"), nunca corrigido. Fix:
+`nome_lead` (novo campo em `Normalizar evento CVCRM`, lido de `lead.nome`)
+com `campo_destino='nome_ghl'` -- marcador especial, igual `nota_ghl`,
+retirado do `campos_permitidos` antes do loop de `customFields` e mandado
+como `firstName` nativo tanto em "Criar contato GHL" quanto em "Enviar GHL"
+(esse último também recebe, pra contatos já existentes ficarem com o nome
+atualizado a cada despacho -- idempotente, sem problema reenviar).
+
+Aproveitado pra mapear mais 5 Custom Fields que a sub-account do GHL já
+tinha desde 28/mai/2026 e nunca foram usados (achado documentado em
+18/set/2026): `idlead_cv`, `idcorretor_cv`, `idimobiliaria_cv`, `cpf_cv`,
+`situacao_lead_cv` (esse último é o NOME da etapa, texto -- diferente de
+`situacao_ghl`, o id numérico usado pra mudar o estágio da Oportunidade).
+IDs reais confirmados via `GET /locations/:id/customFields`. Dois campos
+prontos ficaram de fora (`idprecadastro_cv`, `idreserva_cv`) -- pré-cadastro
+e reserva não vêm no GET do lead, exigiriam endpoint novo, backlog.
+
+**Corrida na criação do contato:** durante o mesmo teste, dois eventos do
+CVCRM chegaram com 183ms de diferença pro MESMO lead novo (prova viva:
+`fila_sync #3773`/`#3774`, provavelmente os gatilhos "Criação" e "Associar
+Atendente" disparando juntos). Os dois foram lidos no mesmo lote de
+despacho, os dois viram `id_contato_ghl` vazio em `depara_contato` (porque
+nenhum dos dois tinha terminado ainda), os dois tentaram `POST` em "Criar
+contato GHL". O primeiro criou; o segundo levou `400 "This location does
+not allow duplicated contacts"` do próprio GHL -- e sem tratamento, esse
+erro ficaria repetindo pra sempre, porque `id_contato_ghl` nunca seria
+gravado a partir dessa tentativa.
+
+**Correção:** o erro 400 de duplicidade já vem com o `contactId` certo
+dentro de `meta.contactId` -- node novo `Detectar contato duplicado GHL`
+(no output de ERRO de "Criar contato GHL") tenta extrair esse id (dois
+`JSON.parse` em cadeia, porque `error.message` do n8n vem como `'<code> -
+"<corpo escapado>"'`) e, se achar, um node novo (`Registrar contato
+recuperado GHL`) grava em `depara_contato` -- o próximo despacho desse
+contato já usa `PUT` (`Enviar GHL`) em vez de tentar criar de novo. Erros
+diferentes (formato inesperado, ou não relacionados a duplicidade) passam
+direto, sem gravar nada, como já acontecia antes.
+
+**Limitação aceita, achada de propósito, não corrigida:** excluir um
+contato manualmente no GHL (comum durante teste) não limpa
+`id_contato_ghl` em `depara_contato` -- o próximo despacho tenta `PUT` num
+contato que não existe mais e falha (visto ao vivo como `404 Cannot PUT
+/opportunities/`, porque a busca de Oportunidade por `contactId` não acha
+nada). Não é cenário real de produção (ninguém apaga contato à toa), fica
+sem tratamento automático por ora -- se acontecer de verdade, o jeito é
+limpar `id_contato_ghl` manualmente pra esse contato em `depara_contato`.
+
 ## Reconciliação: pausada de propósito
 
 O workflow tem um segundo caminho, independente do webhook: `Gatilho

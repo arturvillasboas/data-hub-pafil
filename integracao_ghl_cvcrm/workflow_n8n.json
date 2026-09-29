@@ -98,7 +98,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Confirmado contra uma resposta real do GET (node 'Buscar lead CVCRM') em\n// 18/set/2026: a resposta vem envelopada em {codigo, total, leads: [...]},\n// nao o lead direto -- e dentro do lead, 'situacao' e 'corretor' sao objetos\n// {id, nome[, email]}, nao campos escalares.\n// tipo_evento nao vem em lugar nenhum do payload do CVCRM (o webhook so manda\n// idlead) -- se for preciso distinguir o gatilho (criacao vs. mudanca de\n// situacao), a saida e cadastrar um Webhook por gatilho no painel do CVCRM,\n// cada um com uma query string diferente na URL (ex.: ?gatilho=criacao),\n// e ler isso do node 'Webhook CVCRM' original, nao deste.\n// TODO: 'empreendimento' veio como array vazio no lead de teste (sem nenhum\n// empreendimento vinculado) -- confirmar o formato dos itens (id/nome) contra\n// um lead real que tenha empreendimento antes de confiar nesse mapeamento.\n//\n// origem_campanha invertido em 21/set/2026: quem gerencia campanha e origem\n// de lead e o CVCRM, nao o GHL, entao o dono passou a ser cvcrm (ver\n// dono_campo). O 'origem' do lead CVCRM ja e uma lista fechada de valores\n// padronizados (Facebook, Google, Portais, Painel Gestor etc.), entao o\n// valor passa direto pro GHL, sem de-para -- o GHL aceita texto livre.\n//\n// situacao_lead removido daqui em 22/set/2026, RECOLOCADO em 23/set/2026\n// como situacao_cvcrm: a inversao de 22/set tinha deixado a sincronizacao\n// de situacao so de mao unica (GHL->CVCRM), contra o objetivo do projeto\n// (bidirecional de verdade -- alterar em qualquer lado reflete no outro).\n// lead.situacao.id ja' e' o idsituacao_cvcrm direto, sem precisar de\n// de-para nessa ponta (o de-para por nome so' e' necessario na direcao\n// contraria, GHL->CVCRM, porque o webhook do GHL manda o nome da etapa em\n// texto, nao um id). Ver dono_campo pro desenho completo (campo_destino\n// 'situacao_ghl' e' marcador especial, tratado a parte do PUT customFields\n// normal).\n//\n// interacao_cvcrm adicionado 23/set/2026, corrigido no mesmo dia: o gatilho\n// dedicado \"Nova interacao\" do CVCRM nao dispara de verdade (confirmado ao\n// vivo -- varias anotacoes de teste, nenhum webhook chamado). A interacao\n// mais recente vem de carona em QUALQUER outro gatilho que ja funciona\n// (Associar Atendente, mudanca de situacao), porque esta busca sempre traz o\n// lead inteiro. Por isso manda tambem interacao_cvcrm_id (o id da ultima\n// interacao, assumindo ordem cronologica crescente no array -- observado nos\n// testes, nunca confirmado formalmente que e' sempre assim): e' contra esse\n// id que o trigger preencher_fila_sync (ver integracao.sql) decide se essa\n// interacao ja foi vista antes, pra nao reenviar a mesma nota antiga toda\n// vez que outro campo mudar.\n//\n// tarefa_cvcrm/visita_cvcrm corrigido 24/set/2026 (segunda volta): a versao\n// de 23/set usava lead.tarefa embutido (sem chamada extra), mas esse array\n// nao tem campo de tipo -- impossivel distinguir Visita de Tarefa generica\n// so' com ele. Voltou a usar o endpoint CVDW /leads/tarefas (node 'Buscar\n// tarefa CVCRM'), que tem tipo_interacao (V=Visita, L=Ligacao, T=Tarefa,\n// W=WhatsApp, A=Anotacao) -- dessa vez com motivo real, nao so' porque um\n// gatilho manda idtarefa. Sem filtro server-side por idlead, filtra aqui\n// client-side e pega a mais recente (por idtarefa) desse lead. Visita e\n// Tarefa compartilham o MESMO id sequence (idtarefa), entao usam o MESMO\n// campo de controle pra dedup (tarefa_cvcrm_id) mesmo quando o destino e'\n// visita_cvcrm -- so' uma das duas (tarefa_cvcrm OU visita_cvcrm) vem\n// preenchida por vez, conforme o tipo da mais recente.\n//\n// decodeHtml adicionado 24/set/2026, incidente ao vivo: o endpoint CVDW\n// devolve texto HTML-escapado (ex.: '>' vira '&gt;'). A checagem de eco por\n// VALOR (preencher_fila_sync, ver integracao.sql) compara string exata --\n// sem decodificar aqui, o texto que voltou do CVCRM (escapado) nunca batia\n// com o que a gente mandou originalmente pro GHL (nao escapado), e uma\n// tarefa criada a partir do GHL ecoava de volta como duplicada. Aplicado em\n// tarefa/visita (onde o bug apareceu) e em interacao_cvcrm por precaucao\n// (mesma fonte de dado, mesmo problema potencial).\nconst decodeHtml = (s) => s == null ? s : String(s)\n  .replace(/&amp;/g, '&')\n  .replace(/&lt;/g, '<')\n  .replace(/&gt;/g, '>')\n  .replace(/&quot;/g, '\"')\n  .replace(/&#0?39;/g, \"'\");\n\nconst lead = ($('Buscar lead CVCRM').item.json.leads ?? [])[0] ?? {};\nconst interacoes = lead.interacao ?? [];\nconst ultimaInteracao = interacoes.length ? interacoes[interacoes.length - 1] : null;\nconst tarefasDoLead = ($('Buscar tarefa CVCRM').item.json.dados ?? []).filter((t) => t.idlead === lead.idlead);\nconst ultimaTarefa = tarefasDoLead.length\n  ? tarefasDoLead.reduce((a, b) => (a.idtarefa > b.idtarefa ? a : b))\n  : null;\nconst ehVisita = ultimaTarefa?.tipo_interacao === 'V';\n\nreturn {\n  json: {\n    origem: 'cvcrm',\n    tipo_evento: $('Webhook CVCRM').item.json.query?.gatilho ?? 'desconhecido',\n    telefone_bruto: lead.telefone ?? null,\n    email_bruto: lead.email ?? null,\n    cpf_bruto: lead.documento_tipo === 'cpf' ? (lead.documento ?? null) : null,\n    campos: {\n      idlead_cvcrm: lead.idlead ?? null,\n      corretor_responsavel: lead.corretor?.nome ?? null,\n      empreendimento_interesse: lead.empreendimento?.[0]?.nome ?? null,\n      origem_campanha: lead.origem ?? null,\n      interacao_cvcrm: decodeHtml(ultimaInteracao?.descricao) ?? null,\n      interacao_cvcrm_id: ultimaInteracao?.id ?? null,\n      situacao_cvcrm: lead.situacao?.id ?? null,\n      tarefa_cvcrm_id: ultimaTarefa?.idtarefa ?? null,\n      tarefa_cvcrm: (ultimaTarefa && !ehVisita) ? {\n        nome: decodeHtml(ultimaTarefa.descricao),\n        data: ultimaTarefa.data,\n        concluida: ultimaTarefa.situacao === 'C',\n      } : null,\n      visita_cvcrm: (ultimaTarefa && ehVisita) ? {\n        titulo: decodeHtml(ultimaTarefa.descricao),\n        data: ultimaTarefa.data,\n      } : null,\n    },\n  },\n};\n"
+        "jsCode": "// Confirmado contra uma resposta real do GET (node 'Buscar lead CVCRM') em\n// 18/set/2026: a resposta vem envelopada em {codigo, total, leads: [...]},\n// nao o lead direto -- e dentro do lead, 'situacao' e 'corretor' sao objetos\n// {id, nome[, email]}, nao campos escalares.\n// tipo_evento nao vem em lugar nenhum do payload do CVCRM (o webhook so manda\n// idlead) -- se for preciso distinguir o gatilho (criacao vs. mudanca de\n// situacao), a saida e cadastrar um Webhook por gatilho no painel do CVCRM,\n// cada um com uma query string diferente na URL (ex.: ?gatilho=criacao),\n// e ler isso do node 'Webhook CVCRM' original, nao deste.\n// TODO: 'empreendimento' veio como array vazio no lead de teste (sem nenhum\n// empreendimento vinculado) -- confirmar o formato dos itens (id/nome) contra\n// um lead real que tenha empreendimento antes de confiar nesse mapeamento.\n//\n// origem_campanha invertido em 21/set/2026: quem gerencia campanha e origem\n// de lead e o CVCRM, nao o GHL, entao o dono passou a ser cvcrm (ver\n// dono_campo). O 'origem' do lead CVCRM ja e uma lista fechada de valores\n// padronizados (Facebook, Google, Portais, Painel Gestor etc.), entao o\n// valor passa direto pro GHL, sem de-para -- o GHL aceita texto livre.\n//\n// situacao_lead removido daqui em 22/set/2026, RECOLOCADO em 23/set/2026\n// como situacao_cvcrm: a inversao de 22/set tinha deixado a sincronizacao\n// de situacao so de mao unica (GHL->CVCRM), contra o objetivo do projeto\n// (bidirecional de verdade -- alterar em qualquer lado reflete no outro).\n// lead.situacao.id ja' e' o idsituacao_cvcrm direto, sem precisar de\n// de-para nessa ponta (o de-para por nome so' e' necessario na direcao\n// contraria, GHL->CVCRM, porque o webhook do GHL manda o nome da etapa em\n// texto, nao um id). Ver dono_campo pro desenho completo (campo_destino\n// 'situacao_ghl' e' marcador especial, tratado a parte do PUT customFields\n// normal).\n//\n// interacao_cvcrm adicionado 23/set/2026, corrigido no mesmo dia: o gatilho\n// dedicado \"Nova interacao\" do CVCRM nao dispara de verdade (confirmado ao\n// vivo -- varias anotacoes de teste, nenhum webhook chamado). A interacao\n// mais recente vem de carona em QUALQUER outro gatilho que ja funciona\n// (Associar Atendente, mudanca de situacao), porque esta busca sempre traz o\n// lead inteiro. Por isso manda tambem interacao_cvcrm_id (o id da ultima\n// interacao, assumindo ordem cronologica crescente no array -- observado nos\n// testes, nunca confirmado formalmente que e' sempre assim): e' contra esse\n// id que o trigger preencher_fila_sync (ver integracao.sql) decide se essa\n// interacao ja foi vista antes, pra nao reenviar a mesma nota antiga toda\n// vez que outro campo mudar.\n//\n// tarefa_cvcrm/visita_cvcrm corrigido 24/set/2026 (segunda volta): a versao\n// de 23/set usava lead.tarefa embutido (sem chamada extra), mas esse array\n// nao tem campo de tipo -- impossivel distinguir Visita de Tarefa generica\n// so' com ele. Voltou a usar o endpoint CVDW /leads/tarefas (node 'Buscar\n// tarefa CVCRM'), que tem tipo_interacao (V=Visita, L=Ligacao, T=Tarefa,\n// W=WhatsApp, A=Anotacao) -- dessa vez com motivo real, nao so' porque um\n// gatilho manda idtarefa. Sem filtro server-side por idlead, filtra aqui\n// client-side e pega a mais recente (por idtarefa) desse lead. Visita e\n// Tarefa compartilham o MESMO id sequence (idtarefa), entao usam o MESMO\n// campo de controle pra dedup (tarefa_cvcrm_id) mesmo quando o destino e'\n// visita_cvcrm -- so' uma das duas (tarefa_cvcrm OU visita_cvcrm) vem\n// preenchida por vez, conforme o tipo da mais recente.\n//\n// decodeHtml adicionado 24/set/2026, incidente ao vivo: o endpoint CVDW\n// devolve texto HTML-escapado (ex.: '>' vira '&gt;'). A checagem de eco por\n// VALOR (preencher_fila_sync, ver integracao.sql) compara string exata --\n// sem decodificar aqui, o texto que voltou do CVCRM (escapado) nunca batia\n// com o que a gente mandou originalmente pro GHL (nao escapado), e uma\n// tarefa criada a partir do GHL ecoava de volta como duplicada. Aplicado em\n// tarefa/visita (onde o bug apareceu) e em interacao_cvcrm por precaucao\n// (mesma fonte de dado, mesmo problema potencial).\n//\n// nome_lead adicionado 29/set/2026: lead novo do CVCRM virava contato no\n// GHL sem nome nenhum (so' telefone aparecia na tela) -- v_fila_para_despachar\n// nunca tinha carregado o nome do lead. campo_destino 'nome_ghl' e' marcador\n// especial (ver dono_campo), tratado a parte do PUT customFields normal em\n// 'Criar contato GHL'/'Enviar GHL' (vai pro campo nativo firstName, nao pra\n// dentro de customFields).\n//\n// idcorretor_cvcrm/idimobiliaria_cvcrm/cpf_lead/situacao_lead_nome\n// adicionados 29/set/2026: a sub-account do GHL ja tinha Custom Fields pra\n// isso desde 28/mai/2026 (ver comentario em dono_campo), nunca populados --\n// dado ja vem no mesmo GET do lead, sem chamada nova. situacao_lead_nome e'\n// o NOME da etapa (texto, campo 'Situacao Lead CV'), diferente de\n// situacao_cvcrm (o id numerico, usado pra mudar o estagio da Oportunidade).\n// Dois outros Custom Fields prontos (ID Pre-cadastro CV, ID Reserva CVCRM)\n// ficaram de fora -- exigiriam um endpoint novo (pre-cadastro/reserva por\n// lead nao vem no GET do lead), fica pro backlog (issue #30).\nconst decodeHtml = (s) => s == null ? s : String(s)\n  .replace(/&amp;/g, '&')\n  .replace(/&lt;/g, '<')\n  .replace(/&gt;/g, '>')\n  .replace(/&quot;/g, '\"')\n  .replace(/&#0?39;/g, \"'\");\n\nconst lead = ($('Buscar lead CVCRM').item.json.leads ?? [])[0] ?? {};\nconst interacoes = lead.interacao ?? [];\nconst ultimaInteracao = interacoes.length ? interacoes[interacoes.length - 1] : null;\nconst tarefasDoLead = ($('Buscar tarefa CVCRM').item.json.dados ?? []).filter((t) => t.idlead === lead.idlead);\nconst ultimaTarefa = tarefasDoLead.length\n  ? tarefasDoLead.reduce((a, b) => (a.idtarefa > b.idtarefa ? a : b))\n  : null;\nconst ehVisita = ultimaTarefa?.tipo_interacao === 'V';\n\nreturn {\n  json: {\n    origem: 'cvcrm',\n    tipo_evento: $('Webhook CVCRM').item.json.query?.gatilho ?? 'desconhecido',\n    telefone_bruto: lead.telefone ?? null,\n    email_bruto: lead.email ?? null,\n    cpf_bruto: lead.documento_tipo === 'cpf' ? (lead.documento ?? null) : null,\n    campos: {\n      idlead_cvcrm: lead.idlead ?? null,\n      nome_lead: lead.nome ?? null,\n      idcorretor_cvcrm: lead.corretor?.id ?? null,\n      idimobiliaria_cvcrm: lead.imobiliaria?.id ?? null,\n      cpf_lead: lead.documento_tipo === 'cpf' ? (lead.documento ?? null) : null,\n      situacao_lead_nome: lead.situacao?.nome ?? null,\n      corretor_responsavel: lead.corretor?.nome ?? null,\n      empreendimento_interesse: lead.empreendimento?.[0]?.nome ?? null,\n      origem_campanha: lead.origem ?? null,\n      interacao_cvcrm: decodeHtml(ultimaInteracao?.descricao) ?? null,\n      interacao_cvcrm_id: ultimaInteracao?.id ?? null,\n      situacao_cvcrm: lead.situacao?.id ?? null,\n      tarefa_cvcrm_id: ultimaTarefa?.idtarefa ?? null,\n      tarefa_cvcrm: (ultimaTarefa && !ehVisita) ? {\n        nome: decodeHtml(ultimaTarefa.descricao),\n        data: ultimaTarefa.data,\n        concluida: ultimaTarefa.situacao === 'C',\n      } : null,\n      visita_cvcrm: (ultimaTarefa && ehVisita) ? {\n        titulo: decodeHtml(ultimaTarefa.descricao),\n        data: ultimaTarefa.data,\n      } : null,\n    },\n  },\n};\n"
       },
       "id": "normalizar-cvcrm",
       "name": "Normalizar evento CVCRM",
@@ -447,7 +447,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ customFields: Object.entries($json.campos_permitidos).map(([id, value]) => ({ id, value })) }) }}",
+        "jsonBody": "={{ (() => { const campos = { ...$json.campos_permitidos }; const nome = campos.nome_ghl; delete campos.nome_ghl; return JSON.stringify({ ...(nome ? { firstName: nome } : {}), customFields: Object.entries(campos).map(([id, value]) => ({ id, value })) }); })() }}",
         "options": { "timeout": 30000 }
       },
       "id": "enviar-ghl",
@@ -459,7 +459,7 @@
       "maxTries": 3,
       "waitBetweenTries": 5000,
       "onError": "continueErrorOutput",
-      "notes": "Confirmado via docs oficiais (16/set/2026): PUT /contacts/:contactId, header Version: v3, autenticacao Bearer. Mapeamento fechado em 18/set/2026: a sub-account do GHL ja tinha Custom Fields prontos pra isso desde 28/mai/2026 (situacao_lead_cv, empreendimento_cv), mais um novo criado nesta sessao (nome_corretor_cvcrm) -- ver integracao.dono_campo.campo_destino pelos ids reais. campos_permitidos ja chega keyed pelo id do Custom Field; o jsonBody so reshapea pro formato {customFields:[{id,value}]} que a API do GHL exige. Confirmado 21/set/2026: PUT exige id_contato_ghl ja existente -- lead genuinamente novo do CVCRM (sem contato no GHL ainda) tem esse campo nulo, e cai em 404 'Cannot PUT /contacts/'. Esse caminho so cobre atualizacao; criacao passou a ser o node 'Tem contato GHL?' -> 'Criar contato GHL'."
+      "notes": "Confirmado via docs oficiais (16/set/2026): PUT /contacts/:contactId, header Version: v3, autenticacao Bearer. Mapeamento fechado em 18/set/2026: a sub-account do GHL ja tinha Custom Fields prontos pra isso desde 28/mai/2026 (situacao_lead_cv, empreendimento_cv), mais um novo criado nesta sessao (nome_corretor_cvcrm) -- ver integracao.dono_campo.campo_destino pelos ids reais. campos_permitidos ja chega keyed pelo id do Custom Field; o jsonBody so reshapea pro formato {customFields:[{id,value}]} que a API do GHL exige. Confirmado 21/set/2026: PUT exige id_contato_ghl ja existente -- lead genuinamente novo do CVCRM (sem contato no GHL ainda) tem esse campo nulo, e cai em 404 'Cannot PUT /contacts/'. Esse caminho so cobre atualizacao; criacao passou a ser o node 'Tem contato GHL?' -> 'Criar contato GHL'. Adicionado 29/set/2026: nome_ghl e' marcador especial (igual nota_ghl/tarefa_ghl), retirado de campos antes do loop de customFields e mandado como firstName nativo -- contato que ja existe no GHL tambem recebe o nome atualizado a cada despacho (idempotente, sem problema reenviar)."
     },
     {
       "parameters": {
@@ -738,7 +738,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ locationId: 'QKKhoj5ZU9PHD4j66T0E', phone: $json.contato_telefone, email: $json.contato_email, customFields: Object.entries($json.campos_permitidos).map(([id, value]) => ({ id, value })) }) }}",
+        "jsonBody": "={{ (() => { const campos = { ...$json.campos_permitidos }; const nome = campos.nome_ghl; delete campos.nome_ghl; return JSON.stringify({ locationId: 'QKKhoj5ZU9PHD4j66T0E', phone: $json.contato_telefone, email: $json.contato_email, ...(nome ? { firstName: nome } : {}), customFields: Object.entries(campos).map(([id, value]) => ({ id, value })) }); })() }}",
         "options": { "timeout": 30000 }
       },
       "id": "criar-contato-ghl",
@@ -750,7 +750,7 @@
       "maxTries": 3,
       "waitBetweenTries": 5000,
       "onError": "continueErrorOutput",
-      "notes": "Adicionado 21/set/2026, confirmado contra docs oficiais (marketplace.gohighlevel.com/docs/ghl/contacts/create-contact): POST /contacts/, header Version: v3, Bearer. locationId hardcoded (mesma sub-account de sempre). Resposta vem envelopada em {contact: {...}} (nao {contacts: [...]} como a busca) -- id novo em contact.id. Sem 'nome': v_fila_para_despachar nao traz nome do lead hoje, so telefone/email/campos; GHL aceita contato so com phone/email."
+      "notes": "Adicionado 21/set/2026, confirmado contra docs oficiais (marketplace.gohighlevel.com/docs/ghl/contacts/create-contact): POST /contacts/, header Version: v3, Bearer. locationId hardcoded (mesma sub-account de sempre). Resposta vem envelopada em {contact: {...}} (nao {contacts: [...]} como a busca) -- id novo em contact.id. Corrigido 29/set/2026: contato criado sem nome, so' telefone aparecia -- nome_ghl (marcador especial, igual nota_ghl/tarefa_ghl) retirado de campos antes do loop de customFields e mandado como firstName nativo."
     },
     {
       "parameters": {
@@ -766,6 +766,54 @@
       "typeVersion": 2.5,
       "position": [2200, 2420],
       "notes": "So roda no output de sucesso de 'Criar contato GHL'. Grava o id_contato_ghl novo em depara_contato, pra proximos despachos desse mesmo contato usarem PUT (Enviar GHL) em vez de criar duplicado."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Adicionado 29/set/2026, achado ao vivo: dois eventos quase simultaneos do\n// CVCRM (ex.: \"Criacao\" + \"Associar Atendente\" disparando juntos na criacao\n// de um lead) geram DOIS despachos pro mesmo contato novo antes do primeiro\n// terminar de gravar id_contato_ghl em depara_contato -- os dois tentam\n// 'Criar contato GHL' (POST), o primeiro cria, o segundo leva 400\n// \"duplicated contacts\" do proprio GHL. Esse erro ja vem com o contactId\n// certo dentro dele (meta.contactId) -- em vez de so' falhar pra sempre (a\n// proxima tentativa erraria de novo, id_contato_ghl continuaria vazio),\n// recupera esse id aqui e deixa o node seguinte gravar em depara_contato.\n// error.message do n8n vem como '<code> - \"<corpo como string, escapado>\"'\n// -- dois JSON.parse: um pra desescapar a string, outro pra ler o objeto de\n// verdade. Qualquer erro diferente desse (formato inesperado, ou um erro\n// que nao e' de duplicidade) deixa contato_id_recuperado_ghl null e segue\n// como erro normal.\nlet contatoIdRecuperado = null;\ntry {\n  const msg = $json.error?.message ?? '';\n  const idx = msg.indexOf(' - ');\n  if (idx !== -1) {\n    const bodyStr = JSON.parse(msg.slice(idx + 3));\n    const body = JSON.parse(bodyStr);\n    if (body?.message === 'This location does not allow duplicated contacts.') {\n      contatoIdRecuperado = body?.meta?.contactId ?? null;\n    }\n  }\n} catch (e) {\n  // formato de erro inesperado -- contatoIdRecuperado fica null\n}\n\nreturn {\n  json: {\n    ...$json,\n    contato_id_recuperado_ghl: contatoIdRecuperado,\n  },\n};\n"
+      },
+      "id": "detectar-contato-duplicado-ghl",
+      "name": "Detectar contato duplicado GHL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2200, 2570],
+      "notes": "So roda no output de ERRO de 'Criar contato GHL'. Tenta extrair o contactId de um erro especifico (400 'duplicated contacts', corrida entre dois eventos quase simultaneos do CVCRM pro mesmo lead novo) -- qualquer outro erro passa direto, sem contato_id_recuperado_ghl."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "cond-tem-contato-recuperado",
+              "leftValue": "={{ $json.contato_id_recuperado_ghl }}",
+              "rightValue": "",
+              "operator": { "type": "string", "operation": "notEmpty", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "tem-contato-recuperado",
+      "name": "Contato duplicado recuperado?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2500, 2570]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE integracao.depara_contato SET id_contato_ghl = $1, atualizado_em = now() WHERE id = $2;",
+        "options": {
+          "queryReplacement": "={{ [$json.contato_id_recuperado_ghl, $('Canal destino').item.json.contato_id] }}"
+        }
+      },
+      "id": "registrar-contato-recuperado-ghl",
+      "name": "Registrar contato recuperado GHL",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2800, 2570],
+      "notes": "Grava o id_contato_ghl recuperado do erro de duplicidade em depara_contato -- proximo despacho desse contato ja usa PUT (Enviar GHL) em vez de tentar criar de novo."
     },
     {
       "parameters": {
@@ -971,7 +1019,31 @@
       "typeVersion": 2,
       "position": [-260, 980],
       "webhookId": "pafil-ghl-compromisso-evento",
-      "notes": "Adicionado 24/set/2026. Gatilho no GHL: Workflow 'Status do compromisso' (Appointment Status), filtrado pela tag do piloto. AINDA SEM NORMALIZADOR/DESPACHO CONECTADO DE PROPOSITO -- payload real ainda nao visto. Testar disparando o gatilho e olhando o Output desse node antes de escrever o normalizador. Esse gatilho dispara em QUALQUER mudanca de status (nao so criacao) -- conferir no payload real se da pra distinguir 'criado agora' de 'status mudou depois', e se precisa filtrar por status (ex.: so 'confirmed'/'new')."
+      "notes": "Adicionado 24/set/2026, payload confirmado ao vivo em 28/set/2026. Gatilho no GHL: Workflow 'Status do compromisso' (Appointment Status), filtrado pela tag do piloto. Corpo tem body.calendar: { title, selectedTimezone, appointmentId, startTime, endTime, status, appoinmentStatus (erro de grafia do proprio GHL, nao meu), ... }. Confirmado que esse gatilho dispara em QUALQUER mudanca de status (o teste ao vivo pegou status='booked'/appoinmentStatus='confirmed' na criacao) -- por isso o dedup em preencher_fila_sync() e' por appointmentId, nao por status. Reagendamento (mesmo appointmentId, data nova) fica de fora por enquanto: so a primeira ocorrencia cria visita no CVCRM, mudancas depois disso sao deduplicadas."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Confirmado contra payload real em 28/set/2026. startTime vem em ISO sem\n// timezone (\"2026-09-29T08:00:00\"), tratado direto como horario de\n// Brasilia, mesmo padrao ja usado em tarefa_criada_ghl. appointmentId viaja\n// dentro de compromisso_criado_ghl so pra dedup em preencher_fila_sync (nao\n// vai pro corpo da API do CVCRM, so 'titulo'/'data' sao lidos por 'Criar\n// visita CVCRM v3') -- sem isso, cada mudanca de status (booked -> confirmed\n// -> ...) criaria uma visita nova no CVCRM pro mesmo compromisso.\nconst body = $json.body ?? $json;\n\nreturn {\n  json: {\n    origem: 'ghl',\n    tipo_evento: 'compromisso_status',\n    telefone_bruto: body.phone ?? null,\n    email_bruto: body.email ?? null,\n    cpf_bruto: null,\n    campos: {\n      compromisso_criado_ghl: {\n        titulo: body.calendar?.title ?? null,\n        data: body.calendar?.startTime ? body.calendar.startTime.replace('T', ' ') : null,\n        appointment_id_ghl: body.calendar?.appointmentId ?? null,\n      },\n    },\n  },\n};\n"
+      },
+      "id": "normalizar-ghl-compromisso",
+      "name": "Normalizar evento GHL Compromisso",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-20, 980]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO integracao.fila_sync (origem, tipo_evento, telefone_bruto, email_bruto, cpf_bruto, campos)\nVALUES ($1, $2, $3, $4, $5, $6::jsonb)\nRETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [$json.origem, $json.tipo_evento, $json.telefone_bruto, $json.email_bruto, $json.cpf_bruto, JSON.stringify($json.campos)] }}"
+        }
+      },
+      "id": "gravar-fila-ghl-compromisso",
+      "name": "Gravar fila (GHL Compromisso)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [220, 980]
     },
 
     {
@@ -1088,6 +1160,12 @@
     },
     "Normalizar evento GHL Tarefa": {
       "main": [[{ "node": "Gravar fila (GHL Tarefa)", "type": "main", "index": 0 }]]
+    },
+    "Webhook GHL Compromisso": {
+      "main": [[{ "node": "Normalizar evento GHL Compromisso", "type": "main", "index": 0 }]]
+    },
+    "Normalizar evento GHL Compromisso": {
+      "main": [[{ "node": "Gravar fila (GHL Compromisso)", "type": "main", "index": 0 }]]
     },
     "Webhook GHL Oportunidade": {
       "main": [[{ "node": "Buscar situacao CVCRM", "type": "main", "index": 0 }]]
@@ -1239,8 +1317,20 @@
     "Criar contato GHL": {
       "main": [
         [{ "node": "Registrar novo contato GHL", "type": "main", "index": 0 }],
+        [{ "node": "Detectar contato duplicado GHL", "type": "main", "index": 0 }]
+      ]
+    },
+    "Detectar contato duplicado GHL": {
+      "main": [[{ "node": "Contato duplicado recuperado?", "type": "main", "index": 0 }]]
+    },
+    "Contato duplicado recuperado?": {
+      "main": [
+        [{ "node": "Registrar contato recuperado GHL", "type": "main", "index": 0 }],
         [{ "node": "Juntar despacho GHL", "type": "main", "index": 0 }]
       ]
+    },
+    "Registrar contato recuperado GHL": {
+      "main": [[{ "node": "Juntar despacho GHL", "type": "main", "index": 0 }]]
     },
     "Registrar novo contato GHL": {
       "main": [
