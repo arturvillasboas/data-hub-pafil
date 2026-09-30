@@ -769,6 +769,49 @@
     },
     {
       "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT pipeline_stage_id_ghl FROM integracao.depara_situacao_ghl WHERE idsituacao_cvcrm = $1;",
+        "options": {
+          "queryReplacement": "={{ [$('Canal destino').item.json.campos_permitidos.situacao_ghl] }}"
+        }
+      },
+      "id": "buscar-estagio-inicial-ghl",
+      "name": "Buscar estagio inicial GHL",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2500, 2420],
+      "notes": "Adicionado 30/set/2026, achado ao vivo: contato recem-criado por 'Criar contato GHL' nao tinha Oportunidade nenhuma no pipeline 'Pipeline de Leads' -- nunca existiu automacao no GHL pra criar isso (confirmado com o Artur). Toda mudanca de situacao subsequente (node 'Mudar estagio Oportunidade GHL') falhava com 404 'Cannot PUT /opportunities/', porque 'Buscar oportunidade GHL' nunca achava nada pra atualizar. Mesma query de 'Buscar estagio GHL', so' que lida a partir de campos_permitidos (situacao_cvcrm sempre vem em todo evento do CVCRM, ver Normalizar evento CVCRM) em vez do body do IF anterior, porque aqui a cadeia comeca de 'Criar contato GHL', nao de 'Tem situacao pra mudar?'."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://services.leadconnectorhq.com/opportunities/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Version", "value": "v3" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ pipelineId: 'Sc3mUXtldce6M594bWXP', locationId: 'QKKhoj5ZU9PHD4j66T0E', name: $('Canal destino').item.json.campos_permitidos.nome_ghl || 'Lead CVCRM', pipelineStageId: $json.pipeline_stage_id_ghl, status: 'open', contactId: $('Criar contato GHL').item.json.contact?.id }) }}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "criar-oportunidade-ghl",
+      "name": "Criar oportunidade GHL",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2800, 2420],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput",
+      "notes": "Adicionado 30/set/2026. NAO CONFIRMADO AO VIVO AINDA -- corpo montado a partir da doc oficial (marketplace.gohighlevel.com/docs/ghl/opportunities/create-opportunity), mesmo padrao ja' confirmado de 'Buscar oportunidade GHL'/'Mudar estagio Oportunidade GHL' (Version: v3, Bearer). pipelineId/locationId hardcoded (mesmos ja' usados nos outros nodes de Oportunidade). status='open' fixo na criacao -- so' pipelineStageId muda depois, via 'Mudar estagio Oportunidade GHL', igual ja' acontecia. Testar contra um lead novo de verdade e confirmar o formato da resposta antes de confiar."
+    },
+    {
+      "parameters": {
         "jsCode": "// Adicionado 29/set/2026, achado ao vivo: dois eventos quase simultaneos do\n// CVCRM (ex.: \"Criacao\" + \"Associar Atendente\" disparando juntos na criacao\n// de um lead) geram DOIS despachos pro mesmo contato novo antes do primeiro\n// terminar de gravar id_contato_ghl em depara_contato -- os dois tentam\n// 'Criar contato GHL' (POST), o primeiro cria, o segundo leva 400\n// \"duplicated contacts\" do proprio GHL. Esse erro ja vem com o contactId\n// certo dentro dele (meta.contactId) -- em vez de so' falhar pra sempre (a\n// proxima tentativa erraria de novo, id_contato_ghl continuaria vazio),\n// recupera esse id aqui e deixa o node seguinte gravar em depara_contato.\n// error.message do n8n vem como '<code> - \"<corpo como string, escapado>\"'\n// -- dois JSON.parse: um pra desescapar a string, outro pra ler o objeto de\n// verdade. Qualquer erro diferente desse (formato inesperado, ou um erro\n// que nao e' de duplicidade) deixa contato_id_recuperado_ghl null e segue\n// como erro normal.\nlet contatoIdRecuperado = null;\ntry {\n  const msg = $json.error?.message ?? '';\n  const idx = msg.indexOf(' - ');\n  if (idx !== -1) {\n    const bodyStr = JSON.parse(msg.slice(idx + 3));\n    const body = JSON.parse(bodyStr);\n    if (body?.message === 'This location does not allow duplicated contacts.') {\n      contatoIdRecuperado = body?.meta?.contactId ?? null;\n    }\n  }\n} catch (e) {\n  // formato de erro inesperado -- contatoIdRecuperado fica null\n}\n\nreturn {\n  json: {\n    ...$json,\n    contato_id_recuperado_ghl: contatoIdRecuperado,\n  },\n};\n"
       },
       "id": "detectar-contato-duplicado-ghl",
@@ -1320,6 +1363,12 @@
         [{ "node": "Detectar contato duplicado GHL", "type": "main", "index": 0 }]
       ]
     },
+    "Buscar estagio inicial GHL": {
+      "main": [[{ "node": "Criar oportunidade GHL", "type": "main", "index": 0 }]]
+    },
+    "Criar oportunidade GHL": {
+      "main": [[{ "node": "Juntar despacho GHL", "type": "main", "index": 0 }]]
+    },
     "Detectar contato duplicado GHL": {
       "main": [[{ "node": "Contato duplicado recuperado?", "type": "main", "index": 0 }]]
     },
@@ -1334,7 +1383,7 @@
     },
     "Registrar novo contato GHL": {
       "main": [
-        [{ "node": "Juntar despacho GHL", "type": "main", "index": 0 }]
+        [{ "node": "Buscar estagio inicial GHL", "type": "main", "index": 0 }]
       ]
     },
     "Enviar CVCRM": {

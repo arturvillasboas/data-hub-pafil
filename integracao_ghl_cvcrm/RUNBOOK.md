@@ -632,6 +632,40 @@ nada). Não é cenário real de produção (ninguém apaga contato à toa), fica
 sem tratamento automático por ora -- se acontecer de verdade, o jeito é
 limpar `id_contato_ghl` manualmente pra esse contato em `depara_contato`.
 
+## Lead novo sem Oportunidade: toda mudança de situação falhava
+
+Achado em 30/set/2026, testando lead novo de novo -- o mesmo erro `404
+Cannot PUT /opportunities/` do achado acima também aparecia pra um contato
+que nunca foi excluído (lead 105149, `id_contato_ghl` válido o dia
+inteiro). Ou seja, a causa daquele achado não era só contato apagado --
+tinha uma segunda causa, mais fundamental, por trás.
+
+**Causa raiz:** `Criar contato GHL` cria o contato, mas nunca existiu
+nenhuma automação no GHL que crie a Oportunidade correspondente no
+pipeline "Pipeline de Leads" (confirmado com o Artur -- "nunca foi
+montado"). Contato novo simplesmente não tem Oportunidade nenhuma até
+alguém criar uma manualmente. `Buscar oportunidade GHL` sempre retorna
+vazio pra esses contatos, `Mudar estagio Oportunidade GHL` tenta dar `PUT`
+num id vazio, 404 -- pra sempre, em toda mudança de situação futura desse
+lead, não só na primeira tentativa. O lead 105118 (usado pra validar
+situação bidirecional mais cedo nesta sessão) só funcionou porque já tinha
+Oportunidade de antes, criada em algum momento anterior ao início deste
+projeto -- não era representativo de um lead genuinamente novo.
+
+**Correção:** `Criar contato GHL`, no sucesso, agora encadeia
+`Registrar novo contato GHL` → `Buscar estagio inicial GHL` (mesma query
+de `Buscar estagio GHL`, lendo `situacao_ghl` de `campos_permitidos` em
+vez do body de `Tem situacao pra mudar?`, porque aqui a cadeia começa em
+`Criar contato GHL`) → `Criar oportunidade GHL` (`POST /opportunities/`,
+mesmo pipeline/location hardcoded dos outros nodes de Oportunidade,
+`status: 'open'` fixo na criação). **Não confirmado ao vivo ainda** -- o
+corpo foi montado a partir da doc oficial
+(marketplace.gohighlevel.com/docs/ghl/opportunities/create-opportunity),
+mesmo padrão de autenticação (`Version: v3`, Bearer) já validado nos
+outros dois nodes de Oportunidade, mas o formato da resposta e possíveis
+divergências da doc (padrão constante neste projeto) ainda precisam de um
+teste real contra um lead novo.
+
 ## Reconciliação: pausada de propósito
 
 O workflow tem um segundo caminho, independente do webhook: `Gatilho
