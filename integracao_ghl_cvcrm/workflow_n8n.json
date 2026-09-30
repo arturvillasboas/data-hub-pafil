@@ -808,7 +808,7 @@
       "maxTries": 3,
       "waitBetweenTries": 5000,
       "onError": "continueErrorOutput",
-      "notes": "Adicionado 30/set/2026. NAO CONFIRMADO AO VIVO AINDA -- corpo montado a partir da doc oficial (marketplace.gohighlevel.com/docs/ghl/opportunities/create-opportunity), mesmo padrao ja' confirmado de 'Buscar oportunidade GHL'/'Mudar estagio Oportunidade GHL' (Version: v3, Bearer). pipelineId/locationId hardcoded (mesmos ja' usados nos outros nodes de Oportunidade). status='open' fixo na criacao -- so' pipelineStageId muda depois, via 'Mudar estagio Oportunidade GHL', igual ja' acontecia. Testar contra um lead novo de verdade e confirmar o formato da resposta antes de confiar."
+      "notes": "Adicionado 30/set/2026, confirmado ao vivo no mesmo dia (lead 105154): corpo montado a partir da doc oficial (marketplace.gohighlevel.com/docs/ghl/opportunities/create-opportunity), mesmo padrao ja' confirmado de 'Buscar oportunidade GHL'/'Mudar estagio Oportunidade GHL' (Version: v3, Bearer). pipelineId/locationId hardcoded (mesmos ja' usados nos outros nodes de Oportunidade). status='open' fixo na criacao -- so' pipelineStageId muda depois, via 'Mudar estagio Oportunidade GHL', igual ja' acontecia. Validado ponta a ponta: contato criado com nome e Oportunidade no estagio certo, e a mudanca de situacao seguinte (antes 404) despachou com sucesso."
     },
     {
       "parameters": {

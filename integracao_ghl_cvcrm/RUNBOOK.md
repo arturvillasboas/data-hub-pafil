@@ -658,13 +658,16 @@ de `Buscar estagio GHL`, lendo `situacao_ghl` de `campos_permitidos` em
 vez do body de `Tem situacao pra mudar?`, porque aqui a cadeia começa em
 `Criar contato GHL`) → `Criar oportunidade GHL` (`POST /opportunities/`,
 mesmo pipeline/location hardcoded dos outros nodes de Oportunidade,
-`status: 'open'` fixo na criação). **Não confirmado ao vivo ainda** -- o
-corpo foi montado a partir da doc oficial
-(marketplace.gohighlevel.com/docs/ghl/opportunities/create-opportunity),
+`status: 'open'` fixo na criação). O corpo foi montado a partir da doc
+oficial (marketplace.gohighlevel.com/docs/ghl/opportunities/create-opportunity),
 mesmo padrão de autenticação (`Version: v3`, Bearer) já validado nos
-outros dois nodes de Oportunidade, mas o formato da resposta e possíveis
-divergências da doc (padrão constante neste projeto) ainda precisam de um
-teste real contra um lead novo.
+outros dois nodes de Oportunidade.
+
+**Confirmado ao vivo no mesmo dia** (lead 105154, "teste artur ghl"): a
+doc bateu de primeira, sem nenhuma divergência (raro neste projeto). Nome
+e custom fields chegaram certos, a Oportunidade apareceu no estágio
+correto, e a mudança de situação seguinte -- antes um 404 garantido --
+despachou com sucesso, sem erro nenhum.
 
 ## Reconciliação: pausada de propósito
 
