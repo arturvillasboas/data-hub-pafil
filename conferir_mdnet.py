@@ -44,6 +44,8 @@ def main() -> int:
                         help="Confere também a view silver.mdnet_chamadas (direção corrigida).")
     parser.add_argument("--detalhe", action="store_true",
                         help="Mostra cortes extras para investigar divergência de classificação.")
+    parser.add_argument("--ura", action="store_true",
+                        help="Confere o relatório de URA (bronze.mdnet_ura e as views silver da URA).")
     args = parser.parse_args()
 
     cfg = carregar_config_pg()
@@ -94,6 +96,8 @@ def main() -> int:
             _detalhe(conn, tab, inicio, fim)
         if args.silver:
             _silver(conn, inicio, fim)
+        if args.ura:
+            _ura(conn, args.de, args.ate)
     return 0
 
 
@@ -247,6 +251,84 @@ def _silver(conn: Any, inicio: datetime, fim: datetime) -> None:
             "GROUP BY 1 ORDER BY 1", periodo,
         ).fetchall(),
     )
+
+
+def _ura(conn: Any, de: date, ate: date) -> None:
+    """Confere o relatório de URA: contagens no formato dos gráficos da tela, e o funil.
+
+    Os totais por menu e por opção devem ser IGUAIS aos gráficos "Quantidade de chamadas por
+    URA" e "Quantidades de Chamadas por Opção da URA" da tela do painel, no mesmo período.
+    """
+    periodo = (de, ate)
+    (total,) = conn.execute(
+        "SELECT count(*) FROM bronze.mdnet_ura WHERE data >= %s AND data <= %s", periodo,
+    ).fetchone()
+    print()
+    print(f"bronze.mdnet_ura de {de} a {ate}: {total} passagem(ns)")
+
+    _tabela(
+        "Chamadas por URA (compare com o gráfico 'Quantidade de chamadas por URA')",
+        ("URA", "passagens"),
+        conn.execute(
+            "SELECT ura, count(*) FROM bronze.mdnet_ura WHERE data >= %s AND data <= %s "
+            "GROUP BY 1 ORDER BY 2 DESC", periodo,
+        ).fetchall(),
+    )
+
+    # O painel escreve o rótulo em maiúsculas; o maiúsculo do Postgres com locale C não trata
+    # acento, então a conversão fica para o Python.
+    linhas = conn.execute(
+        "SELECT ura, opcao, count(*) FROM silver.mdnet_ura_passagens "
+        "WHERE data >= %s AND data <= %s GROUP BY 1, 2 ORDER BY 1, 3 DESC", periodo,
+    ).fetchall()
+    _tabela(
+        "Chamadas por opção (compare com o gráfico 'Quantidades de Chamadas por Opção da URA')",
+        ("rótulo", "chamadas"),
+        [(f"{ura} - {opcao}".upper(), n) for ura, opcao, n in linhas],
+    )
+
+    _tabela(
+        "Funil pelo menu atual (código e nome da locução) e o que aconteceu depois no CDR",
+        ("opção", "chamadas", "atendidas", "% atend.", "espera média (s)"),
+        conn.execute(
+            "SELECT coalesce(codigo_opcao || ' ', '') || caminho_nome, count(*), "
+            "count(*) FILTER (WHERE atendida), "
+            "round(100.0 * count(*) FILTER (WHERE atendida) / count(*), 0), "
+            "round(avg(espera_s) FILTER (WHERE atendida)) "
+            "FROM silver.mdnet_ura_chamadas WHERE data >= %s AND data <= %s AND e_menu_atual "
+            "GROUP BY 1 ORDER BY 2 DESC", periodo,
+        ).fetchall(),
+    )
+
+    _tabela(
+        "Legado: caminhos que o menu atual não explica (e_menu_atual = falso)",
+        ("caminho", "chamadas"),
+        conn.execute(
+            "SELECT caminho, count(*) FROM silver.mdnet_ura_chamadas "
+            "WHERE data >= %s AND data <= %s AND NOT e_menu_atual GROUP BY 1 ORDER BY 2 DESC", periodo,
+        ).fetchall(),
+    )
+
+    _tabela(
+        "Por mês: chamadas na URA e o que aconteceu com elas",
+        ("mês", "chamadas", "não digitou", "desligou na URA", "atendidas", "% atend."),
+        conn.execute(
+            "SELECT to_char(date_trunc('month', data), 'YYYY-MM'), count(*), "
+            "count(*) FILTER (WHERE escolha_principal = 'Não Digitou'), "
+            "count(*) FILTER (WHERE escolha_principal = 'Desligou na URA'), "
+            "count(*) FILTER (WHERE atendida), "
+            "round(100.0 * count(*) FILTER (WHERE atendida) / count(*), 0) "
+            "FROM silver.mdnet_ura_chamadas WHERE data >= %s AND data <= %s "
+            "GROUP BY 1 ORDER BY 1", periodo,
+        ).fetchall(),
+    )
+
+    (casadas, principais) = conn.execute(
+        "SELECT count(*) FILTER (WHERE tem_cdr), count(*) FROM silver.mdnet_ura_chamadas "
+        "WHERE data >= %s AND data <= %s", periodo,
+    ).fetchone()
+    print(f"\n  Ligações da URA achadas no CDR: {casadas} de {principais} "
+          f"(em set/2026 devem ser 1.012 de 1.012, contando o número oculto)")
 
 
 if __name__ == "__main__":

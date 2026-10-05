@@ -132,3 +132,48 @@ CREATE TABLE IF NOT EXISTS bronze.mdnet_cdr_pernas (
 CREATE UNIQUE INDEX IF NOT EXISTS ux_mdnet_cdr_pernas_chave ON bronze.mdnet_cdr_pernas (protocolo, data_hora_inicio, filtro_direcao, ordem);
 CREATE INDEX IF NOT EXISTS ix_mdnet_cdr_pernas_data_hora_inicio ON bronze.mdnet_cdr_pernas (data_hora_inicio);
 CREATE INDEX IF NOT EXISTS ix_mdnet_cdr_pernas_protocolo ON bronze.mdnet_cdr_pernas (protocolo);
+
+-- ===== mdnet_ura =====
+-- Relatório de URA do painel (/app/xml_cdr_ivr/). Uma linha por PASSAGEM por um menu da URA,
+-- não por ligação: a Ura_Principal gera uma linha por ligação, e quem entra num submenu gera
+-- uma segunda linha (Sub_URA_opcao_1 ou Sub_URA_opcao_3) com a mesma data e hora. Não tem
+-- protocolo. Medido em set/2026: 1.419 linhas = 1.012 (principal) + 262 + 145 (submenus), e
+-- os mesmos totais aparecem nos gráficos da tela.
+--
+-- Como ligar com o CDR: data + hora são o início da ligação e batem com
+-- bronze.mdnet_cdr.data_hora_inicio AO SEGUNDO (diferença zero em 99,8% das ligações), e o
+-- número de quem ligou casa pelos 11 últimos dígitos. Quem faz o cruzamento é a silver.
+CREATE TABLE IF NOT EXISTS bronze.mdnet_ura (
+    _id_tecnico bigint GENERATED ALWAYS AS IDENTITY,
+    -- Nome do menu: Ura_Principal, Sub_URA_opcao_1 (Cliente) ou Sub_URA_opcao_3 (Fornecedor).
+    ura text NOT NULL,
+    data date NOT NULL,
+    -- HH:MM:SS, em texto: a silver monta o timestamp. Horário local do PABX, sem fuso.
+    hora text NOT NULL,
+    -- Telefone de quem ligou. '' (e não NULL) quando o painel manda vazio, para a chave única
+    -- continuar valendo; um NULL na chave deixaria a mesma linha entrar várias vezes.
+    origem text NOT NULL DEFAULT '',
+    -- O que o menu aceita ("1", "2", ... ou a expressão de ramal de 4 dígitos) e o que a
+    -- pessoa digitou. Vazios quando ela não digitou ou desligou.
+    opcoes_digitos text,
+    digitacao text,
+    -- Digitou, Não Digitou (estourou o tempo) ou Desligou na URA.
+    estado text,
+    -- "Transferência" quando a URA mandou a ligação para algum lugar.
+    acao text,
+    -- Código de destino: 5005 e 5008 levam aos submenus, 6008 a 6022 são departamentos ou
+    -- filas, 6012 é o destino de quem não digitou, e 8221 e 8260 são ramais. A tradução dos
+    -- códigos é da silver.
+    aplicacao_destino text,
+    -- Rótulo da opção (CLIENTE, VENDAS, RENEGOCIACAO...) ou o nome do menu quando não houve opção.
+    descricao text,
+    -- Desempate da chave quando duas linhas têm a mesma URA, data, hora e origem.
+    ordem smallint NOT NULL DEFAULT 0,
+    _dados_brutos jsonb,
+    _hash_linha text NOT NULL,
+    _data_extracao timestamptz NOT NULL DEFAULT now(),
+    _pagina integer,
+    CONSTRAINT pk_mdnet_ura PRIMARY KEY (_id_tecnico)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_mdnet_ura_chave ON bronze.mdnet_ura (ura, data, hora, origem, ordem);
+CREATE INDEX IF NOT EXISTS ix_mdnet_ura_data ON bronze.mdnet_ura (data);

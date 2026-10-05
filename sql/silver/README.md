@@ -16,6 +16,7 @@ seguindo os códigos `ING-*`, `DP-*`, `KPI-*` e `R*` usados naquele catálogo.
 | [`silver.sql`](silver.sql) | O schema `silver`, com funções de tipagem tolerante e 6 views de conformação |
 | [`seeds.sql`](seeds.sql) | As tabelas de-para (DP-01 a DP-12): a estrutura e a proveniência de cada uma (os dados em si são carregados à parte) |
 | [`mdnet.sql`](mdnet.sql) | A view `silver.mdnet_chamadas`, do CDR de telefonia da MDnet (PABX, URA e ramais). Aplica-se sozinha com `python aplicar_silver.py --so-mdnet` |
+| [`mdnet_ura.sql`](mdnet_ura.sql) | As views do relatório de URA da MDnet (`mdnet_ura_passagens`, `mdnet_ura_menu`, `mdnet_ura_chamadas`). Também entra no `--so-mdnet` |
 
 Para aplicar: `python aplicar_silver.py`, rodado na raiz do projeto. É
 idempotente, e valida contando as linhas de cada view.
@@ -58,12 +59,36 @@ ligação. O que vale saber antes de usar:
   `*8`). `e_chamada_real` tira os recursos e as pernas de transferência.
 - `rota_entrada` é o prefixo do número chamado (88810, 88830015, 88860). Não foi
   confirmado com a MDnet o que significa, então não tem rótulo.
-- O CSV não traz a opção escolhida na URA nem a fila. O que dá para medir é tempo
-  até atender, quem atendeu, quem desligou e se a chamada foi transferida.
+- O CSV de chamadas não traz a opção escolhida na URA nem a fila. A opção vem do
+  relatório de URA (seção abaixo). Do CDR dá para medir tempo até atender, quem
+  atendeu, quem desligou e se a chamada foi transferida.
 - A carga **preserva** a primeira versão de cada linha (`--atualizar` sobrescreve):
   o painel oscila em ~0,5% das ligações, devolvendo ao acaso uma das pernas.
 
 Conferência: `python conferir_mdnet.py --de 2026-01-01 --ate 2026-10-05 --silver`.
+
+### Relatório de URA (`silver.mdnet_ura_*`)
+
+O relatório "Relatório de URA" do painel (`xml_cdr_ivr`) tem uma linha por passagem
+por um menu, sem protocolo. O `ingerir_mdnet_ura.py` grava em `bronze.mdnet_ura` e
+a silver tem três views:
+
+- `mdnet_ura_passagens`: uma linha por passagem, com a opção rotulada como o gráfico
+  do painel (a descrição quando a pessoa digitou, o estado quando não digitou ou
+  desligou).
+- `mdnet_ura_menu`: a árvore do menu como a operação descreve (1 Cliente, com
+  1.1 a 1.4; 2 Vendas; 3 Fornecedor, com 3.1 e 3.2). É uma lista fixa de valores
+  dentro da view: se o menu mudar, atualiza-se ali.
+- `mdnet_ura_chamadas`: uma linha por ligação que passou pela URA, com o caminho
+  (`caminho`, e `caminho_nome` com os nomes de negócio), `codigo_opcao`,
+  `nome_opcao` e o desfecho no CDR (atendida, ramal, espera). O cruzamento com o
+  CDR é por telefone (11 últimos dígitos) mais o horário de início, que bate ao
+  segundo. `e_menu_atual` é falso para caminhos que o menu atual não explica (do
+  menu antigo, mar a mai/2026), então filtre por ele ao medir o funil.
+
+Conferência: `python conferir_mdnet.py --de 2026-01-01 --ate 2026-10-05 --ura`.
+Em set/2026 as 1.012 ligações do menu principal batem com o gráfico do painel e
+todas seguem o menu atual.
 
 ## Validação (carga local, 28 de junho de 2026)
 

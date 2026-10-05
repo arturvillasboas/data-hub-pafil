@@ -22,6 +22,9 @@ SEEDS_SQL = RAIZ / "sql" / "silver" / "seeds.sql"
 BLIP_SQL = RAIZ / "sql" / "silver" / "blip.sql"
 # CDR de telefonia da MDnet: outra fonte, outro arquivo. Só depende da bronze.mdnet_cdr.
 MDNET_SQL = RAIZ / "sql" / "silver" / "mdnet.sql"
+# Relatório de URA da MDnet: separado porque depende da tabela bronze.mdnet_ura, que só existe
+# depois de `ingerir_mdnet_ura.py --criar-tabelas`.
+MDNET_URA_SQL = RAIZ / "sql" / "silver" / "mdnet_ura.sql"
 
 # Views da silver a validar (devem existir após aplicar silver.sql).
 VIEWS = [
@@ -30,7 +33,7 @@ VIEWS = [
     "leads", "precadastros", "leads_conversoes",
     "atendimentos_cvcrm",
     "blip_tickets", "blip_filas", "blip_atendentes",
-    "mdnet_chamadas",
+    "mdnet_chamadas", "mdnet_ura_passagens", "mdnet_ura_menu", "mdnet_ura_chamadas",
 ]
 
 
@@ -66,7 +69,11 @@ def main() -> int:
             if not args.validar:
                 db.aplicar_ddl(conn, str(MDNET_SQL))
                 log.info("View silver da MDnet aplicada (%s).", MDNET_SQL.name)
-            falhas = validar(conn, ["mdnet_chamadas"])
+                db.aplicar_ddl(conn, str(MDNET_URA_SQL))
+                log.info("Views silver da URA da MDnet aplicadas (%s).", MDNET_URA_SQL.name)
+            falhas = validar(
+                conn, ["mdnet_chamadas", "mdnet_ura_passagens", "mdnet_ura_menu", "mdnet_ura_chamadas"],
+            )
             return 1 if falhas else 0
 
         if not args.validar:
@@ -79,6 +86,8 @@ def main() -> int:
             log.info("Views silver do Blip aplicadas (%s).", BLIP_SQL.name)
             db.aplicar_ddl(conn, str(MDNET_SQL))
             log.info("View silver da MDnet aplicada (%s).", MDNET_SQL.name)
+            db.aplicar_ddl(conn, str(MDNET_URA_SQL))
+            log.info("Views silver da URA da MDnet aplicadas (%s).", MDNET_URA_SQL.name)
 
         log.info("Validação smoke das views:")
         falhas = validar(conn)

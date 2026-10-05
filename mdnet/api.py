@@ -23,7 +23,7 @@ import csv
 import io
 import time
 from datetime import date, datetime, time as hora, timedelta
-from typing import Iterator
+from typing import Iterator, Mapping, Sequence
 
 import requests
 
@@ -72,13 +72,14 @@ def _decodificar(corpo: bytes) -> str:
         return corpo.decode("cp1252")
 
 
-def parsear_csv(corpo: bytes) -> list[dict[str, str]]:
+def parsear_csv(corpo: bytes, campos: Mapping[str, str] = CDR.campos) -> list[dict[str, str]]:
     """Converte o CSV do painel em lista de dicts (cabeçalho -> texto).
 
     Separador `;`, UTF-8 com BOM, aspas só nos campos que têm espaço. Falta de
     coluna esperada é erro (o painel mudou o layout e gravar assim criaria linhas
     com NULL no lugar de dado); coluna a mais vira só aviso, e o valor fica no
-    JSON cru da bronze.
+    JSON cru da bronze. `campos` é o mapa cabeçalho -> coluna do relatório (padrão: o
+    CDR de chamadas; o de URA passa o dele).
     """
     texto = _decodificar(corpo)
     if not texto.strip():
@@ -88,13 +89,13 @@ def parsear_csv(corpo: bytes) -> list[dict[str, str]]:
     cabecalho = [(c or "").strip() for c in (leitor.fieldnames or [])]
     leitor.fieldnames = cabecalho
 
-    faltando = [c for c in CDR.campos if c not in cabecalho]
+    faltando = [c for c in campos if c not in cabecalho]
     if faltando:
         raise ErroMdnet(
             f"O CSV não tem as colunas {faltando}. Cabeçalho recebido: {cabecalho}. "
             f"O painel mudou o layout: ajuste mdnet/objetos.py e sql/bronze/mdnet.sql."
         )
-    novas = [c for c in cabecalho if c and c not in CDR.campos]
+    novas = [c for c in cabecalho if c and c not in campos]
     if novas:
         log.warning("Colunas novas no CSV (guardadas só em _dados_brutos): %s",
                     ", ".join(novas))
@@ -166,9 +167,6 @@ class ClienteMdnet:
         # `validar=False` existe só para a sonda de valores do filtro (sondar_direcao_mdnet.py).
         if validar and direcao is not None and direcao not in DIRECOES:
             raise ErroMdnet(f"Direção {direcao!r} desconhecida. Use uma de {DIRECOES}.")
-        if not self._logado:
-            self.login()
-
         base = self._cfg.url_base
         filtros = [
             ("DATA_INI", inicio.strftime(_FORMATO_FILTRO)),
@@ -183,16 +181,72 @@ class ClienteMdnet:
             ("TRANSFERRED", ""),
         ]
         cabecalhos = {"Referer": f"{base}{URL_RELATORIO}", "Origin": base}
+        return parsear_csv(self._postar_csv(f"{base}{URL_EXPORTAR_CSV}", cabecalhos, filtros))
+
+    def exportar_relatorio_bruto(
+        self, pasta: str, filtros: Sequence[tuple[str, str]], pagina: str = "xml_cdr.php",
+    ) -> bytes:
+        """Exporta o CSV de qualquer relatório do painel e devolve os bytes, sem interpretar.
+
+        Todos os relatórios seguem o mesmo molde: o botão de exportar faz
+        `POST /app/<pasta>/model.php?file=eCSV` com os campos do formulário (lido do
+        form_elements.js do painel). Serve para ver as colunas de um relatório novo, como o de
+        URA (`xml_cdr_ivr`), antes de modelar a bronze dele.
+        """
+        base = self._cfg.url_base
+        cabecalhos = {"Referer": f"{base}/app/{pasta}/{pagina}", "Origin": base}
+        return self._postar_csv(f"{base}/app/{pasta}/model.php?file=eCSV", cabecalhos, filtros)
+
+    def consultar_relatorio(
+        self, pasta: str, arquivo: str, filtros: Sequence[tuple[str, str]],
+        pagina: str = "xml_cdr.php",
+    ) -> str:
+        """POST de `view.php` (a tabela) ou `charts.php` (os cartões) de um relatório, como HTML.
+
+        É o que o botão Pesquisar da tela faz por baixo (o navegador manda também o cabeçalho
+        X-Requested-With, que o jQuery acrescenta aos pedidos ajax).
+        """
+        if not self._logado:
+            self.login()
+        base = self._cfg.url_base
+        url = f"{base}/app/{pasta}/{arquivo}"
+        cabecalhos = {"Referer": f"{base}/app/{pasta}/{pagina}", "Origin": base,
+                      "X-Requested-With": "XMLHttpRequest"}
+        for tentativa in (1, 2):
+            time.sleep(self._cfg.pausa_segundos)
+            try:
+                resp = self._sessao.post(url, data=filtros, headers=cabecalhos,
+                                         timeout=self._cfg.timeout)
+            except requests.RequestException as exc:
+                raise ErroMdnet(f"Falha de rede em {pasta}/{arquivo}: {exc}") from exc
+            if not resp.ok:
+                raise ErroMdnet(f"HTTP {resp.status_code} em {pasta}/{arquivo}")
+            if _tela_de_login(resp.text) and tentativa == 1:
+                log.warning("Sessão expirou em %s/%s; entrando de novo", pasta, arquivo)
+                self.login()
+                continue
+            return resp.text
+        raise ErroMdnet(f"O painel devolveu a tela de login para {pasta}/{arquivo}")
+
+    def _postar_csv(
+        self, url: str, cabecalhos: dict[str, str], filtros: Sequence[tuple[str, str]],
+    ) -> bytes:
+        """POST do formulário de exportação, com retry, e devolve os bytes do CSV.
+
+        Cuida do que é comum a todo relatório: pausa entre pedidos, rede e 5xx com
+        espera crescente, e a sessão que expira (o painel responde 200 com a tela de login,
+        não 401), caso em que entra de novo uma vez.
+        """
+        if not self._logado:
+            self.login()
 
         tentativa = 0
         relogou = False
         while True:
             time.sleep(self._cfg.pausa_segundos)
             try:
-                resp = self._sessao.post(
-                    f"{base}{URL_EXPORTAR_CSV}", data=filtros, headers=cabecalhos,
-                    timeout=self._cfg.timeout,
-                )
+                resp = self._sessao.post(url, data=filtros, headers=cabecalhos,
+                                         timeout=self._cfg.timeout)
             except requests.RequestException as exc:
                 tentativa += 1
                 if tentativa > _MAX_TENTATIVAS:
@@ -231,4 +285,28 @@ class ClienteMdnet:
                     "mudou o endpoint de exportação."
                 )
 
-            return parsear_csv(resp.content)
+            return resp.content
+
+    def baixar_pagina(self, caminho: str) -> str:
+        """GET autenticado de uma página do painel (ou arquivo local dele), como texto.
+
+        Só leitura. Serve para mapear o painel (explorar_menu_mdnet.py). Se a sessão
+        tiver expirado, entra de novo uma vez.
+        """
+        if not self._logado:
+            self.login()
+        url = f"{self._cfg.url_base}{caminho}"
+        for tentativa in (1, 2):
+            time.sleep(self._cfg.pausa_segundos)
+            try:
+                resp = self._sessao.get(url, timeout=self._cfg.timeout)
+            except requests.RequestException as exc:
+                raise ErroMdnet(f"Falha de rede em {caminho}: {exc}") from exc
+            if not resp.ok:
+                raise ErroMdnet(f"HTTP {resp.status_code} em {caminho}")
+            if _tela_de_login(resp.text) and tentativa == 1:
+                log.warning("Sessão expirou ao abrir %s; entrando de novo", caminho)
+                self.login()
+                continue
+            return resp.text
+        raise ErroMdnet(f"O painel devolveu a tela de login para {caminho}")

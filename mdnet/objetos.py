@@ -47,4 +47,24 @@ CDR = ObjetoMdnet(
 # painel mostra, e esta guarda cada perna que o filtro devolve.
 CDR_PERNAS = ObjetoMdnet(nome_logico="mdnet_cdr_pernas", campos=CDR.campos)
 
-OBJETOS: tuple[ObjetoMdnet, ...] = (CDR, CDR_PERNAS)
+# Relatório de URA (/app/xml_cdr_ivr/). Uma linha por PASSAGEM por um menu, não por
+# ligação: quem ligou, em que menu, o dígito, e para onde a URA mandou. Não tem
+# protocolo. Data e Hora são o início da ligação (iguais, ao segundo, ao início da
+# ligação no CDR), e o submenu repete a data e a hora do menu principal.
+URA = ObjetoMdnet(
+    nome_logico="mdnet_ura",
+    campos={
+        "URA": "ura",
+        "Data": "data",
+        "Hora": "hora",
+        "Origem": "origem",
+        "Opções de Dígitos": "opcoes_digitos",
+        "Digitação": "digitacao",
+        "Estado": "estado",
+        "Ação": "acao",
+        "Aplicação de Destino": "aplicacao_destino",
+        "Descrição": "descricao",
+    },
+)
+
+OBJETOS: tuple[ObjetoMdnet, ...] = (CDR, CDR_PERNAS, URA)
