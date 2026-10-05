@@ -15,6 +15,7 @@ seguindo os códigos `ING-*`, `DP-*`, `KPI-*` e `R*` usados naquele catálogo.
 |---|---|
 | [`silver.sql`](silver.sql) | O schema `silver`, com funções de tipagem tolerante e 6 views de conformação |
 | [`seeds.sql`](seeds.sql) | As tabelas de-para (DP-01 a DP-12): a estrutura e a proveniência de cada uma (os dados em si são carregados à parte) |
+| [`mdnet.sql`](mdnet.sql) | A view `silver.mdnet_chamadas`, do CDR de telefonia da MDnet (PABX, URA e ramais). Aplica-se sozinha com `python aplicar_silver.py --so-mdnet` |
 
 Para aplicar: `python aplicar_silver.py`, rodado na raiz do projeto. É
 idempotente, e valida contando as linhas de cada view.
@@ -34,6 +35,35 @@ idempotente, e valida contando as linhas de cada view.
 > refletem o dado mais atual, e não exigem nenhum passo extra de refresh.
 > Materializar como `TABLE` ou `MATERIALIZED VIEW` só faria sentido se a
 > performance algum dia exigir isso.
+
+## Telefonia da MDnet (`silver.mdnet_chamadas`)
+
+A fonte não tem API: o painel web da MDnet (DDA Telecom) só exporta um CSV, e o
+`ingerir_mdnet.py` faz login e baixa esse CSV dia a dia. Grão: uma linha por
+ligação. O que vale saber antes de usar:
+
+- **O CSV sem filtro mostra uma perna por ligação e esconde as outras.** As pernas
+  vêm do relatório filtrado por direção (`ingerir_mdnet_pernas.py`, tabela
+  `bronze.mdnet_cdr_pernas`). Os valores do filtro são `inbound`, `outbound` e
+  `internal`.
+- **`direcao_cartao` e `estado_cartao` reproduzem os cartões do painel web.** O
+  critério é por prioridade entre as pernas: com perna de entrada é Entrada, senão
+  com perna de saída é Saída, senão Interna. Em 05/out/2026 fechou com o painel nas
+  três direções (21.137, 1.062 e 4.701) e nos estados de Entrada e Interna.
+- **Divergência conhecida:** em Saída o painel mostra 251 atendidas e a perna de
+  saída diz 512. A maioria das 512 tem conversa longa, então o painel é o
+  divergente. Para decisão, use `atendida` (estado do painel OU tempo falado > 0).
+- `direcao` é a nossa leitura da perna que o CSV mostra, com três correções (perna
+  de tronco, ligação encaminhada para fora e códigos de recurso como a captura
+  `*8`). `e_chamada_real` tira os recursos e as pernas de transferência.
+- `rota_entrada` é o prefixo do número chamado (88810, 88830015, 88860). Não foi
+  confirmado com a MDnet o que significa, então não tem rótulo.
+- O CSV não traz a opção escolhida na URA nem a fila. O que dá para medir é tempo
+  até atender, quem atendeu, quem desligou e se a chamada foi transferida.
+- A carga **preserva** a primeira versão de cada linha (`--atualizar` sobrescreve):
+  o painel oscila em ~0,5% das ligações, devolvendo ao acaso uma das pernas.
+
+Conferência: `python conferir_mdnet.py --de 2026-01-01 --ate 2026-10-05 --silver`.
 
 ## Validação (carga local, 28 de junho de 2026)
 
