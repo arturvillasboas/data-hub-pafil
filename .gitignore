@@ -44,6 +44,8 @@ relatorios/*
 
 # === Exports mensais de reconciliação (dado de um mês específico, não doc) ===
 reconciliacao/*.xlsx
+# CDR da telefonia (MDnet) traz telefone de cliente: dado pessoal, não versionar
+reconciliacao/*.csv
 
 # === Automação de reporting: sessão autenticada do Power BI, nunca versionar ===
 automacao_reporting/capture_service/storage_state.json
