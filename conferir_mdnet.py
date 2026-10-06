@@ -252,6 +252,31 @@ def _silver(conn: Any, inicio: datetime, fim: datetime) -> None:
         ).fetchall(),
     )
 
+    _tabela(
+        "Quem atendeu as entradas, por setor e responsável (silver.dpara_ramais)",
+        ("setor", "responsável", "atendidas"),
+        conn.execute(
+            "SELECT coalesce(setor_ramal, '(ramal fora da planilha)'), "
+            "coalesce(responsavel_ramal, ''), count(*) "
+            "FROM silver.mdnet_chamadas "
+            "WHERE e_chamada_real AND direcao = 'Entrada' AND atendida AND ramal IS NOT NULL "
+            "AND data_hora_inicio >= %s AND data_hora_inicio < %s "
+            "GROUP BY 1, 2 ORDER BY 3 DESC, 1 LIMIT 25", periodo,
+        ).fetchall(),
+    )
+
+    _tabela(
+        "Ramais que atenderam entrada e NÃO estão na planilha de ramais (acrescente lá)",
+        ("ramal", "atendidas"),
+        conn.execute(
+            "SELECT ramal, count(*) FROM silver.mdnet_chamadas "
+            "WHERE e_chamada_real AND direcao = 'Entrada' AND atendida AND ramal IS NOT NULL "
+            "AND setor_ramal IS NULL "
+            "AND data_hora_inicio >= %s AND data_hora_inicio < %s "
+            "GROUP BY 1 ORDER BY 2 DESC LIMIT 15", periodo,
+        ).fetchall(),
+    )
+
 
 def _ura(conn: Any, de: date, ate: date) -> None:
     """Confere o relatório de URA: contagens no formato dos gráficos da tela, e o funil.
@@ -297,6 +322,18 @@ def _ura(conn: Any, de: date, ate: date) -> None:
             "round(avg(espera_s) FILTER (WHERE atendida)) "
             "FROM silver.mdnet_ura_chamadas WHERE data >= %s AND data <= %s AND e_menu_atual "
             "GROUP BY 1 ORDER BY 2 DESC", periodo,
+        ).fetchall(),
+    )
+
+    _tabela(
+        "Cada opção do menu e o setor que atendeu (silver.dpara_ramais)",
+        ("opção", "setor que atendeu", "atendidas"),
+        conn.execute(
+            "SELECT coalesce(codigo_opcao || ' ', '') || nome_opcao, "
+            "coalesce(setor_atendente, '(ramal fora da planilha ou não ramal)'), count(*) "
+            "FROM silver.mdnet_ura_chamadas "
+            "WHERE data >= %s AND data <= %s AND e_menu_atual AND atendida "
+            "GROUP BY 1, 2 ORDER BY 1, 3 DESC", periodo,
         ).fetchall(),
     )
 

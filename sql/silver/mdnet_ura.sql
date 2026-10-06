@@ -147,7 +147,13 @@ SELECT
                  AND (s.estado_ura <> 'Digitou' OR ms.codigo IS NOT NULL)
         END,
         false
-    )                                                           AS e_menu_atual
+    )                                                           AS e_menu_atual,
+    -- Quem atendeu, pelo ramal (silver.dpara_ramais). Vazio quando ninguém atendeu, quando o
+    -- ramal não está na planilha ou quando a ligação não foi achada no CDR.
+    c.unidade_ramal                                             AS unidade_atendente,
+    c.setor_ramal                                               AS setor_atendente,
+    c.setor_grupo_ramal                                         AS setor_grupo_atendente,
+    c.responsavel_ramal                                         AS responsavel_atendente
 FROM silver.mdnet_ura_passagens p
 LEFT JOIN LATERAL (
     -- Uma ligação que entra num submenu tem uma segunda linha com o mesmo horário e telefone.

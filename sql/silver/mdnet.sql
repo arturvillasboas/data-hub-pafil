@@ -47,6 +47,22 @@
 
 CREATE SCHEMA IF NOT EXISTS silver;
 
+-- De-para de ramais: quem é o dono de cada ramal (setor e responsável). Vem da planilha
+-- "RAMAIS ATIVOS 2026.xlsx", que fica em BI V3 CVDW/depara/depara_ramais/arquivo e é carregada
+-- por `popular_seeds.py --ramais`. A tabela é criada aqui, e não no seeds.sql, porque a view
+-- abaixo depende dela e `aplicar_silver.py --so-mdnet` só aplica os arquivos da MDnet. Vazia,
+-- a view continua funcionando (o setor e o responsável ficam nulos).
+CREATE TABLE IF NOT EXISTS silver.dpara_ramais (
+    ramal       text PRIMARY KEY,
+    unidade     text,                          -- SEDE ou HOUSE (a seção da planilha)
+    setor       text,                          -- como na planilha: "Suprimentos 1", "Financeiro"
+    setor_grupo text,                          -- sem o número do fim: "Suprimentos", "Credito & repasse"
+    responsavel text,                          -- nulo quando o ramal está vago
+    eh_vago     boolean NOT NULL DEFAULT false,
+    descricao   text,                          -- a célula inteira ("Suprimentos 1 - Maria")
+    _origem     text DEFAULT 'SharePoint: BI V3 CVDW/depara/depara_ramais (RAMAIS ATIVOS 2026.xlsx)'
+);
+
 -- Aviso para quem for MUDAR a forma desta view: o CREATE OR REPLACE VIEW do
 -- Postgres só acrescenta coluna no fim. Renomear, reordenar ou remover coluna faz o
 -- comando falhar. Acrescente colunas novas sempre no fim do SELECT final.
@@ -89,6 +105,12 @@ base AS (
 classificada AS (
     SELECT
         base.*,
+        -- Ramal de 1 a 5 dígitos, ver a coluna `ramal` do SELECT final. Fica aqui para servir
+        -- também ao join com silver.dpara_ramais.
+        CASE
+            WHEN base.ramal ~ '^[0-9]{1,5}$' THEN base.ramal
+            WHEN base.direcao = 'Entrada' AND base.origem_e_ramal THEN base.origem
+        END                                                     AS ramal_limpo,
         CASE
             WHEN base.e_recurso THEN 'Recurso'
             WHEN base.destino_e_longo AND base.direcao <> 'Interna' THEN 'Entrada'
@@ -154,10 +176,7 @@ SELECT
     -- origem, que é o ramal que ligou. Em saída pela perna do ramal já vem certo. Nas
     -- saídas cujo Ramal veio como número discado e a origem é o número da empresa, o
     -- ramal que ligou não é conhecido (cerca de 560 linhas), e fica vazio.
-    CASE
-        WHEN c.ramal ~ '^[0-9]{1,5}$' THEN c.ramal
-        WHEN c.direcao = 'Entrada' AND c.origem_e_ramal THEN c.origem
-    END                                                         AS ramal,
+    c.ramal_limpo                                               AS ramal,
     -- Só para Entrada atendida. "Número externo" é a chamada encaminhada para um
     -- número de fora (prefixo 55163, por exemplo), e "Captura de chamada" é *8.
     CASE
@@ -221,8 +240,16 @@ SELECT
         WHEN pe.tem_perna_entrada THEN pe.estado_perna_entrada
         WHEN pe.tem_perna_saida THEN pe.estado_perna_saida
         ELSE c.estado
-    END                                                         AS estado_cartao
+    END                                                         AS estado_cartao,
+    -- Dono do `ramal` acima, de silver.dpara_ramais. Vazio quando o ramal não está na planilha
+    -- (o 8270, por exemplo, é número chamado e não ramal) ou quando a ligação não tem ramal.
+    r.unidade                                                   AS unidade_ramal,
+    r.setor                                                     AS setor_ramal,
+    r.setor_grupo                                               AS setor_grupo_ramal,
+    r.responsavel                                               AS responsavel_ramal,
+    r.eh_vago                                                   AS ramal_vago
 FROM classificada c
+LEFT JOIN silver.dpara_ramais r ON r.ramal = c.ramal_limpo
 CROSS JOIN LATERAL (
     -- Um agregado sem GROUP BY devolve sempre uma linha, então a ligação sem nenhuma
     -- perna carregada continua na view (com as marcas falsas).

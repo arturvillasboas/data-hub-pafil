@@ -15,7 +15,7 @@ seguindo os códigos `ING-*`, `DP-*`, `KPI-*` e `R*` usados naquele catálogo.
 |---|---|
 | [`silver.sql`](silver.sql) | O schema `silver`, com funções de tipagem tolerante e 6 views de conformação |
 | [`seeds.sql`](seeds.sql) | As tabelas de-para (DP-01 a DP-12): a estrutura e a proveniência de cada uma (os dados em si são carregados à parte) |
-| [`mdnet.sql`](mdnet.sql) | A view `silver.mdnet_chamadas`, do CDR de telefonia da MDnet (PABX, URA e ramais). Aplica-se sozinha com `python aplicar_silver.py --so-mdnet` |
+| [`mdnet.sql`](mdnet.sql) | A view `silver.mdnet_chamadas`, do CDR de telefonia da MDnet (PABX, URA e ramais), e a tabela de-para `silver.dpara_ramais` de que ela depende. Aplica-se sozinha com `python aplicar_silver.py --so-mdnet` |
 | [`mdnet_ura.sql`](mdnet_ura.sql) | As views do relatório de URA da MDnet (`mdnet_ura_passagens`, `mdnet_ura_menu`, `mdnet_ura_chamadas`). Também entra no `--so-mdnet` |
 
 Para aplicar: `python aplicar_silver.py`, rodado na raiz do projeto. É
@@ -66,6 +66,26 @@ ligação. O que vale saber antes de usar:
   o painel oscila em ~0,5% das ligações, devolvendo ao acaso uma das pernas.
 
 Conferência: `python conferir_mdnet.py --de 2026-01-01 --ate 2026-10-05 --silver`.
+
+### Ramais (`silver.dpara_ramais`)
+
+O CDR só diz o número do ramal que atendeu. A planilha `RAMAIS ATIVOS 2026.xlsx` diz de quem é:
+unidade (SEDE ou HOUSE), setor e responsável. Ela vive na pasta de de-paras, em
+`BI V3 CVDW/depara/depara_ramais/arquivo`, registrada no `config/deparas.yml` como `ramais`.
+
+- Carga: `python popular_seeds.py --ramais` (sem o argumento, usa o xlsx dessa pasta). A tabela
+  precisa existir, então rode antes `python aplicar_silver.py --so-mdnet`.
+- A coluna WHATS-APP da planilha traz celular de funcionário e **não** é lida.
+- `setor` é como está na planilha (`Suprimentos 1`), e `setor_grupo` tira o número do fim
+  (`Suprimentos`), que é o que serve para somar por setor. Ramal "Vago" fica com `eh_vago` e sem
+  responsável.
+- As views ganham `unidade_ramal`, `setor_ramal`, `setor_grupo_ramal`, `responsavel_ramal` e
+  `ramal_vago` (em `mdnet_chamadas`) e `*_atendente` (em `mdnet_ura_chamadas`).
+- Os códigos 60xx do menu da URA (6020 de Vendas, por exemplo) **não** são ramais, são filas ou
+  grupos, e não estão nessa planilha. O 8270 também não: é número chamado.
+- Para manter: quando entrar gente nova ou um ramal mudar de dono, atualize a planilha, copie
+  para a pasta do de-para e rode `popular_seeds.py --ramais`. O `conferir_mdnet.py --silver`
+  lista os ramais que atenderam e não estão na planilha.
 
 ### Relatório de URA (`silver.mdnet_ura_*`)
 
