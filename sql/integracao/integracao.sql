@@ -479,6 +479,11 @@ BEGIN
     -- diferente de nota/interacao que sao append-only), entao mesmo se um eco
     -- escapar por um ciclo o dano e' so uma chamada de API redundante, nao
     -- dado duplicado visivel.
+    -- ATENCAO (08/out/2026): essa premissa valia so enquanto o eco ESCAPAVA.
+    -- Agora que a comparacao encontra o log certo, o campo e' removido e o
+    -- evento fica com campos vazios; se ele fosse despachado mesmo assim, o
+    -- POST /leads sem idsituacao reativa um lead Perdido no CVCRM. Por isso
+    -- v_fila_para_despachar marca como eh_eco todo evento sem nada pra enviar.
     IF NEW.origem = 'ghl' AND NEW.campos ? 'situacao_lead' THEN
         SELECT l.campos_enviados ->> 'situacao_ghl' INTO v_ultimo_enviado
           FROM integracao.log_sync l
@@ -568,6 +573,19 @@ $$;
 -- mesmo sentido). campos_permitidos já sai no formato do CAMPO REAL do
 -- destino (não no nome interno), então o n8n só decide "descarta se eh_eco,
 -- senão despacha campos_permitidos direto no corpo da API".
+--
+-- eh_eco tambem vale TRUE quando nao sobrou nada pra enviar (campos_permitidos
+-- vazio, ou so com valores null). Adicionado em 08/out/2026: a checagem de eco
+-- por VALOR de preencher_fila_sync() (corrigida em 28/set/2026) tira
+-- situacao_lead do evento mas deixa a linha na fila com campos vazios, e o
+-- hash de um evento vazio nunca bate com nenhum log. O n8n despachava mesmo
+-- assim um POST /leads do CVCRM so com idlead + permitir_alteracao + contato,
+-- sem idsituacao nenhum, e o CVCRM tratou isso como reentrada do lead: um lead
+-- Perdido voltava pra "Aguardando Atendimento SDR" 3-4 min depois, sem ninguem
+-- ter mexido (ver RUNBOOK.md, "Lead Perdido voltava pra situacao 1").
+-- A coluna fica no mesmo lugar e com o mesmo nome de proposito: o node
+-- "Eh eco?" do n8n le eh_eco e manda a linha pra "Marcar descartado (eco)",
+-- entao nao precisa mexer no workflow.
 CREATE OR REPLACE VIEW integracao.v_fila_para_despachar AS
 SELECT
     f.id AS fila_sync_id,
@@ -576,13 +594,7 @@ SELECT
     c.id_contato_ghl,
     f.origem,
     CASE WHEN f.origem = 'ghl' THEN 'cvcrm' ELSE 'ghl' END AS destino,
-    COALESCE(
-        (SELECT jsonb_object_agg(dc.campo_destino, f.campos -> chave)
-           FROM jsonb_object_keys(f.campos) AS chave
-           JOIN integracao.dono_campo dc ON dc.campo = chave AND dc.dono = f.origem
-          WHERE dc.campo_destino IS NOT NULL),
-        '{}'::jsonb
-    ) AS campos_permitidos,
+    x.campos_permitidos,
     f.hash_evento,
     f.tentativas,
     f.criado_em,
@@ -592,17 +604,33 @@ SELECT
          WHERE l.contato_id = f.contato_id
            AND l.destino = f.origem  -- alguma vez já escrevemos no lado de onde este evento chegou?
     ) AS tem_envio_anterior,
-    EXISTS (
-        SELECT 1
-          FROM integracao.log_sync l
-         WHERE l.contato_id = f.contato_id
-           AND l.destino = f.origem
-           AND l.hash_evento = f.hash_evento
+    (
+        EXISTS (
+            SELECT 1
+              FROM integracao.log_sync l
+             WHERE l.contato_id = f.contato_id
+               AND l.destino = f.origem
+               AND l.hash_evento = f.hash_evento
+        )
+        OR NOT EXISTS (
+            SELECT 1
+              FROM jsonb_each(x.campos_permitidos) AS e
+             WHERE e.value <> 'null'::jsonb
+        )
     ) AS eh_eco,
     c.telefone_chave AS contato_telefone,  -- o CVCRM exige email OU telefone no corpo, mesmo numa edição.
     c.email           AS contato_email      -- no final da lista de propósito: CREATE OR REPLACE VIEW só aceita coluna nova no fim.
 FROM integracao.fila_sync f
 LEFT JOIN integracao.depara_contato c ON c.id = f.contato_id
+CROSS JOIN LATERAL (
+    SELECT COALESCE(
+        (SELECT jsonb_object_agg(dc.campo_destino, f.campos -> chave)
+           FROM jsonb_object_keys(f.campos) AS chave
+           JOIN integracao.dono_campo dc ON dc.campo = chave AND dc.dono = f.origem
+          WHERE dc.campo_destino IS NOT NULL),
+        '{}'::jsonb
+    ) AS campos_permitidos
+) AS x
 WHERE f.status = 'pendente'
 ORDER BY f.criado_em ASC;
 
