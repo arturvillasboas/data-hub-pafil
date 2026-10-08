@@ -124,16 +124,21 @@ def bulk_upsert(
     colunas: Sequence[str],
     linhas: Sequence[Sequence[Any]],
     chave_conflito: Sequence[str],
+    atualizar: bool = True,
 ) -> int:
     """Insere/atualiza várias linhas de uma vez (ON CONFLICT por `chave_conflito`).
 
     Faz lotes que respeitam o limite de parâmetros do Postgres. Nada de inserir
     linha a linha.
+
+    Com `atualizar=False` a linha que já existe é preservada (DO NOTHING) e o retorno
+    conta só as inseridas. É para fontes cujo registro não deveria mudar mas muda
+    sem motivo entre leituras (o CDR da MDnet, ver ingerir_mdnet.py).
     """
     if not linhas:
         return 0
 
-    set_cols = [c for c in colunas if c not in chave_conflito]
+    set_cols = [c for c in colunas if c not in chave_conflito] if atualizar else []
     if set_cols:
         sets = sql.SQL(", ").join(
             sql.SQL("{c} = EXCLUDED.{c}").format(c=sql.Identifier(c)) for c in set_cols

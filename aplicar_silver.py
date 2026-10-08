@@ -20,6 +20,11 @@ SEEDS_SQL = RAIZ / "sql" / "silver" / "seeds.sql"
 # no meio do CVDW. Aplicado depois das seeds, porque as views dele não dependem
 # de de-para nenhuma mas a gold correspondente depende.
 BLIP_SQL = RAIZ / "sql" / "silver" / "blip.sql"
+# CDR de telefonia da MDnet: outra fonte, outro arquivo. Só depende da bronze.mdnet_cdr.
+MDNET_SQL = RAIZ / "sql" / "silver" / "mdnet.sql"
+# Relatório de URA da MDnet: separado porque depende da tabela bronze.mdnet_ura, que só existe
+# depois de `ingerir_mdnet_ura.py --criar-tabelas`.
+MDNET_URA_SQL = RAIZ / "sql" / "silver" / "mdnet_ura.sql"
 
 # Views da silver a validar (devem existir após aplicar silver.sql).
 VIEWS = [
@@ -28,14 +33,15 @@ VIEWS = [
     "leads", "precadastros", "leads_conversoes",
     "atendimentos_cvcrm",
     "blip_tickets", "blip_filas", "blip_atendentes",
+    "mdnet_chamadas", "mdnet_ura_passagens", "mdnet_ura_menu", "mdnet_ura_chamadas",
 ]
 
 
-def validar(conn) -> int:
+def validar(conn, views: list[str] = VIEWS) -> int:
     """Conta linhas de cada view silver; falha (retorna >0) se alguma quebrar."""
     falhas = 0
     with conn.cursor() as cur:
-        for v in VIEWS:
+        for v in views:
             try:
                 cur.execute(f"SELECT count(*) FROM silver.{v}")
                 log.info("  silver.%-13s OK  (%s linhas)", v, cur.fetchone()[0])
@@ -50,6 +56,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Aplica a camada silver sobre a bronze.")
     ap.add_argument("--so-views", action="store_true", help="aplica só silver.sql (pula seeds)")
     ap.add_argument("--validar", action="store_true", help="só valida (não aplica DDL)")
+    ap.add_argument("--so-mdnet", action="store_true",
+                    help="aplica e valida só a view da MDnet (não toca no resto da silver)")
     ap.add_argument("--verbose", action="store_true", help="log de debug")
     args = ap.parse_args()
 
@@ -57,6 +65,17 @@ def main() -> int:
     cfg = carregar_config_pg()
 
     with db.conectar(cfg) as conn:
+        if args.so_mdnet:
+            if not args.validar:
+                db.aplicar_ddl(conn, str(MDNET_SQL))
+                log.info("View silver da MDnet aplicada (%s).", MDNET_SQL.name)
+                db.aplicar_ddl(conn, str(MDNET_URA_SQL))
+                log.info("Views silver da URA da MDnet aplicadas (%s).", MDNET_URA_SQL.name)
+            falhas = validar(
+                conn, ["mdnet_chamadas", "mdnet_ura_passagens", "mdnet_ura_menu", "mdnet_ura_chamadas"],
+            )
+            return 1 if falhas else 0
+
         if not args.validar:
             db.aplicar_ddl(conn, str(SILVER_SQL))
             log.info("Views silver aplicadas (%s).", SILVER_SQL.name)
@@ -65,6 +84,10 @@ def main() -> int:
                 log.info("Seeds de-para aplicadas (%s).", SEEDS_SQL.name)
             db.aplicar_ddl(conn, str(BLIP_SQL))
             log.info("Views silver do Blip aplicadas (%s).", BLIP_SQL.name)
+            db.aplicar_ddl(conn, str(MDNET_SQL))
+            log.info("View silver da MDnet aplicada (%s).", MDNET_SQL.name)
+            db.aplicar_ddl(conn, str(MDNET_URA_SQL))
+            log.info("Views silver da URA da MDnet aplicadas (%s).", MDNET_URA_SQL.name)
 
         log.info("Validação smoke das views:")
         falhas = validar(conn)

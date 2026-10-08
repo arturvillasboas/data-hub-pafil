@@ -15,6 +15,8 @@ seguindo os códigos `ING-*`, `DP-*`, `KPI-*` e `R*` usados naquele catálogo.
 |---|---|
 | [`silver.sql`](silver.sql) | O schema `silver`, com funções de tipagem tolerante e 6 views de conformação |
 | [`seeds.sql`](seeds.sql) | As tabelas de-para (DP-01 a DP-12): a estrutura e a proveniência de cada uma (os dados em si são carregados à parte) |
+| [`mdnet.sql`](mdnet.sql) | A view `silver.mdnet_chamadas`, do CDR de telefonia da MDnet (PABX, URA e ramais), e a tabela de-para `silver.dpara_ramais` de que ela depende. Aplica-se sozinha com `python aplicar_silver.py --so-mdnet` |
+| [`mdnet_ura.sql`](mdnet_ura.sql) | As views do relatório de URA da MDnet (`mdnet_ura_passagens`, `mdnet_ura_menu`, `mdnet_ura_chamadas`). Também entra no `--so-mdnet` |
 
 Para aplicar: `python aplicar_silver.py`, rodado na raiz do projeto. É
 idempotente, e valida contando as linhas de cada view.
@@ -34,6 +36,79 @@ idempotente, e valida contando as linhas de cada view.
 > refletem o dado mais atual, e não exigem nenhum passo extra de refresh.
 > Materializar como `TABLE` ou `MATERIALIZED VIEW` só faria sentido se a
 > performance algum dia exigir isso.
+
+## Telefonia da MDnet (`silver.mdnet_chamadas`)
+
+A fonte não tem API: o painel web da MDnet (DDA Telecom) só exporta um CSV, e o
+`ingerir_mdnet.py` faz login e baixa esse CSV dia a dia. Grão: uma linha por
+ligação. O que vale saber antes de usar:
+
+- **O CSV sem filtro mostra uma perna por ligação e esconde as outras.** As pernas
+  vêm do relatório filtrado por direção (`ingerir_mdnet_pernas.py`, tabela
+  `bronze.mdnet_cdr_pernas`). Os valores do filtro são `inbound`, `outbound` e
+  `internal`.
+- **`direcao_cartao` e `estado_cartao` reproduzem os cartões do painel web.** O
+  critério é por prioridade entre as pernas: com perna de entrada é Entrada, senão
+  com perna de saída é Saída, senão Interna. Em 05/out/2026 fechou com o painel nas
+  três direções (21.137, 1.062 e 4.701) e nos estados de Entrada e Interna.
+- **Divergência conhecida:** em Saída o painel mostra 251 atendidas e a perna de
+  saída diz 512. A maioria das 512 tem conversa longa, então o painel é o
+  divergente. Para decisão, use `atendida` (estado do painel OU tempo falado > 0).
+- `direcao` é a nossa leitura da perna que o CSV mostra, com três correções (perna
+  de tronco, ligação encaminhada para fora e códigos de recurso como a captura
+  `*8`). `e_chamada_real` tira os recursos e as pernas de transferência.
+- `rota_entrada` é o prefixo do número chamado (88810, 88830015, 88860). Não foi
+  confirmado com a MDnet o que significa, então não tem rótulo.
+- O CSV de chamadas não traz a opção escolhida na URA nem a fila. A opção vem do
+  relatório de URA (seção abaixo). Do CDR dá para medir tempo até atender, quem
+  atendeu, quem desligou e se a chamada foi transferida.
+- A carga **preserva** a primeira versão de cada linha (`--atualizar` sobrescreve):
+  o painel oscila em ~0,5% das ligações, devolvendo ao acaso uma das pernas.
+
+Conferência: `python conferir_mdnet.py --de 2026-01-01 --ate 2026-10-05 --silver`.
+
+### Ramais (`silver.dpara_ramais`)
+
+O CDR só diz o número do ramal que atendeu. A planilha `RAMAIS ATIVOS 2026.xlsx` diz de quem é:
+unidade (SEDE ou HOUSE), setor e responsável. Ela vive na pasta de de-paras, em
+`BI V3 CVDW/depara/depara_ramais/arquivo`, registrada no `config/deparas.yml` como `ramais`.
+
+- Carga: `python popular_seeds.py --ramais` (sem o argumento, usa o xlsx dessa pasta). A tabela
+  precisa existir, então rode antes `python aplicar_silver.py --so-mdnet`.
+- A coluna WHATS-APP da planilha traz celular de funcionário e **não** é lida.
+- `setor` é como está na planilha (`Suprimentos 1`), e `setor_grupo` tira o número do fim
+  (`Suprimentos`), que é o que serve para somar por setor. Ramal "Vago" fica com `eh_vago` e sem
+  responsável.
+- As views ganham `unidade_ramal`, `setor_ramal`, `setor_grupo_ramal`, `responsavel_ramal` e
+  `ramal_vago` (em `mdnet_chamadas`) e `*_atendente` (em `mdnet_ura_chamadas`).
+- Os códigos 60xx do menu da URA (6020 de Vendas, por exemplo) **não** são ramais, são filas ou
+  grupos, e não estão nessa planilha. O 8270 também não: é número chamado.
+- Para manter: quando entrar gente nova ou um ramal mudar de dono, atualize a planilha, copie
+  para a pasta do de-para e rode `popular_seeds.py --ramais`. O `conferir_mdnet.py --silver`
+  lista os ramais que atenderam e não estão na planilha.
+
+### Relatório de URA (`silver.mdnet_ura_*`)
+
+O relatório "Relatório de URA" do painel (`xml_cdr_ivr`) tem uma linha por passagem
+por um menu, sem protocolo. O `ingerir_mdnet_ura.py` grava em `bronze.mdnet_ura` e
+a silver tem três views:
+
+- `mdnet_ura_passagens`: uma linha por passagem, com a opção rotulada como o gráfico
+  do painel (a descrição quando a pessoa digitou, o estado quando não digitou ou
+  desligou).
+- `mdnet_ura_menu`: a árvore do menu como a operação descreve (1 Cliente, com
+  1.1 a 1.4; 2 Vendas; 3 Fornecedor, com 3.1 e 3.2). É uma lista fixa de valores
+  dentro da view: se o menu mudar, atualiza-se ali.
+- `mdnet_ura_chamadas`: uma linha por ligação que passou pela URA, com o caminho
+  (`caminho`, e `caminho_nome` com os nomes de negócio), `codigo_opcao`,
+  `nome_opcao` e o desfecho no CDR (atendida, ramal, espera). O cruzamento com o
+  CDR é por telefone (11 últimos dígitos) mais o horário de início, que bate ao
+  segundo. `e_menu_atual` é falso para caminhos que o menu atual não explica (do
+  menu antigo, mar a mai/2026), então filtre por ele ao medir o funil.
+
+Conferência: `python conferir_mdnet.py --de 2026-01-01 --ate 2026-10-05 --ura`.
+Em set/2026 as 1.012 ligações do menu principal batem com o gráfico do painel e
+todas seguem o menu atual.
 
 ## Validação (carga local, 28 de junho de 2026)
 

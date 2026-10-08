@@ -5,6 +5,7 @@ import base64
 import binascii
 import os
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 import yaml
@@ -97,6 +98,26 @@ class ConfigBlip:
             "Authorization": f"Key {composta}",
             "Content-Type": "application/json",
         }
+
+
+@dataclass(frozen=True)
+class ConfigMdnet:
+    """Acesso ao painel web da MDnet (DDA Telecom), de onde sai o CDR de chamadas.
+
+    Não há API: o extrator entra no painel com usuário e senha e pede o mesmo CSV
+    que o botão de exportar do relatório de chamadas gera no navegador.
+    """
+
+    url_base: str          # https://<cliente>.ddatelecom.com.br, sem barra no fim
+    usuario: str
+    senha: str
+    timeout: int
+    pausa_segundos: float  # espera entre exportações, para não martelar o painel
+    # Quantos dias para trás o modo incremental relê. O CDR de uma chamada não muda
+    # depois que ela termina, então a folga cobre só falha de execução (dias em que
+    # o job não rodou), não atualização de registro.
+    janela_dias: int
+    inicio_historico: date  # onde começa a carga completa
 
 
 @dataclass(frozen=True)
@@ -224,6 +245,29 @@ def carregar_config_blip() -> ConfigBlip:
         take=int(os.getenv("BLIP_TAKE", "100")),
         timeout=int(os.getenv("BLIP_TIMEOUT", "60")),
         janela_dias=int(os.getenv("BLIP_JANELA_DIAS", "7")),
+    )
+
+
+def carregar_config_mdnet() -> ConfigMdnet:
+    """Monta a ConfigMdnet a partir do ambiente."""
+    inicio = os.getenv("MDNET_INICIO_HISTORICO", "2026-01-01").strip()
+    try:
+        inicio_historico = date.fromisoformat(inicio)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"MDNET_INICIO_HISTORICO ({inicio!r}) não é uma data AAAA-MM-DD."
+        ) from exc
+
+    return ConfigMdnet(
+        url_base=os.getenv(
+            "MDNET_URL", "https://pafilconstrutora.ddatelecom.com.br"
+        ).strip().rstrip("/"),
+        usuario=_obrigatoria("MDNET_USUARIO"),
+        senha=_obrigatoria("MDNET_SENHA"),
+        timeout=int(os.getenv("MDNET_TIMEOUT", "120")),
+        pausa_segundos=float(os.getenv("MDNET_PAUSA_SEGUNDOS", "1.0")),
+        janela_dias=int(os.getenv("MDNET_JANELA_DIAS", "3")),
+        inicio_historico=inicio_historico,
     )
 
 
