@@ -539,6 +539,78 @@ mascarando o log certo.
 fix, continua lá (interação no CVCRM não tem exclusão pela API, só
 append -- mesma limitação já documentada no incidente de 24/set).
 
+## Incidente: lead Perdido voltava pra situação 1 sozinho, 3 a 4 minutos depois
+
+Visto em 07/out/2026 nos testes de situação com leads novos (os que não
+entraram na importação do piloto). Alguém marcava o lead como Perdido no
+CVCRM, o GHL refletia certo, e poucos minutos depois o histórico do lead
+mostrava "Mudou a situação de Perdido para Aguardando Atendimento SDR"
+feita pelo usuário da integração, seguida de "Modificou o campo: Data de
+Vencimento para Sem Vencimento" e "Lead não encontrou uma fila compatível e
+foi represado" (a fila de distribuição do CVCRM tratando o lead como se
+tivesse acabado de entrar). Repetiu a cada vez que o lead era marcado de
+novo como Perdido.
+
+**Causa (confirmada em 08/out/2026 contra o `log_sync` de produção):** foi
+uma regressão do fix de eco de 28/set (seção anterior). A consulta abaixo
+mostrou um envio `{}` para o CVCRM, `origem = ghl`, `tipo_evento =
+oportunidade_estagio_alterado`, às 14:32:03, exatamente o minuto em que o
+histórico do lead registrou a volta para a situação 1. O mesmo padrão de
+envio vazio apareceu dezenas de vezes na mesma tarde, também em
+`nota_adicionada` (o eco de nota era podado do mesmo jeito), ou seja, não
+era só a situação: qualquer eco virava um `POST /leads` vazio.
+
+1. Perdido no CVCRM chega como evento do CVCRM e despacha pro GHL, que muda
+   o estágio da Oportunidade pra Perdido.
+2. O GHL dispara o webhook "Oportunidade" de volta, com a etapa Perdido.
+   Esse evento entra na fila como `origem = 'ghl'`, `situacao_lead = 3`.
+3. Agora que a checagem de eco compara contra o log certo, ela reconhece o
+   eco e tira `situacao_lead` do evento. Só que a linha **continua na fila,
+   com `campos` vazios**. Antes do fix o eco escapava e ia como
+   `idsituacao = 3` (Perdido pra Perdido, idempotente), por isso nunca deu
+   sintoma.
+4. O hash de um evento vazio não bate com nenhum log, então `eh_eco` dava
+   `false` e o n8n despachava mesmo assim um `POST /api/v1/comercial/leads`
+   só com `idlead`, `permitir_alteracao`, e-mail e telefone, sem
+   `idsituacao`. O CVCRM interpreta esse POST sobre um lead Perdido como
+   reentrada e o devolve pra situação 1.
+
+O "3 a 4 minutos" bate com o ciclo: até 2 min do despacho CVCRM→GHL, o
+webhook de volta, e até mais 2 min do despacho seguinte.
+
+**Correção:** `integracao.v_fila_para_despachar` passa a marcar `eh_eco =
+true` também quando não sobrou nada pra enviar (`campos_permitidos` vazio ou
+só com valores `null`). O node `Eh eco?` do n8n já lê essa coluna e manda a
+linha pra `Marcar descartado (eco)`, então o workflow não muda. Aplicar com
+`python aplicar_integracao.py` na VM (idempotente). Os envios vazios já
+gravados no `log_sync` ficam como estão, e os leads que voltaram para a
+situação 1 por causa deles precisam ser remarcados à mão no CVCRM. Testado num
+Postgres descartável: o evento de eco vira `eh_eco = t`, uma mudança real de situação
+(`idsituacao = 1`) continua `eh_eco = f`, e a view nova substitui a antiga
+sem erro de colunas.
+
+**Como confirmar com dado de produção** (antes ou depois de aplicar). Se a
+causa for essa, aparece linha de `log_sync` com `campos_enviados = {}`
+perto do horário em que o lead voltou:
+
+```sql
+SELECT l.id, l.criado_em, l.contato_id, l.campos_enviados, l.status,
+       f.origem, f.tipo_evento
+  FROM integracao.log_sync l
+  JOIN integracao.fila_sync f ON f.id = l.fila_sync_id
+ WHERE l.destino = 'cvcrm'
+   AND l.criado_em > now() - interval '2 days'
+ ORDER BY l.id DESC
+ LIMIT 30;
+```
+
+**Risco que a correção não cobre:** qualquer outro `POST /leads` da
+integração sobre um lead Perdido (por exemplo, um evento de tags do GHL, que
+manda `tags` com valor real) pode reativá-lo da mesma forma, se a hipótese
+sobre o comportamento do CVCRM estiver certa. Se isso aparecer no teste, o
+caminho é buscar o lead antes do POST e só despachar se ele não estiver
+Perdido, ou mandar sempre o `idsituacao` atual junto.
+
 ## Compromisso GHL → Visita CVCRM: o gatilho dispara em toda mudança de status
 
 Fechado em 28/set/2026. O node `Webhook GHL Compromisso` ficou de propósito
