@@ -16,6 +16,9 @@ GOLD_SQL = RAIZ / "sql" / "gold" / "gold.sql"
 # Aplicado depois do gold.sql, e não junto: fato_atendimentos junta com
 # gold.dim_empreendimento, que nasce lá.
 BLIP_SQL = RAIZ / "sql" / "gold" / "blip.sql"
+# Telefonia da MDnet. Depende só da silver (mdnet_chamadas, mdnet_ura_chamadas, dpara_ramais),
+# então pode ser reaplicado sozinho com --so-mdnet, sem refazer o resto da gold.
+MDNET_SQL = RAIZ / "sql" / "gold" / "mdnet.sql"
 
 OBJETOS = [
     "dim_calendario", "dim_empreendimento", "dim_unidade",
@@ -23,13 +26,15 @@ OBJETOS = [
     "fato_leads", "fato_precadastros",
     "dim_fila", "dim_atendente", "fato_atendimentos",
     "fato_atendimentos_cvcrm",
+    "dim_ramal", "fato_chamadas",
 ]
+OBJETOS_MDNET = ["dim_ramal", "fato_chamadas"]
 
 
-def validar(conn) -> int:
+def validar(conn, objetos=OBJETOS) -> int:
     falhas = 0
     with conn.cursor() as cur:
-        for o in OBJETOS:
+        for o in objetos:
             try:
                 cur.execute(f"SELECT count(*) FROM gold.{o}")
                 log.info("  gold.%-18s OK  (%s linhas)", o, cur.fetchone()[0])
@@ -43,6 +48,8 @@ def validar(conn) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Aplica a camada gold sobre a silver.")
     ap.add_argument("--validar", action="store_true", help="só valida (não aplica DDL)")
+    ap.add_argument("--so-mdnet", action="store_true",
+                    help="aplica e valida só a telefonia da MDnet (gold/mdnet.sql)")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -50,11 +57,21 @@ def main() -> int:
     cfg = carregar_config_pg()
 
     with db.conectar(cfg) as conn:
+        if args.so_mdnet:
+            if not args.validar:
+                db.aplicar_ddl(conn, str(MDNET_SQL))
+                log.info("Views gold da MDnet aplicadas (%s).", MDNET_SQL.name)
+            log.info("Validação smoke:")
+            falhas = validar(conn, OBJETOS_MDNET)
+            return 1 if falhas else 0
+
         if not args.validar:
             db.aplicar_ddl(conn, str(GOLD_SQL))
             log.info("Views gold aplicadas (%s).", GOLD_SQL.name)
             db.aplicar_ddl(conn, str(BLIP_SQL))
             log.info("Views gold do Blip aplicadas (%s).", BLIP_SQL.name)
+            db.aplicar_ddl(conn, str(MDNET_SQL))
+            log.info("Views gold da MDnet aplicadas (%s).", MDNET_SQL.name)
         log.info("Validação smoke:")
         falhas = validar(conn)
 
