@@ -120,8 +120,8 @@ comparar.
 **Visual:** gráfico de rosca. **Legenda:** `fato_chamadas[ura_resultado]`. **Valores:** `[Ligações URA]`.
 Rótulo "Categoria, porcentagem do total", sem legenda separada.
 
-Cinco fatias, com a cor de cada uma: Chegou a um destino `#003254`, Não digitou nada `#8FB3CC`, Desligou no
-menu principal `#B8433F`, Desistiu no submenu `#E0A526` e Menu antigo `#C5CAD3`. A leitura é direta: só cerca de 34% de
+Cinco fatias, com a cor de cada uma: Chegou a um destino `#003254`, Tempo esgotado sem digitar `#8FB3CC`, Desligou durante o
+menu `#B8433F`, Desistiu no submenu `#E0A526` e Menu antigo `#C5CAD3`. A leitura é direta: só cerca de 34% de
 quem entra na URA escolhe uma opção, e o resto desiste ou deixa o tempo estourar.
 
 ### 3b. Cada opção do menu, quantas são atendidas
@@ -145,8 +145,8 @@ Montagem, na ordem:
    CVCRM, então ajuste de estilo feito lá chega aqui.
 6. **Formatar > Cross-filtering:** ativar, e Transparency em 0.
 7. **Formatar > No data message:** "Nenhuma ligação na URA no período selecionado."
-8. **Filtros neste visual:** nenhum (15/out/2026). O filtro "Chegou a um destino" saiu, para a tabela
-   mostrar também quem não chegou a um destino (não digitou, desligou, desistiu no submenu, menu antigo).
+8. **Filtros neste visual:** `fato_chamadas[ura_opcao]`, **Filtragem avançada**, "não está em branco" (15/out/2026). O filtro por
+   `ura_resultado` saiu para a tabela mostrar também quem não chegou a um destino. Sem este filtro novo, a ligação sem opção de URA vira uma primeira linha vazia e o cabeçalho (que só aparece na primeira linha) some.
 
 Essas linhas vêm depois das opções do menu, na ordem de `ura_opcao_ordem` (90 a 99), com desempate alfabético em
 `[Ordem Opção URA (ordenação)]`.
@@ -181,7 +181,7 @@ Dois achados desta tabela, com os dados de fevereiro em diante:
 
 - Quem **não digita nada** na URA cai nos ramais da **HOUSE** (principalmente o Backoffice, depois a
   Recepção House), e não em Relacionamento, Suprimentos ou Financeiro. Isso parece acidental e vale
-  decidir com a operação. Clique em "Não digitou nada" na rosca da URA e olhe esta tabela.
+  decidir com a operação. Clique em "Tempo esgotado sem digitar" na rosca da URA e olhe esta tabela.
 - A opção de Suprimentos e a de Financeiro transbordam para a HOUSE e a Engenharia quando o ramal
   principal não atende.
 
@@ -299,7 +299,7 @@ completa:
 1. **Subtítulo em cada visual** (propriedade nativa Subtítulo, sem medida). Uma linha de critério:
    - Entradas por mês: "Cinza = ruído: robocall e spam que ninguém atendeu. Passe o mouse na coluna."
    - Taxa de atendimento: "Sem ruído = atendidas ÷ entradas sem ruído. Bruta = a do painel da MDnet."
-   - Rosca da URA total: "Todas as ligações que passaram pela URA, por desfecho."
+   - Rosca da URA (as duas): "Tempo esgotado: ninguém digitou e a URA seguiu. Desligou: o cliente encerrou durante o menu."
    - Rosca da URA atendidas: "Só as ligações atendidas que passaram pela URA."
 2. **Nomes de série em português claro**, renomeados no poço do visual (clique duas vezes no campo; a
    medida não muda): "Atendidas", "Não atendidas (pessoas)", "Ruído (robocall e spam)" no gráfico de

@@ -224,8 +224,8 @@ SELECT
         WHEN u.chamada_id IS NULL THEN NULL
         WHEN NOT u.e_menu_atual THEN 'Menu antigo'
         WHEN u.codigo_opcao IS NOT NULL THEN 'Chegou a um destino'
-        WHEN u.escolha_principal = 'Não Digitou' THEN 'Não digitou nada'
-        WHEN u.escolha_principal = 'Desligou na URA' THEN 'Desligou no menu principal'
+        WHEN u.escolha_principal = 'Não Digitou' THEN 'Tempo esgotado sem digitar'
+        WHEN u.escolha_principal = 'Desligou na URA' THEN 'Desligou durante o menu'
         ELSE 'Desistiu no submenu'
     END                                                       AS ura_resultado,
     -- A opção como a locução da URA a descreve: "1.2 Cliente > Renegociação". Quando não houve

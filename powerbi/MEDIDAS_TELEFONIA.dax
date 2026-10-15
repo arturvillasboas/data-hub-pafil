@@ -230,8 +230,8 @@ RETURN
 // Ligações de ENTRADA que aparecem no relatório de URA atual. A URA tem dois níveis (principal: 1 Cliente,
 // 2 Vendas, 3 Fornecedor; submenu de Cliente e de Fornecedor). Onde a pessoa parou, em ura_resultado
 // (renomeado em 15/out/2026 para contar o funil em ordem):
-//   "Desligou no menu principal": desligou sem apertar nada.
-//   "Não digitou nada": ficou em silêncio no menu principal até o tempo estourar.
+//   "Desligou durante o menu": o cliente desligou antes de o tempo estourar (nenhuma chegou a ser atendida).
+//   "Tempo esgotado sem digitar": ninguém apertou nada, o tempo estourou e a ligação seguiu (parte é atendida).
 //   "Desistiu no submenu": apertou Cliente ou Fornecedor e desistiu no segundo menu.
 //   "Chegou a um destino": chegou ao fim do caminho (Vendas, ou uma opção 1.x ou 3.x).
 
@@ -274,14 +274,14 @@ URA Não Digitou =
 CALCULATE (
     COUNTROWS ( fato_chamadas ),
     fato_chamadas[direcao] = "Entrada",
-    fato_chamadas[ura_resultado] = "Não digitou nada"
+    fato_chamadas[ura_resultado] = "Tempo esgotado sem digitar"
 )
 
 URA Desligou =
 CALCULATE (
     COUNTROWS ( fato_chamadas ),
     fato_chamadas[direcao] = "Entrada",
-    fato_chamadas[ura_resultado] = "Desligou no menu principal"
+    fato_chamadas[ura_resultado] = "Desligou durante o menu"
 )
 
 URA Parou no Submenu =
@@ -439,7 +439,7 @@ RETURN
 //   Formatar -> Stylesheet -> fx -> [CSS Tabela URA (linhas)]
 //   Formatar -> Cross-filtering -> Ativar; Transparency 0
 //   Formatar -> No data message -> "Nenhuma ligação na URA no período selecionado."
-//   Filtros neste visual -> nenhum (15/out/2026: o filtro "Chegou a um destino" saiu, para a tabela mostrar também quem não chegou a um destino)
+//   Filtros neste visual -> fato_chamadas[ura_opcao], Filtragem avançada, "não está em branco" (15/out/2026). Sem ele, a ligação sem opção de URA vira uma primeira linha vazia e o cabeçalho (só desenhado na primeira linha) some
 // =============================================================================
 
 CSS Tabela URA (linhas) =
@@ -472,7 +472,8 @@ MIN ( fato_chamadas[ura_opcao_ordem] )
 Linha Opção URA HTML =
 VAR _opcao  = SELECTEDVALUE ( fato_chamadas[ura_opcao] )
 VAR _lig    = [Ligações URA]
-VAR _atend  = [Ligações URA Atendidas]
+-- COALESCE: linha sem nenhuma atendida (Desligou na URA) vinha em branco e a pílula virava um traço.
+VAR _atend  = COALESCE ( [Ligações URA Atendidas], 0 )
 VAR _pct    = DIVIDE ( _atend, _lig )
 -- A barra de volume é relativa à maior opção DENTRO do recorte atual (período, setor clicado
 -- em outro visual), e não à maior de sempre. O clique nesta tabela não entra nesse
