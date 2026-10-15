@@ -33,6 +33,7 @@ USO = {
     "headcount":                ("A usar",  "CAC / produtividade",                    "headcount por equipe/mês"),
     "estrutura_precos":         ("A usar",  "preço",                                  "estrutura/preço base por empreendimento e unidade"),
     "equipe_corretor":          ("A usar",  "corretores",                             "corretor → categoria/equipe"),
+    "ramais":                   ("Ativo",   "silver (telefonia MDnet) → views mdnet_*", "ramal → unidade, setor e responsável (quem atendeu a ligação)"),
     "etapa_precadastro":        ("Pendente","modelagem de PRÉ-CADASTRO",              "etapa WKF → etapa BI do funil de crédito (falta xlsx)"),
     "profissoes":               ("Pendente","perfil de cliente",                      "profissão → micro/macro (falta xlsx)"),
     "feriados":                 ("Pendente","tempos médios / SLA",                    "calendário de feriados em dias úteis (falta xlsx)"),

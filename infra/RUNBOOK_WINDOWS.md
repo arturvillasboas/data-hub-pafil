@@ -526,6 +526,85 @@ semana seguinte.
 > não volta, um segundo mecanismo que avise quando a `ultima_execucao` do Blip
 > passar de 24 horas deveria entrar antes de qualquer refinamento do dashboard.
 
+### 5.2 Carga da telefonia (MDnet)
+
+O CDR de chamadas (PABX, URA e ramais) vem do painel web da MDnet, que **não tem
+API**. O `ingerir_mdnet.py` entra no painel com usuário e senha e baixa o mesmo CSV
+que o botão de exportar gera, e o `ingerir_mdnet_pernas.py` repete isso filtrando por
+direção, porque o CSV sem filtro mostra uma perna por ligação e esconde as outras. O
+raciocínio completo, e o que se descobriu do painel, está em
+`sql/silver/README.md` (seção "Telefonia da MDnet") e nos comentários de
+`sql/bronze/mdnet.sql`.
+
+O relatório de URA (menus e opções que a pessoa escolhe antes de falar com alguém) é outra
+tela do mesmo painel, `/app/xml_cdr_ivr/`, e entra pelo `ingerir_mdnet_ura.py`. Ele não tem
+protocolo, então a silver o liga ao CDR por telefone e horário (ver `sql/silver/mdnet_ura.sql`).
+A tarefa abaixo roda as três cargas em sequência.
+
+Antes de registrar a tarefa:
+
+1. O código novo precisa estar na VM (`mdnet/`, `ingerir_mdnet.py`,
+   `ingerir_mdnet_pernas.py`, `infra/ingerir_mdnet.ps1` e as mudanças em
+   `config/settings.py` e `cvdw/db.py`), do mesmo jeito que as outras mudanças do
+   projeto chegam aqui.
+2. O `.env` da VM precisa do bloco `MDNET_*` do `.env.example`:
+
+```
+MDNET_URL=https://pafilconstrutora.ddatelecom.com.br
+MDNET_USUARIO=<usuário do painel>
+MDNET_SENHA=<senha do painel>
+```
+
+   Se a MDnet puder criar um usuário só de leitura para isso, melhor. Se a senha tiver
+   `#` ou espaço, ponha o valor entre aspas duplas.
+3. As tabelas e a view já existem em produção (criadas em 05/out/2026 pelo notebook do
+   analista, com o túnel). Numa instalação nova, rode antes
+   `ingerir_mdnet.py --criar-tabelas --full`, `ingerir_mdnet_pernas.py --full`,
+   `ingerir_mdnet_ura.py --full` e `aplicar_silver.py --so-mdnet`.
+
+A tarefa roda de hora em hora, das 06h às 18h, como as outras, e começa às 06:15 para
+não disputar o banco com a ingestão (06:00) e o Blip (06:05):
+
+```powershell
+schtasks /Create /TN "PafilDW - MDnet diario" /RU SYSTEM /RL HIGHEST /SC DAILY /ST 06:15 /RI 60 /DU 0012:01 /F `
+  /TR "cmd /c powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\pafil\app\infra\ingerir_mdnet.ps1 >> C:\pafil\logs\mdnet.log 2>&1"
+```
+
+**Por que incremental e não full.** O painel guarda o histórico desde 01/01/2026 (medido
+em 05/out/2026; não sabemos até quando ele retém), então um dia perdido não some de
+imediato, mas o incremental cobre 3 dias para trás e a carga completa leva uns 25
+minutos de pedidos ao painel de um terceiro. Não há motivo para pesar a mão.
+
+**A carga preserva, não sobrescreve.** O painel devolve, para cerca de 0,5% das
+ligações, uma de duas pernas escolhida ao acaso a cada exportação. Sobrescrever faria
+essas linhas oscilarem a cada hora. Para refazer de propósito um período (por exemplo
+depois de acrescentar uma coluna), use `--de AAAA-MM-DD --atualizar`.
+
+**Conferir que está rodando:**
+
+```sql
+SELECT nome_logico, ultima_execucao, ultimo_modo,
+       registros_ultima_carga, status, mensagem
+FROM bronze._ingestao_controle
+WHERE nome_logico LIKE 'mdnet%'
+ORDER BY ultima_execucao DESC;
+```
+
+O que olhar: `status` igual a `OK` e `ultima_execucao` de hoje, para as três linhas
+(`mdnet_cdr`, `mdnet_cdr_pernas` e `mdnet_ura`).
+
+**O que costuma quebrar.** É raspagem de um painel, então o risco é o layout mudar:
+
+- `Login recusado`: usuário ou senha do `.env` não conferem, ou a senha foi trocada.
+- `O painel devolveu HTML em vez de CSV`: a sessão não renovou ou o endpoint de
+  exportação mudou. O erro mostra o começo da página recebida.
+- `O CSV não tem as colunas ...`: o painel mudou o layout do relatório. Ajuste
+  `mdnet/objetos.py` e `sql/bronze/mdnet.sql`.
+
+Em qualquer desses casos, a tabela de controle guarda `status = ERRO` com a mensagem, e
+nada do que já estava gravado é afetado. A saída definitiva é pedir à MDnet o CDR bruto
+ou uma API, que é o que o painel não dá.
+
 ## 6. Power BI (etapa 7.5)
 
 Depois que a camada gold já existir (fim da seção 3), conceda a permissão de
@@ -726,6 +805,9 @@ uma porta de entrada aberta.
 | A carga do Blip rodou hoje? | `Get-ScheduledTaskInfo -TaskName "PafilDW - Blip diario"`, ou a consulta da seção 5.1 |
 | Ver o log da última carga do Blip | `Get-Content C:\pafil\logs\blip.log -Tail 30` |
 | Rodar a carga do Blip fora do horário | `schtasks /Run /TN "PafilDW - Blip diario"` |
+| A carga da MDnet (telefonia) rodou hoje? | `Get-ScheduledTaskInfo -TaskName "PafilDW - MDnet diario"`, ou a consulta da seção 5.2 |
+| Ver o log da última carga da MDnet | `Get-Content C:\pafil\logs\mdnet.log -Tail 40` |
+| Rodar a carga da MDnet fora do horário | `schtasks /Run /TN "PafilDW - MDnet diario"` |
 | O SSH está habilitado nesta máquina? | `Get-Service sshd` |
 | SSH conectou mas deu "Connection reset" logo depois do handshake | `Restart-Service sshd` (sessão elevada), depois tenta o `ssh` de novo |
 | Conferir pra qual IP a porta 22 está liberada | `Get-NetFirewallRule -DisplayName "SSH-Analista" \| Get-NetFirewallAddressFilter` |

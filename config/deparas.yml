@@ -68,6 +68,13 @@ deparas:
     fonte_rel: "Leads/Base de Leads.xlsm"
     descricao: "Aba Apoio (CONCAT/CANAL/MÍDIA/ORIGEM DA MÍDIA): chave UTM (utm_source__utm_medium+form_url_última mídia!última origem) -> canal/mídia/tráfego. Decide o canal 2.0 PÓS-out/24. Recarga: popular_seeds --leads-apoio."
 
+  # ---- telefonia (MDnet) ------------------------------------------------------
+  - nome: ramais
+    silver: dpara_ramais
+    tipo: arquivo
+    fonte_rel: "Telefonia/Agosto/RAMAIS ATIVOS 2026.xlsx"
+    descricao: "Ramal -> unidade (SEDE/HOUSE), setor e responsavel, da planilha RAMAIS ATIVOS 2026. Traduz o ramal que atendeu (silver.mdnet_chamadas.ramal) em setor e pessoa. A coluna WHATS-APP da planilha traz celular de funcionario e NAO e carregada. Recarga: popular_seeds --ramais (le DEPARA_DIR/depara_ramais/arquivo)."
+
   # ---- gerado por script do projeto ----------------------------------------
   - nome: classificacao
     silver: null

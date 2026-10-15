@@ -1,0 +1,959 @@
+// =============================================================================
+// Medidas DAX: telefonia (MDnet), sobre gold.fato_chamadas e gold.dim_ramal.
+//
+// Responde às perguntas que o painel da MDnet não responde: de todas as ligações que chegaram,
+// quantas foram atendidas, quanto a pessoa esperou, o que fez dentro da URA, e QUEM atendeu
+// (setor e responsável). As medidas de URA e de setor só existem porque a gold cruza o CDR com o
+// relatório de URA e com a planilha de ramais.
+//
+// Tabelas (importadas do schema gold): fato_chamadas, dim_ramal, mais a conformada
+// dim_calendario, que já existe no modelo.
+//
+// Relacionamentos que estas medidas assumem:
+//   dim_calendario[data]  1─* fato_chamadas[data]    (ATIVO, único)
+//   dim_ramal[ramal]      1─* fato_chamadas[ramal]
+//
+// Sobre o que é "atendida": houve conversa (Estado = Atendida OU tempo falado maior que zero).
+// O estado do painel sozinho não serve, há ligação "Não Atendida" com conversa.
+//
+// Sobre RUÍDO: é robocall e spam, e só existe em ligação de ENTRADA NÃO atendida. Uma ligação
+// atendida nunca é ruído. A flag marca e não apaga, então toda medida de entrada vem em duas
+// versões: com tudo ("Ligações Entrada", "% Atendimento Entrada") e só com o que é gente de
+// verdade ("Ligações Entrada Reais", "% Atendimento Entrada Real"). Para decisão, use a REAL. A
+// bruta existe para conferir contra o painel web da MDnet.
+//
+// Cada medida de entrada fixa fato_chamadas[direcao] = "Entrada" dentro do CALCULATE. Por isso
+// um slicer de direção NÃO muda as medidas de entrada (e nem precisa existir na página). As de
+// saída e interna fazem o mesmo com a direção delas.
+//
+// Sobre ramal e janeiro: em janeiro/2026, 92% das ligações atendidas NÃO têm ramal (a MDnet
+// registrava o atendimento pelo número chamado, e dos meses seguintes em diante já vem o ramal).
+// Todo corte por setor ou ramal só vale de fevereiro em diante. O cartão de qualidade
+// [% Atendidas com Ramal] mostra isso na tela.
+//
+// Sobre a URA: o painel só mostra a configuração ATUAL dos menus. Em agosto/2026 um menu foi
+// renomeado e o antigo (245 ligações) sumiu do relatório. "Na URA" quer dizer "aparece no
+// relatório de URA atual", e o resto não prova que a pessoa nunca ouviu a URA.
+//
+// Sobre as durações: a gold entrega tudo em SEGUNDOS. Cada métrica de tempo aparece duas vezes,
+// uma medida base em segundos (a que entra em conta e ordenação) e uma de exibição, que só
+// formata em hh:mm:ss. Mesmo padrão de MEDIDAS_ATENDIMENTO.dax.
+// =============================================================================
+
+// ---- Contagens de entrada ----
+
+Ligações Entrada =
+CALCULATE ( COUNTROWS ( fato_chamadas ), fato_chamadas[direcao] = "Entrada" )
+
+Ligações Entrada Atendidas =
+CALCULATE (
+    COUNTROWS ( fato_chamadas ),
+    fato_chamadas[direcao] = "Entrada",
+    fato_chamadas[atendida] = TRUE ()
+)
+
+// Ruído: robocall e spam que ninguém atendeu. Ver o cabeçalho e o comentário de e_ruido em
+// sql/gold/mdnet.sql.
+Ligações Entrada Ruído =
+CALCULATE (
+    COUNTROWS ( fato_chamadas ),
+    fato_chamadas[direcao] = "Entrada",
+    fato_chamadas[e_ruido] = TRUE ()
+)
+
+// Gente de verdade: tudo que foi atendido mais o que não foi atendido e não é ruído.
+Ligações Entrada Reais =
+[Ligações Entrada] - [Ligações Entrada Ruído]
+
+Ligações Entrada Não Atendidas Reais =
+[Ligações Entrada Reais] - [Ligações Entrada Atendidas]
+
+// ---- Taxas de entrada ----
+// As taxas usam COALESCE no numerador: com ligações e NENHUMA atendida o resultado é 0%, e não
+// branco. Sem isso, a hora ou a opção com zero atendidas some do visual ou mostra célula vazia.
+
+% Atendimento Entrada =
+DIVIDE ( COALESCE ( [Ligações Entrada Atendidas], 0 ), [Ligações Entrada] )
+
+% Atendimento Entrada Real =
+DIVIDE ( COALESCE ( [Ligações Entrada Atendidas], 0 ), [Ligações Entrada Reais] )
+
+// O espelho da taxa real (14/out/2026): do que é gente de verdade, quanto ninguém atendeu. Soma 100%
+// com [% Atendimento Entrada Real]. Alimenta o cartão "% NÃO ATENDIMENTO" e as tabelas HTML.
+% Não Atendimento Entrada Real =
+DIVIDE ( COALESCE ( [Ligações Entrada Não Atendidas Reais], 0 ), [Ligações Entrada Reais] )
+
+// Do que não foi atendido (e não é ruído), quanto foi o cliente que desistiu e quanto foi o PABX
+// que derrubou a ligação. Somam, junto com "Outro" e "Origem cancelou", a taxa de não atendimento.
+% Cliente Desligou =
+DIVIDE (
+    CALCULATE (
+        COUNTROWS ( fato_chamadas ),
+        fato_chamadas[direcao] = "Entrada",
+        fato_chamadas[e_ruido] = FALSE (),
+        fato_chamadas[desfecho] = "Cliente desligou"
+    ),
+    [Ligações Entrada Reais]
+)
+
+% PABX Encerrou =
+DIVIDE (
+    CALCULATE (
+        COUNTROWS ( fato_chamadas ),
+        fato_chamadas[direcao] = "Entrada",
+        fato_chamadas[e_ruido] = FALSE (),
+        fato_chamadas[desfecho] = "PABX encerrou"
+    ),
+    [Ligações Entrada Reais]
+)
+
+% Ruído sobre Entrada =
+DIVIDE ( [Ligações Entrada Ruído], [Ligações Entrada] )
+
+// ---- Clientes (sem expor telefone) ----
+// chamador_id é um identificador derivado do número, só para contar. Ver sql/gold/mdnet.sql.
+
+Clientes que Ligaram =
+CALCULATE (
+    DISTINCTCOUNT ( fato_chamadas[chamador_id] ),
+    fato_chamadas[direcao] = "Entrada",
+    fato_chamadas[e_ruido] = FALSE ()
+)
+
+Ligações por Cliente =
+DIVIDE ( [Ligações Entrada Reais], [Clientes que Ligaram] )
+
+// ---- Saída e interna ----
+
+Ligações Saída =
+CALCULATE ( COUNTROWS ( fato_chamadas ), fato_chamadas[direcao] = "Saída" )
+
+Ligações Saída Atendidas =
+CALCULATE (
+    COUNTROWS ( fato_chamadas ),
+    fato_chamadas[direcao] = "Saída",
+    fato_chamadas[atendida] = TRUE ()
+)
+
+% Atendimento Saída =
+DIVIDE ( COALESCE ( [Ligações Saída Atendidas], 0 ), [Ligações Saída] )
+
+Ligações Internas =
+CALCULATE ( COUNTROWS ( fato_chamadas ), fato_chamadas[direcao] = "Interna" )
+
+// ---- Tempos, base em segundos ----
+// Só sobre ENTRADA ATENDIDA: espera_s só existe quando alguém atendeu.
+
+// Quanto a pessoa esperou até alguém atender, contando o tempo dentro da URA.
+Espera Média (seg) =
+CALCULATE (
+    AVERAGE ( fato_chamadas[espera_s] ),
+    fato_chamadas[direcao] = "Entrada",
+    fato_chamadas[atendida] = TRUE ()
+)
+
+Espera Mediana (seg) =
+CALCULATE (
+    MEDIAN ( fato_chamadas[espera_s] ),
+    fato_chamadas[direcao] = "Entrada",
+    fato_chamadas[atendida] = TRUE ()
+)
+
+Tempo Falado Médio (seg) =
+CALCULATE (
+    AVERAGE ( fato_chamadas[falado_s] ),
+    fato_chamadas[direcao] = "Entrada",
+    fato_chamadas[atendida] = TRUE ()
+)
+
+// Quanto tempo quem NÃO foi atendido ficou na linha antes de desistir ou de a ligação cair.
+Duração Média Não Atendida (seg) =
+CALCULATE (
+    AVERAGE ( fato_chamadas[duracao_total_s] ),
+    fato_chamadas[direcao] = "Entrada",
+    fato_chamadas[e_ruido] = FALSE (),
+    fato_chamadas[atendida] = FALSE ()
+)
+
+// Das atendidas, quantas esperaram até 1 minuto. A espera inclui a URA, então o piso já é alto.
+% Atendidas em até 1 min =
+DIVIDE (
+    CALCULATE (
+        COUNTROWS ( fato_chamadas ),
+        fato_chamadas[direcao] = "Entrada",
+        fato_chamadas[atendida] = TRUE (),
+        fato_chamadas[espera_s] <= 60
+    ),
+    [Ligações Entrada Atendidas]
+)
+
+// ---- Exibição em hh:mm:ss ----
+// O DAX não tem função de usuário, então o padrão se repete, como em MEDIDAS_ATENDIMENTO.dax.
+
+Espera Média =
+VAR s = [Espera Média (seg)]
+VAR h = INT ( s / 3600 )
+VAR m = INT ( MOD ( s, 3600 ) / 60 )
+VAR sg = INT ( MOD ( s, 60 ) )
+RETURN
+    IF ( ISBLANK ( s ), BLANK (),
+         FORMAT ( h, "00" ) & ":" & FORMAT ( m, "00" ) & ":" & FORMAT ( sg, "00" ) )
+
+Espera Mediana =
+VAR s = [Espera Mediana (seg)]
+VAR h = INT ( s / 3600 )
+VAR m = INT ( MOD ( s, 3600 ) / 60 )
+VAR sg = INT ( MOD ( s, 60 ) )
+RETURN
+    IF ( ISBLANK ( s ), BLANK (),
+         FORMAT ( h, "00" ) & ":" & FORMAT ( m, "00" ) & ":" & FORMAT ( sg, "00" ) )
+
+Tempo Falado Médio =
+VAR s = [Tempo Falado Médio (seg)]
+VAR h = INT ( s / 3600 )
+VAR m = INT ( MOD ( s, 3600 ) / 60 )
+VAR sg = INT ( MOD ( s, 60 ) )
+RETURN
+    IF ( ISBLANK ( s ), BLANK (),
+         FORMAT ( h, "00" ) & ":" & FORMAT ( m, "00" ) & ":" & FORMAT ( sg, "00" ) )
+
+Duração Média Não Atendida =
+VAR s = [Duração Média Não Atendida (seg)]
+VAR h = INT ( s / 3600 )
+VAR m = INT ( MOD ( s, 3600 ) / 60 )
+VAR sg = INT ( MOD ( s, 60 ) )
+RETURN
+    IF ( ISBLANK ( s ), BLANK (),
+         FORMAT ( h, "00" ) & ":" & FORMAT ( m, "00" ) & ":" & FORMAT ( sg, "00" ) )
+
+// ---- URA ----
+// Ligações de ENTRADA que aparecem no relatório de URA atual. A URA tem dois níveis (principal: 1 Cliente,
+// 2 Vendas, 3 Fornecedor; submenu de Cliente e de Fornecedor). Onde a pessoa parou, em ura_resultado
+// (renomeado em 15/out/2026 para contar o funil em ordem):
+//   "Desligou durante o menu": o cliente desligou antes de o tempo estourar (nenhuma chegou a ser atendida).
+//   "Tempo esgotado sem digitar": ninguém apertou nada, o tempo estourou e a ligação seguiu (parte é atendida).
+//   "Desistiu no submenu": apertou Cliente ou Fornecedor e desistiu no segundo menu.
+//   "Chegou a um destino": chegou ao fim do caminho (Vendas, ou uma opção 1.x ou 3.x).
+
+Ligações URA =
+CALCULATE (
+    COUNTROWS ( fato_chamadas ),
+    fato_chamadas[direcao] = "Entrada",
+    fato_chamadas[passou_ura] = TRUE ()
+)
+
+Ligações URA Atendidas =
+CALCULATE (
+    COUNTROWS ( fato_chamadas ),
+    fato_chamadas[direcao] = "Entrada",
+    fato_chamadas[passou_ura] = TRUE (),
+    fato_chamadas[atendida] = TRUE ()
+)
+
+// Quem passou pela URA e ninguém atendeu (14/out/2026). Total da URA menos as atendidas, então
+// [Ligações URA Atendidas] + [Ligações URA Não Atendidas] = [Ligações URA]. Serve para a rosca "Entradas
+// URA" e para a tabela das opções do menu. Aqui o ruído não é tirado: o ruído quase não passa pela
+// URA, e a conta da tabela tem que fechar com o total dela.
+Ligações URA Não Atendidas =
+COALESCE ( [Ligações URA], 0 ) - COALESCE ( [Ligações URA Atendidas], 0 )
+
+% Atendimento URA =
+DIVIDE ( COALESCE ( [Ligações URA Atendidas], 0 ), [Ligações URA] )
+
+% Não Atendimento URA =
+DIVIDE ( [Ligações URA Não Atendidas], [Ligações URA] )
+
+URA Escolheu Opção =
+CALCULATE (
+    COUNTROWS ( fato_chamadas ),
+    fato_chamadas[direcao] = "Entrada",
+    fato_chamadas[ura_resultado] = "Chegou a um destino"
+)
+
+URA Não Digitou =
+CALCULATE (
+    COUNTROWS ( fato_chamadas ),
+    fato_chamadas[direcao] = "Entrada",
+    fato_chamadas[ura_resultado] = "Tempo esgotado sem digitar"
+)
+
+URA Desligou =
+CALCULATE (
+    COUNTROWS ( fato_chamadas ),
+    fato_chamadas[direcao] = "Entrada",
+    fato_chamadas[ura_resultado] = "Desligou durante o menu"
+)
+
+URA Parou no Submenu =
+CALCULATE (
+    COUNTROWS ( fato_chamadas ),
+    fato_chamadas[direcao] = "Entrada",
+    fato_chamadas[ura_resultado] = "Desistiu no submenu"
+)
+
+// O número que mais pesa: de quem entra na URA, quantos chegam a escolher algo. Em set/2026 era
+// menos da metade.
+% URA Escolheu Opção =
+DIVIDE ( [URA Escolheu Opção], [Ligações URA] )
+
+// A URA não pega todas as entradas: os outros números chamados caem direto em ramal.
+% Entradas na URA =
+DIVIDE ( [Ligações URA], [Ligações Entrada] )
+
+// ---- Setor e ramal ----
+// Valem de fevereiro/2026 em diante (ver o cabeçalho). O setor é o grão estável, o responsável
+// é a foto de hoje da planilha de ramais e pode estar errado para ligação antiga.
+
+// Quanto cada setor pesa no total de atendidas do período (o total ignora o corte por ramal).
+% das Atendidas =
+DIVIDE (
+    [Ligações Entrada Atendidas],
+    CALCULATE ( [Ligações Entrada Atendidas], REMOVEFILTERS ( dim_ramal ) )
+)
+
+// ---- Qualidade do dado ----
+
+// Das atendidas, quantas trazem o ramal. Janeiro/2026 fica perto de 8%, de fevereiro em diante
+// acima de 90%. Abaixo disso, o corte por setor está perdendo ligação.
+% Atendidas com Ramal =
+DIVIDE (
+    CALCULATE (
+        COUNTROWS ( fato_chamadas ),
+        fato_chamadas[direcao] = "Entrada",
+        fato_chamadas[atendida] = TRUE (),
+        NOT ISBLANK ( fato_chamadas[ramal] )
+    ),
+    [Ligações Entrada Atendidas]
+)
+
+// Ramais que atenderam e não estão na planilha de ramais (hoje, o 8223). Se subir, falta linha na
+// planilha, e a correção é nela, não no SQL.
+Ramais Sem Cadastro =
+CALCULATE (
+    DISTINCTCOUNT ( fato_chamadas[ramal] ),
+    fato_chamadas[direcao] = "Entrada",
+    fato_chamadas[atendida] = TRUE (),
+    // Sem isto, a ligação atendida sem ramal (a linha em branco da dimensão) entra na contagem
+    // como se fosse mais um ramal sem cadastro.
+    NOT ISBLANK ( fato_chamadas[ramal] ),
+    dim_ramal[cadastrado_na_planilha] = FALSE ()
+)
+
+// =============================================================================
+// Faixa de KPIs em HTML (visual HTML Content)
+//
+// Mesmo CSS da faixa de Atendimento (Blip), sem alteração de tamanho, cor, espaçamento ou raio.
+// As variantes .r (vermelho) e .g (cinza) têm significado: vermelho para o que dói (ligação
+// real que ninguém atendeu e a taxa de atendimento), cinza para o que não é gente (ruído).
+//
+// A taxa do cartão é a REAL (sem ruído). O subtítulo mostra a bruta, que é a que o painel web da
+// MDnet mostra, para quem for conferir não achar que um dos dois está errado.
+// =============================================================================
+
+KPIs Telefonia HTML =
+
+VAR _entradas   = [Ligações Entrada]
+VAR _ruido      = [Ligações Entrada Ruído]
+VAR _atendidas  = [Ligações Entrada Atendidas]
+VAR _naoAtend   = [Ligações Entrada Não Atendidas Reais]
+VAR _txReal     = [% Atendimento Entrada Real]
+VAR _txBruta    = [% Atendimento Entrada]
+VAR _txNao      = [% Não Atendimento Entrada Real]
+VAR _espera     = COALESCE ( [Espera Média], "--" )
+VAR _falado     = COALESCE ( [Tempo Falado Médio], "--" )
+
+VAR _icoFone = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z'></path></svg>"
+VAR _icoCheck = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M22 11.08V12a10 10 0 1 1-5.93-9.14'></path><polyline points='22 4 12 14.01 9 11.01'></polyline></svg>"
+VAR _icoX = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'></circle><line x1='15' y1='9' x2='9' y2='15'></line><line x1='9' y1='9' x2='15' y2='15'></line></svg>"
+VAR _icoQueda = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='23 18 13.5 8.5 8.5 13.5 1 6'></polyline><polyline points='17 18 23 18 23 12'></polyline></svg>"
+VAR _icoAlerta = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z'></path><line x1='12' y1='9' x2='12' y2='13'></line><line x1='12' y1='17' x2='12.01' y2='17'></line></svg>"
+VAR _icoLista = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><line x1='8' y1='6' x2='21' y2='6'></line><line x1='8' y1='12' x2='21' y2='12'></line><line x1='8' y1='18' x2='21' y2='18'></line><line x1='3' y1='6' x2='3.01' y2='6'></line><line x1='3' y1='12' x2='3.01' y2='12'></line><line x1='3' y1='18' x2='3.01' y2='18'></line></svg>"
+VAR _icoRelogio = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'></circle><polyline points='12 6 12 12 16 14'></polyline></svg>"
+VAR _icoChat = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z'></path></svg>"
+
+VAR _css =
+    "<style>" &
+    "html,body{margin:0;padding:0;height:100%;}" &
+    ".k{font-family:'Segoe UI Semibold','Segoe UI',Arial,sans-serif;font-weight:600;display:flex;flex-direction:row;gap:18px;width:100%;height:100%;box-sizing:border-box;}" &
+    ".k .c{position:relative;overflow:hidden;flex:1 1 0;background:#003254;color:#fff;border-radius:20px;padding:24px 28px;box-sizing:border-box;}" &
+    ".k .c.g{background:#6B7280;}" &
+    ".k .c.r{background:#8A1C1C;}" &
+    ".k .ic{position:absolute;top:18px;right:22px;width:50px;height:50px;background:rgba(255,255,255,.15);border-radius:14px;display:flex;align-items:center;justify-content:center;}" &
+    ".k .ic svg{width:28px;height:28px;color:#fff;opacity:.95;}" &
+    ".k .l{font-size:26px;letter-spacing:.02em;opacity:.9;max-width:75%;}" &
+    ".k .v{font-size:56px;margin-top:10px;line-height:1;}" &
+    ".k .s{font-size:24px;opacity:.85;margin-top:8px;}" &
+    "</style>"
+
+RETURN
+    _css &
+    "<div class='k'>" &
+        "<div class='c'><div class='ic'>" & _icoFone & "</div><div class='l'>ENTRADAS</div><div class='v'>" &
+            FORMAT ( _entradas, "#,0" ) & "</div><div class='s'>ligações recebidas</div></div>" &
+
+        "<div class='c g'><div class='ic'>" & _icoAlerta & "</div><div class='l'>RUÍDO</div><div class='v'>" &
+            FORMAT ( _ruido, "#,0" ) & "</div><div class='s'>robocall e spam, sem atendimento</div></div>" &
+
+        "<div class='c'><div class='ic'>" & _icoCheck & "</div><div class='l'>ATENDIDAS</div><div class='v'>" &
+            FORMAT ( _atendidas, "#,0" ) & "</div><div class='s'>com conversa</div></div>" &
+
+        "<div class='c r'><div class='ic'>" & _icoX & "</div><div class='l'>NÃO ATENDIDAS</div><div class='v'>" &
+            FORMAT ( _naoAtend, "#,0" ) & "</div><div class='s'>de gente de verdade</div></div>" &
+
+        "<div class='c r'><div class='ic'>" & _icoQueda & "</div><div class='l'>% NÃO ATENDIMENTO</div><div class='v'>" &
+            FORMAT ( _txNao, "0.0%" ) & "</div><div class='s'>de gente de verdade, sem ruído</div></div>" &
+
+        "<div class='c'><div class='ic'>" & _icoCheck & "</div><div class='l'>% ATENDIMENTO</div><div class='v'>" &
+            FORMAT ( _txReal, "0.0%" ) & "</div><div class='s'>sem ruído (bruto " & FORMAT ( _txBruta, "0.0%" ) & ")</div></div>" &
+
+        "<div class='c'><div class='ic'>" & _icoRelogio & "</div><div class='l'>ESPERA</div><div class='v'>" &
+            _espera & "</div><div class='s'>média até atender, com a URA</div></div>" &
+
+        "<div class='c'><div class='ic'>" & _icoChat & "</div><div class='l'>CONVERSA</div><div class='v'>" &
+            _falado & "</div><div class='s'>tempo falado médio</div></div>" &
+    "</div>"
+
+// =============================================================================
+// Tabela das opções da URA em HTML (visual HTML Content, com clique)
+//
+// Mesmo desenho e mesmas funcionalidades da tabela de Atendimentos do CVCRM: grade em CSS grid,
+// cabeçalho fixo ao rolar, linha zebrada, destaque ao passar o mouse, e CLIQUE QUE FILTRA o resto
+// da página (Ctrl+clique acumula). O porquê de cada detalhe do CSS, e da necessidade do campo
+// Granularity, está em MEDIDAS_ATENDIMENTO.dax (seção "Tabelas com clique").
+//
+// O CSS é derivado de [CSS Tabela Atendimentos CVCRM] por SUBSTITUTE, então ajuste de estilo
+// feito lá chega aqui. Muda o número de colunas (5), o tamanho das fontes (valores 44px, títulos
+// e pílula 36px, para a tela grande do painel), tudo centralizado e a legenda de rodapé (.cap, que
+// só aparece na última linha).
+//
+// Diferença em relação à do CVCRM: lá cada linha é um registro, aqui cada linha é um GRUPO (uma
+// opção do menu), então entra a barra de volume atrás de LIGAÇÕES, igual às tabelas de corte do
+// Blip, e a taxa de atendimento vira uma pílula colorida: verde a partir de 50%, cinza de 25% a
+// 49% e vermelho abaixo de 25%. Os limites estão na variável _classe da linha.
+//
+// Configuração do visual:
+//   Values          -> [Linha Opção URA HTML]
+//   Granularity     -> fato_chamadas[ura_opcao]
+//   Tooltips        -> [Ordem Opção URA (ordenação)]
+//   Classificar por -> Ordem Opção URA (ordenação), crescente
+//   Formatar -> Stylesheet -> fx -> [CSS Tabela URA (linhas)]
+//   Formatar -> Cross-filtering -> Ativar; Transparency 0
+//   Formatar -> No data message -> "Nenhuma ligação na URA no período selecionado."
+//   Filtros neste visual -> fato_chamadas[ura_opcao], Filtragem avançada, "não está em branco" (15/out/2026). Sem ele, a ligação sem opção de URA vira uma primeira linha vazia e o cabeçalho (só desenhado na primeira linha) some
+// =============================================================================
+
+CSS Tabela URA (linhas) =
+-- 14/out/2026: as três tabelas (opção da URA, setor e ramal) passaram a ter 8 colunas (rótulo + 7
+-- números), que é o número de colunas do CSS do CVCRM, então não há mais troca de repeat(). Fontes e
+-- espaços menores que na versão de 5 colunas, para caber na mesma largura.
+[CSS Tabela Atendimentos CVCRM]
+    & "#htmlContent{font-size:36px;}"
+    & ".th{font-size:26px;padding:18px 12px;text-align:center;white-space:normal;line-height:1.15;}"
+    & ".td{padding:12px 12px;text-align:center;}"
+    & ".td.nome{font-weight:600;white-space:normal;}"
+    & ".sub{font-size:22px;font-weight:600;color:#6B7280;margin-left:12px;}"
+    & ".semid{color:#6B7280;font-style:italic;}"
+    & ".sit{font-size:30px;padding:4px 16px;}"
+    & ".cap{display:none;grid-column:1/-1;font-size:28px;color:#6B7280;padding:14px 24px 0 24px;text-align:center;}"
+    & ".htmlViewerEntry:last-child .cap{display:block;}"
+
+// Medida âncora só para o campo Tooltips do visual (para virar opção em "Classificar por").
+// Devolve a ordem do menu: 11 = 1.1, 12 = 1.2, 20 = 2, 31 = 3.1, 32 = 3.2, depois quem não chegou a um
+// destino (90 não digitou, 91 desligou, 92 desistiu no submenu, 99 menu antigo). Várias linhas dividem
+// o mesmo número (as de "desistiu no submenu" são 4 rótulos com 92, as de menu antigo 3 com 99), então
+// entra um desempate em milésimos, pela ordem alfabética do rótulo, para a tabela não trocar de lugar.
+Ordem Opção URA (ordenação) =
+MIN ( fato_chamadas[ura_opcao_ordem] )
+    + DIVIDE (
+        RANKX ( ALL ( fato_chamadas[ura_opcao] ), fato_chamadas[ura_opcao], SELECTEDVALUE ( fato_chamadas[ura_opcao] ), ASC, DENSE ),
+        1000
+    )
+
+Linha Opção URA HTML =
+VAR _opcao  = SELECTEDVALUE ( fato_chamadas[ura_opcao] )
+VAR _lig    = [Ligações URA]
+-- COALESCE: linha sem nenhuma atendida (Desligou na URA) vinha em branco e a pílula virava um traço.
+VAR _atend  = COALESCE ( [Ligações URA Atendidas], 0 )
+VAR _pct    = DIVIDE ( _atend, _lig )
+-- A barra de volume é relativa à maior opção DENTRO do recorte atual (período, setor clicado
+-- em outro visual), e não à maior de sempre. O clique nesta tabela não entra nesse
+-- contexto, então as barras não mudam ao selecionar uma linha.
+VAR _max    = MAXX ( ALLSELECTED ( fato_chamadas[ura_opcao] ), [Ligações URA] )
+VAR _barra  = FORMAT ( DIVIDE ( _lig, _max ) * 100, "0" )
+VAR _nao    = [Ligações URA Não Atendidas]
+VAR _pctNao = DIVIDE ( _nao, _lig )
+-- Taxa de atendimento: verde a partir de 50%, cinza de 25% a 49%, vermelho abaixo de 25%. A de não
+-- atendidas é o espelho: vermelho a partir de 75%, cinza de 51% a 74%, verde até 50%.
+VAR _classe    = IF ( _pct >= 0.5, "sit-finalizado", IF ( _pct >= 0.25, "sit-outra", "sit-cancelado" ) )
+VAR _classeNao = IF ( _pctNao >= 0.75, "sit-cancelado", IF ( _pctNao > 0.5, "sit-outra", "sit-finalizado" ) )
+VAR _espera = COALESCE ( [Espera Média], "--" )
+VAR _falado = COALESCE ( [Tempo Falado Médio], "--" )
+VAR _rotulo =
+    SUBSTITUTE ( SUBSTITUTE ( SUBSTITUTE ( COALESCE ( _opcao, "" ), "&", "&amp;" ), "<", "&lt;" ), ">", "&gt;" )
+RETURN
+    IF (
+        NOT ISBLANK ( _opcao ) && _lig > 0,
+        "<div class='hdr'><div class='th'>OPÇÃO DO MENU</div><div class='th num'>TOTAL LIGAÇÕES</div>"
+            & "<div class='th num'>NÃO ATENDIDAS</div><div class='th num'>ATENDIDAS</div>"
+            & "<div class='th'>TX NÃO ATENDIDAS</div><div class='th'>TX ATENDIDAS</div>"
+            & "<div class='th num'>ESPERA</div><div class='th num'>CONVERSA</div></div>"
+            & "<div class='td nome'>" & _rotulo & "</div>"
+            & "<div class='td num' style='background-image:linear-gradient(to right,rgba(0,50,84,.14) "
+            & _barra & "%,transparent " & _barra & "%)'>" & FORMAT ( _lig, "#,0" ) & "</div>"
+            & "<div class='td num'>" & FORMAT ( _nao, "#,0" ) & "</div>"
+            & "<div class='td num'>" & FORMAT ( _atend, "#,0" ) & "</div>"
+            & "<div class='td'><span class='sit " & _classeNao & "'>" & FORMAT ( _pctNao, "0%" ) & "</span></div>"
+            & "<div class='td'><span class='sit " & _classe & "'>" & FORMAT ( _pct, "0%" ) & "</span></div>"
+            & "<div class='td num'>" & _espera & "</div>"
+            & "<div class='td num'>" & _falado & "</div>"
+            & "<div class='cap'>Atendidas: ligações com conversa. Não atendidas = total da opção menos as atendidas. Tx atendidas em verde a partir de 50%, cinza de 25% a 49% e vermelho abaixo de 25%; Tx não atendidas é o espelho. Espera: tempo médio até atender, contando a URA. Conversa: tempo falado médio.</div>"
+    )
+
+// =============================================================================
+// Tabela HTML "Quem atendeu" (por setor) e mapa de calor "Hora x dia da semana"
+//
+// Mesmo desenho e mesmas funcionalidades da tabela das opções da URA (que é a do CVCRM): clique
+// filtra o resto da página, Ctrl+clique acumula. Configuração dos visuais no PAGINA_TELEFONIA.md.
+//
+// Setor: usa a MESMA folha de estilo da URA ([CSS Tabela URA (linhas)], 5 colunas). Linha sem
+// ramal vira "Atendida sem ramal registrado", em cinza e itálico.
+//
+// Mapa de calor: cada linha é uma HORA (Granularity = fato_chamadas[hora]) e traz as 7 células
+// de segunda a domingo. A cor sai de um cálculo no próprio DAX, porque o HTML Content não tem
+// formatação condicional: o centro da escala é a taxa MÉDIA do período, azul acima e vermelho
+// abaixo, e a cor chega ao máximo quando a taxa é o dobro da média (azul) ou zero (vermelho).
+// Assim sempre há contraste, mesmo com todas as taxas abaixo de 50%. Célula com menos de 10
+// ligações reais fica esmaecida, porque 100% de 2 ligações não é 100%.
+// =============================================================================
+
+// 14/out/2026: setor e ramal passaram a mostrar o mesmo conjunto de 7 colunas da tabela da URA (total,
+// não atendidas, atendidas, as duas taxas, espera e conversa). Os números são de gente de verdade
+// (sem ruído): total = [Ligações Entrada Reais]. ATENÇÃO: ligação não atendida não tem ramal, então
+// quase toda não atendida cai na linha sem setor/ramal (a de rótulo em cinza e itálico). Nas linhas de setor
+// e de ramal "não atendidas" é perto de zero (poucas têm ramal, como 3 de 1.142 no 8260) e a taxa de atendimento perto de 100%. Para olhar o setor em
+// uma pergunta útil (quanto cada setor atende), use a coluna ATENDIDAS e a espera.
+//
+// As 6 células depois do total são iguais nas duas tabelas, então vivem nesta medida.
+Células Ligações HTML =
+VAR _tot    = [Ligações Entrada Reais]
+VAR _nao    = COALESCE ( [Ligações Entrada Não Atendidas Reais], 0 )
+VAR _atend  = COALESCE ( [Ligações Entrada Atendidas], 0 )
+VAR _pct    = DIVIDE ( _atend, _tot )
+VAR _pctNao = DIVIDE ( _nao, _tot )
+VAR _classe    = IF ( _pct >= 0.5, "sit-finalizado", IF ( _pct >= 0.25, "sit-outra", "sit-cancelado" ) )
+VAR _classeNao = IF ( _pctNao >= 0.75, "sit-cancelado", IF ( _pctNao > 0.5, "sit-outra", "sit-finalizado" ) )
+RETURN
+    "<div class='td num'>" & FORMAT ( _nao, "#,0" ) & "</div>"
+        & "<div class='td num'>" & FORMAT ( _atend, "#,0" ) & "</div>"
+        & "<div class='td'><span class='sit " & _classeNao & "'>" & FORMAT ( _pctNao, "0%" ) & "</span></div>"
+        & "<div class='td'><span class='sit " & _classe & "'>" & FORMAT ( _pct, "0%" ) & "</span></div>"
+        & "<div class='td num'>" & COALESCE ( [Espera Média], "--" ) & "</div>"
+        & "<div class='td num'>" & COALESCE ( [Tempo Falado Médio], "--" ) & "</div>"
+
+// O cabeçalho das duas tabelas muda só na primeira coluna.
+Cabeçalho Ligações HTML =
+"<div class='th num'>TOTAL LIGAÇÕES</div><div class='th num'>NÃO ATENDIDAS</div>"
+    & "<div class='th num'>ATENDIDAS</div><div class='th'>TX NÃO ATENDIDAS</div>"
+    & "<div class='th'>TX ATENDIDAS</div><div class='th num'>ESPERA</div><div class='th num'>CONVERSA</div></div>"
+
+Linha Setor HTML =
+VAR _setor  = SELECTEDVALUE ( dim_ramal[setor_grupo] )
+VAR _unid   = SELECTEDVALUE ( dim_ramal[unidade] )
+VAR _qtd    = [Ligações Entrada Reais]
+-- A barra é relativa ao maior SETOR dentro do recorte atual. A linha sem ramal fica fora do
+-- maior: ela concentra todas as não atendidas e achataria a barra de todos os setores.
+VAR _max    = MAXX ( FILTER ( ALLSELECTED ( dim_ramal[setor_grupo] ), NOT ISBLANK ( dim_ramal[setor_grupo] ) ), [Ligações Entrada Reais] )
+VAR _barra  = FORMAT ( MIN ( 100, DIVIDE ( _qtd, _max ) * 100 ), "0" )
+VAR _tag    = IF ( NOT ISBLANK ( _unid ) && _unid <> "Sem cadastro", " <span class='sub'>" & _unid & "</span>", "" )
+VAR _rotulo =
+    IF (
+        ISBLANK ( _setor ),
+        "<div class='td nome semid'>Sem ramal registrado</div>",
+        "<div class='td nome'>" & SUBSTITUTE ( SUBSTITUTE ( SUBSTITUTE ( _setor, "&", "&amp;" ), "<", "&lt;" ), ">", "&gt;" ) & _tag & "</div>"
+    )
+RETURN
+    IF (
+        _qtd > 0,
+        "<div class='hdr'><div class='th'>SETOR</div>" & [Cabeçalho Ligações HTML]
+            & _rotulo
+            & "<div class='td num' style='background-image:linear-gradient(to right,rgba(0,50,84,.14) "
+            & _barra & "%,transparent " & _barra & "%)'>" & FORMAT ( _qtd, "#,0" ) & "</div>"
+            & [Células Ligações HTML]
+            & "<div class='cap'>Ligações reais (sem ruído) por setor. Quase toda ligação não atendida não tem ramal e fica em 'Sem ramal registrado', junto das atendidas sem ramal. Espera: tempo médio até atender, contando a URA. Conversa: tempo falado médio. Vale de fevereiro/2026 em diante.</div>"
+    )
+
+// Ramal (14/out/2026): o mesmo desenho, uma linha por número de ramal, com o setor em cinza ao lado.
+// Pedido do Igor para ver o volume no detalhe, e não só por setor. Clicar um setor na tabela de setor
+// filtra esta tabela, então ela funciona como o "abrir" do setor sem precisar de drill. Mesma
+// ressalva: quase toda não atendida não tem ramal, então quase só a linha sem ramal tem não atendidas.
+Linha Ramal HTML =
+VAR _ramal  = SELECTEDVALUE ( dim_ramal[ramal] )
+VAR _setor  = SELECTEDVALUE ( dim_ramal[setor_grupo] )
+VAR _qtd    = [Ligações Entrada Reais]
+VAR _max    = MAXX ( FILTER ( ALLSELECTED ( dim_ramal[ramal] ), NOT ISBLANK ( dim_ramal[ramal] ) ), [Ligações Entrada Reais] )
+VAR _barra  = FORMAT ( MIN ( 100, DIVIDE ( _qtd, _max ) * 100 ), "0" )
+VAR _tag    = IF ( NOT ISBLANK ( _setor ), " <span class='sub'>" & SUBSTITUTE ( SUBSTITUTE ( SUBSTITUTE ( _setor, "&", "&amp;" ), "<", "&lt;" ), ">", "&gt;" ) & "</span>", "" )
+VAR _rotulo =
+    IF (
+        ISBLANK ( _ramal ),
+        "<div class='td nome semid'>Sem ramal registrado</div>",
+        "<div class='td nome'>" & _ramal & _tag & "</div>"
+    )
+RETURN
+    IF (
+        _qtd > 0,
+        "<div class='hdr'><div class='th'>RAMAL</div>" & [Cabeçalho Ligações HTML]
+            & _rotulo
+            & "<div class='td num' style='background-image:linear-gradient(to right,rgba(0,50,84,.14) "
+            & _barra & "%,transparent " & _barra & "%)'>" & FORMAT ( _qtd, "#,0" ) & "</div>"
+            & [Células Ligações HTML]
+            & "<div class='cap'>Ligações reais (sem ruído) por ramal. Quase toda ligação não atendida não tem ramal e fica em 'Sem ramal registrado'. O setor ao lado é o de hoje, da planilha de ramais. Vale de fevereiro/2026 em diante.</div>"
+    )
+
+CSS Tabela Hora x Dia (linhas) =
+[CSS Tabela URA (linhas)]
+    & "#htmlContent{font-size:40px;}"
+    & ".td{padding:10px 18px;}"
+
+// Medida âncora só para o campo Tooltips do mapa de calor (para virar opção em "Classificar por").
+Hora (ordenação) =
+MIN ( fato_chamadas[hora] )
+
+Linha Hora x Dia HTML =
+VAR _hora  = SELECTEDVALUE ( fato_chamadas[hora] )
+VAR _reais = [Ligações Entrada Reais]
+-- Taxa média do período e das horas selecionadas: o CENTRO da escala de cor.
+VAR _media = CALCULATE ( [% Atendimento Entrada Real], ALLSELECTED ( fato_chamadas[hora] ) )
+VAR _celulas =
+    CONCATENATEX (
+        GENERATESERIES ( 1, 7 ),
+        VAR _d   = [Value]
+        VAR _n   = COALESCE ( CALCULATE ( [Ligações Entrada Reais], fato_chamadas[dia_semana] = _d ), 0 )
+        VAR _p   = CALCULATE ( [% Atendimento Entrada Real], fato_chamadas[dia_semana] = _d )
+        VAR _dev = _p - _media
+        VAR _t   = IF ( _media > 0, MIN ( 1, ABS ( _dev ) / _media ), 0 )
+        VAR _r   = ROUND ( 242 + ( IF ( _dev >= 0, 0, 184 ) - 242 ) * _t, 0 )
+        VAR _g   = ROUND ( 242 + ( IF ( _dev >= 0, 50, 67 ) - 242 ) * _t, 0 )
+        VAR _b   = ROUND ( 242 + ( IF ( _dev >= 0, 84, 63 ) - 242 ) * _t, 0 )
+        VAR _txt = IF ( _t >= 0.85, "#FFFFFF", "#1F2937" )
+        RETURN
+            IF (
+                _n = 0 || ISBLANK ( _p ),
+                "<div class='td' style='color:#9CA3AF'>-</div>",
+                "<div class='td' title='" & FORMAT ( _n, "#,0" ) & " ligações reais' style='background:rgb("
+                    & _r & "," & _g & "," & _b & ");color:" & _txt
+                    & IF ( _n < 10, ";opacity:.45", "" ) & "'>" & FORMAT ( _p, "0%" ) & "</div>"
+            ),
+        "",
+        [Value], ASC
+    )
+RETURN
+    IF (
+        NOT ISBLANK ( _hora ) && _reais > 0,
+        "<div class='hdr'><div class='th'>HORA</div><div class='th'>SEG</div><div class='th'>TER</div>"
+            & "<div class='th'>QUA</div><div class='th'>QUI</div><div class='th'>SEX</div>"
+            & "<div class='th'>SÁB</div><div class='th'>DOM</div></div>"
+            & "<div class='td nome'>" & FORMAT ( _hora, "00" ) & "h</div>"
+            & _celulas
+            & "<div class='cap'>Taxa de atendimento de ligações reais (sem ruído). Azul: acima da média do período (" & FORMAT ( _media, "0%" ) & "). Vermelho: abaixo. Células esmaecidas têm menos de 10 ligações.</div>"
+    )
+
+// =============================================================================
+// Conferência com o painel web da MDnet
+//
+// O painel web (Relatórios > Registro de chamadas) mostra cartões. Estas medidas dão o número
+// comparável de cada um, e o comparativo completo com as explicações das diferenças está em
+// PAGINA_TELEFONIA.md (seção "Conferência com o painel web") e em `conferir_mdnet.py --gold`.
+//   TOTAL ENTRADA          -> [Ligações Entrada]
+//   ATENDIDA               -> [Ligações Entrada Atendidas]
+//   NÃO ATENDIDA           -> [Ligações Entrada Não Atendidas]   (COM o ruído, como o painel)
+//   CAPILARIDADE DA ENTRADA -> [Capilaridade da Entrada]
+// =============================================================================
+
+Ligações Entrada Não Atendidas =
+COALESCE ( [Ligações Entrada], 0 ) - COALESCE ( [Ligações Entrada Atendidas], 0 )
+
+// Quem ligou, contando também o ruído. Fica cerca de 1% abaixo do cartão do painel porque a gold
+// normaliza o telefone (agrupa variantes do mesmo número, como 0 + DDD + número).
+Capilaridade da Entrada =
+CALCULATE (
+    DISTINCTCOUNT ( fato_chamadas[chamador_id] ),
+    fato_chamadas[direcao] = "Entrada"
+)
+
+// =============================================================================
+// Tooltip do gráfico "Entradas por mês": o que é o ruído
+//
+// Página de tooltip (tipo Tooltip, 640 x 700) com UM visual HTML Content em tela cheia, cujo
+// campo Values é [Tooltip Ruído HTML]. O gráfico de colunas aponta para ela em Formatar ->
+// Dicas de ferramenta -> Tipo: Página de relatório. O Power BI filtra a página pelo mês sob o
+// mouse (dim_calendario[ano_mes] está no eixo), então o texto, as barras e os números mudam a
+// cada coluna. Fora de um mês específico (sem contexto), a página mostra o período inteiro.
+//
+// Nada de JavaScript: o visual HTML Content não executa script. O movimento vem de CSS (as
+// barras crescem e as linhas aparecem em sequência). O tooltip some quando o mouse sai da
+// coluna e não aceita clique, por isso ele só explica e não filtra.
+//
+// Os dois textos de motivo ("Origem em formato internacional (00...)" e "Repete 10 vezes ou
+// mais...") são os de gold.fato_chamadas.motivo_ruido, em sql/gold/mdnet.sql. Se o texto mudar
+// lá, a linha correspondente zera aqui e o excedente cai em "Outro motivo", que é o alarme.
+// =============================================================================
+
+Ruído Origem Internacional =
+CALCULATE (
+    COUNTROWS ( fato_chamadas ),
+    fato_chamadas[direcao] = "Entrada",
+    fato_chamadas[e_ruido] = TRUE (),
+    fato_chamadas[motivo_ruido] = "Origem em formato internacional (00...)"
+)
+
+Ruído Repetição no Mês =
+CALCULATE (
+    COUNTROWS ( fato_chamadas ),
+    fato_chamadas[direcao] = "Entrada",
+    fato_chamadas[e_ruido] = TRUE (),
+    fato_chamadas[motivo_ruido] = "Repete 10 vezes ou mais no mês, sem atendimento e com ligação curta"
+)
+
+// Números diferentes que geraram ruído, pelo chamador_id (o telefone não vai para o modelo).
+Ruído Números Distintos =
+CALCULATE (
+    DISTINCTCOUNT ( fato_chamadas[chamador_id] ),
+    fato_chamadas[direcao] = "Entrada",
+    fato_chamadas[e_ruido] = TRUE ()
+)
+
+// Quantas vezes, no mês, ligou o número que mais insistiu entre os marcados como ruído.
+Ruído Maior Insistência =
+CALCULATE (
+    MAX ( fato_chamadas[chamador_ligacoes_mes] ),
+    fato_chamadas[direcao] = "Entrada",
+    fato_chamadas[e_ruido] = TRUE ()
+)
+
+Ruído Duração Média (seg) =
+CALCULATE (
+    AVERAGE ( fato_chamadas[duracao_total_s] ),
+    fato_chamadas[direcao] = "Entrada",
+    fato_chamadas[e_ruido] = TRUE ()
+)
+
+// Todo o tamanho do tooltip é em "em", a partir do font-size de 16px de .t. Para o tooltip ficar
+// maior ou menor sem mexer em mais nada, mude só esse número (e o tamanho da página).
+Tooltip Ruído HTML =
+VAR _entradas = [Ligações Entrada]
+VAR _ruido    = COALESCE ( [Ligações Entrada Ruído], 0 )
+VAR _intl     = COALESCE ( [Ruído Origem Internacional], 0 )
+VAR _rep      = COALESCE ( [Ruído Repetição no Mês], 0 )
+VAR _outros   = _ruido - _intl - _rep
+VAR _pctRuido = DIVIDE ( _ruido, _entradas )
+VAR _txBruta  = [% Atendimento Entrada]
+VAR _txReal   = [% Atendimento Entrada Real]
+VAR _numeros  = COALESCE ( [Ruído Números Distintos], 0 )
+VAR _dur      = [Ruído Duração Média (seg)]
+VAR _max      = COALESCE ( [Ruído Maior Insistência], 0 )
+VAR _mesNome  = SELECTEDVALUE ( dim_calendario[mes_nome] )
+VAR _mes =
+    IF (
+        HASONEVALUE ( dim_calendario[ano_mes] ) && NOT ISBLANK ( _mesNome ),
+        UPPER ( LEFT ( _mesNome, 1 ) ) & MID ( _mesNome, 2, 20 ) & " de " & SELECTEDVALUE ( dim_calendario[ano] )
+    )
+VAR _titulo   = IF ( ISBLANK ( _mes ), "Ruído no período selecionado", "Ruído em " & _mes )
+VAR _barIntl  = FORMAT ( DIVIDE ( _intl, _ruido ) * 100, "0" )
+VAR _barRep   = FORMAT ( DIVIDE ( _rep, _ruido ) * 100, "0" )
+VAR _barOut   = FORMAT ( DIVIDE ( _outros, _ruido ) * 100, "0" )
+VAR _durTxt   = IF ( ISBLANK ( _dur ), "--", FORMAT ( _dur, "0" ) & " s" )
+
+VAR _ico = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z'></path><line x1='12' y1='9' x2='12' y2='13'></line><line x1='12' y1='17' x2='12.01' y2='17'></line></svg>"
+
+VAR _css =
+    "<style>" &
+    "html,body{margin:0;padding:0;height:100%;background:#fff;}" &
+    ".t{font-family:'Segoe UI',Arial,sans-serif;font-size:16px;color:#1F2937;box-sizing:border-box;padding:1.1em 1.3em;height:100%;overflow:hidden;}" &
+    ".t *{box-sizing:border-box;}" &
+    ".t .top{display:flex;align-items:center;gap:.8em;padding-bottom:.7em;border-bottom:1px solid #E5E7EB;}" &
+    ".t .ic{flex:none;width:2.6em;height:2.6em;border-radius:.8em;background:#6B7280;color:#fff;display:flex;align-items:center;justify-content:center;}" &
+    ".t .ic svg{width:1.5em;height:1.5em;}" &
+    ".t .ti{font-size:1.25em;font-weight:700;color:#003254;line-height:1.15;}" &
+    ".t .su{font-size:.85em;color:#6B7280;margin-top:.15em;}" &
+    ".t .big{margin-left:auto;text-align:right;}" &
+    ".t .big b{display:block;font-size:2em;line-height:1;color:#6B7280;}" &
+    ".t .big span{font-size:.8em;color:#6B7280;}" &
+    ".t .tx{margin:.8em 0 0;font-size:.95em;line-height:1.45;color:#374151;}" &
+    ".t .sec{margin-top:1.1em;font-size:.72em;letter-spacing:.08em;font-weight:700;color:#6B7280;text-transform:uppercase;}" &
+    ".t .cmp{display:flex;align-items:center;gap:.7em;margin-top:.5em;}" &
+    ".t .box{flex:1;border-radius:.7em;padding:.6em .8em;background:#F3F4F6;}" &
+    ".t .box.ok{background:#E6EEF4;}" &
+    ".t .box b{display:block;font-size:1.6em;line-height:1.1;color:#374151;}" &
+    ".t .box.ok b{color:#003254;}" &
+    ".t .box span{font-size:.8em;color:#6B7280;}" &
+    ".t .arr{font-size:1.4em;color:#6B7280;}" &
+    ".t .mo{margin-top:.6em;animation:f .45s ease-out both;}" &
+    ".t .mo .l{display:flex;justify-content:space-between;align-items:baseline;font-weight:600;font-size:.95em;color:#374151;}" &
+    ".t .mo .d{font-size:.8em;color:#6B7280;margin:.1em 0 .35em;line-height:1.35;}" &
+    ".t .bar{height:.55em;border-radius:.3em;background:#E5E7EB;overflow:hidden;}" &
+    ".t .bar i{display:block;height:100%;background:#6B7280;border-radius:.3em;animation:g .8s ease-out both;}" &
+    ".t .mo.z{opacity:.4;}" &
+    ".t .st{display:flex;gap:.6em;margin-top:.5em;}" &
+    ".t .st div{flex:1;background:#F3F4F6;border-radius:.7em;padding:.55em .7em;}" &
+    ".t .st b{display:block;font-size:1.35em;color:#374151;line-height:1.1;}" &
+    ".t .st span{display:block;font-size:.75em;color:#6B7280;line-height:1.25;margin-top:.2em;}" &
+    ".t .ft{margin-top:.95em;padding-top:.6em;border-top:1px solid #E5E7EB;font-size:.78em;color:#6B7280;line-height:1.4;}" &
+    "@keyframes g{from{width:0}}" &
+    "@keyframes f{from{opacity:0;transform:translateY(5px)}}" &
+    "</style>"
+
+VAR _linhaIntl =
+    "<div class='mo" & IF ( _intl = 0, " z", "" ) & "' style='animation-delay:.05s'>" &
+        "<div class='l'><span>Origem em formato internacional</span><span>" & FORMAT ( _intl, "#,0" ) & "</span></div>" &
+        "<div class='d'>Número no padrão 00 55 11..., típico de telemarketing de São Paulo. Quase ninguém atende.</div>" &
+        "<div class='bar'><i style='width:" & _barIntl & "%'></i></div></div>"
+
+VAR _linhaRep =
+    "<div class='mo" & IF ( _rep = 0, " z", "" ) & "' style='animation-delay:.2s'>" &
+        "<div class='l'><span>O mesmo número insiste no mês</span><span>" & FORMAT ( _rep, "#,0" ) & "</span></div>" &
+        "<div class='d'>Liga 10 vezes ou mais no mês, com 3% ou menos de atendimento e ligações de até 10 segundos em média.</div>" &
+        "<div class='bar'><i style='width:" & _barRep & "%'></i></div></div>"
+
+VAR _linhaOut =
+    IF (
+        _outros > 0,
+        "<div class='mo' style='animation-delay:.35s'>" &
+            "<div class='l'><span>Outro motivo</span><span>" & FORMAT ( _outros, "#,0" ) & "</span></div>" &
+            "<div class='d'>Marcado como ruído por uma regra que esta página ainda não descreve.</div>" &
+            "<div class='bar'><i style='width:" & _barOut & "%'></i></div></div>",
+        ""
+    )
+
+RETURN
+    IF (
+        _ruido = 0,
+        _css &
+            "<div class='t'><div class='top'><div class='ic'>" & _ico & "</div><div><div class='ti'>" & _titulo & "</div>" &
+            "<div class='su'>nenhuma ligação marcada como ruído</div></div></div>" &
+            "<p class='tx'>Neste recorte, toda entrada não atendida tem cara de cliente de verdade e entra na taxa de atendimento.</p></div>",
+        _css &
+            "<div class='t'>" &
+                "<div class='top'><div class='ic'>" & _ico & "</div>" &
+                    "<div><div class='ti'>" & _titulo & "</div><div class='su'>fora da taxa de atendimento</div></div>" &
+                    "<div class='big'><b>" & FORMAT ( _ruido, "#,0" ) & "</b><span>" & FORMAT ( _pctRuido, "0%" ) & " das " & FORMAT ( _entradas, "#,0" ) & " entradas</span></div>" &
+                "</div>" &
+                "<p class='tx'>Ruído é ligação de entrada que ninguém atendeu e que tem cara de robocall ou spam. Não é cliente esperando resposta.</p>" &
+
+                "<div class='sec'>Por que não entra na conta</div>" &
+                "<div class='cmp'>" &
+                    "<div class='box'><b>" & FORMAT ( _txBruta, "0.0%" ) & "</b><span>com o ruído (a que o painel da MDnet mostra)</span></div>" &
+                    "<div class='arr'>&rarr;</div>" &
+                    "<div class='box ok'><b>" & FORMAT ( _txReal, "0.0%" ) & "</b><span>sem o ruído (a que mede a equipe)</span></div>" &
+                "</div>" &
+                "<p class='tx'>Ninguém da equipe poderia atender essas ligações. Contá-las faz o atendimento parecer pior do que é.</p>" &
+
+                "<div class='sec'>Como o ruído é identificado</div>" &
+                _linhaIntl & _linhaRep & _linhaOut &
+
+                "<div class='sec'>Retrato do ruído neste recorte</div>" &
+                "<div class='st'>" &
+                    "<div><b>" & FORMAT ( _numeros, "#,0" ) & "</b><span>números diferentes</span></div>" &
+                    "<div><b>" & _durTxt & "</b><span>duração média da ligação</span></div>" &
+                    "<div><b>" & FORMAT ( _max, "#,0" ) & "</b><span>ligações do número que mais insistiu</span></div>" &
+                "</div>" &
+
+                "<div class='ft'>Ligação atendida nunca é ruído. O ruído só é marcado, não apagado: o volume continua no gráfico, na parte cinza da coluna.</div>" &
+            "</div>"
+    )
+
+// =============================================================================
+// Painel "Como ler esta página": o glossário de critérios (13/out/2026)
+//
+// Um visual HTML Content com [Critérios Telefonia HTML] em Values, dentro de um painel que abre por
+// botão (mesmo mecanismo de indicadores do painel de Filtros). Responde de uma vez às perguntas de
+// quem vê a página pela primeira vez: o que é entrada, atendida, ruído, taxa real e bruta, espera.
+// Os números mudam com o período e os filtros da página, então o texto nunca fica desatualizado em
+// relação ao que está na tela. O texto de cada critério repete o que está no cabeçalho deste arquivo
+// e em sql/gold/mdnet.sql: se a regra mudar lá, mudar aqui.
+//
+// Todo o tamanho é em "em", a partir do font-size de 16px de .g. Para o painel ficar maior ou menor
+// sem mexer em mais nada, mude só esse número (e o tamanho do visual).
+// =============================================================================
+
+Critérios Telefonia HTML =
+VAR _ent    = [Ligações Entrada]
+VAR _at     = COALESCE ( [Ligações Entrada Atendidas], 0 )
+VAR _na     = COALESCE ( [Ligações Entrada Não Atendidas Reais], 0 )
+VAR _ru     = COALESCE ( [Ligações Entrada Ruído], 0 )
+VAR _pctRu  = [% Ruído sobre Entrada]
+VAR _real   = [% Atendimento Entrada Real]
+VAR _bruta  = [% Atendimento Entrada]
+VAR _esp    = [Espera Média]
+VAR _ura    = [% URA Escolheu Opção]
+-- FORMAT de número em branco devolve "", e não BLANK(): por isso o ISBLANK vem antes.
+VAR _tRu    = IF ( ISBLANK ( _pctRu ), "--", FORMAT ( _pctRu, "0.0%" ) )
+VAR _tReal  = IF ( ISBLANK ( _real ), "--", FORMAT ( _real, "0.0%" ) )
+VAR _tBruta = IF ( ISBLANK ( _bruta ), "--", FORMAT ( _bruta, "0.0%" ) )
+VAR _tEsp   = IF ( ISBLANK ( _esp ), "--", _esp )
+VAR _tUra   = IF ( ISBLANK ( _ura ), "--", FORMAT ( _ura, "0%" ) )
+
+VAR _css =
+    "<style>" &
+    "html,body{margin:0;padding:0;height:100%;background:#fff;}" &
+    ".g{font-family:'Segoe UI',Arial,sans-serif;font-size:16px;color:#1F2937;box-sizing:border-box;padding:1.2em 1.4em;height:100%;overflow:auto;}" &
+    ".g *{box-sizing:border-box;}" &
+    ".g h1{margin:0;font-size:1.6em;color:#003254;line-height:1.15;}" &
+    ".g .sub{margin:.25em 0 1.1em;font-size:.9em;color:#6B7280;}" &
+    ".g .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1em;}" &
+    ".g .it{background:#F3F6F8;border-radius:.8em;border-left:.35em solid #003254;padding:.9em 1.05em;}" &
+    ".g .it.c{border-left-color:#6B7280;}" &
+    ".g .it.r{border-left-color:#8A1C1C;}" &
+    ".g .w2{grid-column:span 2;}" &
+    ".g .w3{grid-column:span 3;}" &
+    ".g .tt{display:flex;justify-content:space-between;align-items:baseline;gap:.8em;}" &
+    ".g .tt b{font-size:1.05em;color:#003254;}" &
+    ".g .tt .v{font-size:1.15em;font-weight:700;color:#003254;white-space:nowrap;}" &
+    ".g .it.c .tt b,.g .it.c .tt .v{color:#4B5563;}" &
+    ".g .it.r .tt b,.g .it.r .tt .v{color:#8A1C1C;}" &
+    ".g p{margin:.55em 0 0;font-size:.88em;line-height:1.45;color:#374151;}" &
+    ".g ul{margin:.45em 0 0 1.1em;padding:0;font-size:.88em;line-height:1.45;color:#374151;}" &
+    ".g li{margin-top:.3em;}" &
+    ".g .ft{margin-top:1.1em;font-size:.8em;color:#6B7280;}" &
+    "</style>"
+
+RETURN
+    _css &
+    "<div class='g'>" &
+        "<h1>Como ler esta página</h1>" &
+        "<div class='sub'>Os números mudam com o período e os filtros escolhidos.</div>" &
+        "<div class='grid'>" &
+
+            "<div class='it'><div class='tt'><b>Entradas</b><span class='v'>" & FORMAT ( _ent, "#,0" ) & "</span></div>" &
+                "<p>Toda ligação que chegou à central, inclusive robocall e spam. Entradas = atendidas + não atendidas + ruído. Fecha com o cartão de entrada do painel da MDnet.</p></div>" &
+
+            "<div class='it'><div class='tt'><b>Atendida</b><span class='v'>" & FORMAT ( _at, "#,0" ) & "</span></div>" &
+                "<p>Ligação em que houve conversa: estado Atendida ou tempo falado maior que zero. O estado do painel sozinho não basta, porque há ligação marcada como não atendida em que houve conversa.</p></div>" &
+
+            "<div class='it r'><div class='tt'><b>Não atendida</b><span class='v'>" & FORMAT ( _na, "#,0" ) & "</span></div>" &
+                "<p>Entrada de gente de verdade que ninguém atendeu, sem o ruído. É o número que dói e o que a equipe consegue melhorar.</p></div>" &
+
+            "<div class='it c w2'><div class='tt'><b>Ruído</b><span class='v'>" & FORMAT ( _ru, "#,0" ) & " (" & _tRu & " das entradas)</span></div>" &
+                "<p>Entrada não atendida com cara de robocall ou spam. Não é cliente esperando resposta. Entra por uma de duas regras:</p>" &
+                "<ul><li>O número está em formato internacional (00...), típico de telemarketing de São Paulo.</li>" &
+                "<li>O mesmo número liga 10 vezes ou mais no mês, com 3% ou menos de atendimento e ligações de até 10 segundos em média.</li></ul>" &
+                "<p>Ligação atendida nunca é ruído. O ruído é marcado e não apagado: aparece em cinza no gráfico de entradas.</p></div>" &
+
+            "<div class='it'><div class='tt'><b>% Atendimento</b><span class='v'>" & _tReal & "</span></div>" &
+                "<p>Real: atendidas ÷ entradas sem o ruído, a que mede a equipe. Bruta (" & _tBruta & "): atendidas ÷ todas as entradas, a que o painel da MDnet mostra.</p></div>" &
+
+            "<div class='it'><div class='tt'><b>Espera</b><span class='v'>" & _tEsp & "</span></div>" &
+                "<p>Tempo médio até a ligação ser atendida, contado desde que entra na central. Inclui o tempo dentro da URA, então o piso já é de dezenas de segundos.</p></div>" &
+
+            "<div class='it'><div class='tt'><b>URA</b><span class='v'>" & _tUra & "</span></div>" &
+                "<p>Das ligações que entram na URA, quantas escolhem uma opção do menu. Menu antigo é uma opção que existia antes de agosto/2026 e saiu do relatório da URA.</p></div>" &
+
+            "<div class='it'><div class='tt'><b>Setor e ramal</b><span class='v'>fev/26 em diante</span></div>" &
+                "<p>Quem atendeu só é confiável de fevereiro em diante: em janeiro, 92% das atendidas não têm ramal registrado. Ligação não atendida não tem ramal, então filtrar por setor deixa as não atendidas de fora.</p></div>" &
+
+            "<div class='it w3'><div class='tt'><b>Origem e atualização dos dados</b><span class='v'>de hora em hora</span></div>" &
+                "<p>Central telefônica MDnet, carregada de hora em hora, das 06:15 às 18:15. O painel web da MDnet é em tempo real e pode estar alguns minutos à frente deste.</p></div>" &
+
+        "</div>" &
+        "<div class='ft'>Conferência: Entradas = Atendidas + Não atendidas + Ruído.</div>" &
+    "</div>"

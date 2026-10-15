@@ -905,6 +905,103 @@ def carregar_profissoes(conn, xlsx: Path) -> int:
     return len(regs)
 
 
+def ler_ramais(xlsx: Path) -> tuple[list[tuple], list[str], str]:
+    """Lê 'RAMAIS ATIVOS 2026.xlsx' (telefonia da MDnet) e devolve (registros, avisos, aba).
+
+    A planilha tem uma aba só, em seções: uma linha 'Ramal | SEDE - Setor' abre a seção da
+    sede e uma 'Ramal | HOUSE - Setor' abre a da House. Cada linha seguinte é um ramal na
+    coluna A e 'Setor - Responsável' na B ('Suprimentos 1 - Maria', 'Financeiro - Vago').
+    A coluna C (WhatsApp) tem celular de funcionário e NÃO é lida de propósito: o min_col/
+    max_col abaixo a deixa de fora.
+
+    Cada registro: (ramal, unidade, setor, setor_grupo, responsavel, eh_vago, descricao).
+    """
+    import openpyxl
+
+    wb = openpyxl.load_workbook(xlsx, read_only=True, data_only=True)
+    ws = wb.worksheets[0]
+    aba = ws.title
+    linhas = list(ws.iter_rows(min_col=1, max_col=2, values_only=True))
+    wb.close()
+
+    def _txt(v) -> str | None:
+        if v is None:
+            return None
+        if isinstance(v, float) and v.is_integer():
+            v = int(v)
+        s = re.sub(r"\s+", " ", str(v)).strip()
+        return s or None
+
+    regs: list[tuple] = []
+    avisos: list[str] = []
+    vistos: set[str] = set()
+    unidade: str | None = None
+    for n, (a, b) in enumerate(linhas, start=1):
+        ramal, desc = _txt(a), _txt(b)
+        if ramal and ramal.lower() == "ramal":
+            # Cabeçalho da seção: 'SEDE - Setor' ou 'HOUSE - Setor'.
+            unidade = ((desc or "").split(" - ")[0].strip().upper()) or None
+            continue
+        # Pula o que não é ramal (a célula A1 vem com '#VALUE!') e o que vem antes da 1ª seção.
+        if not ramal or not desc or unidade is None or not re.fullmatch(r"\d{1,5}", ramal):
+            continue
+        if ramal in vistos:
+            avisos.append(f"linha {n}: ramal {ramal} repetido, ficou a primeira ocorrência")
+            continue
+        vistos.add(ramal)
+        setor, _, resp = desc.partition(" - ")
+        setor, resp = setor.strip(), resp.strip() or None
+        setor_grupo = re.sub(r"\s+\d+$", "", setor)  # 'Suprimentos 3' vira 'Suprimentos'
+        vago = bool(resp) and resp.lower() == "vago"
+        if vago or (resp and resp.upper() == unidade):  # 'Corretores 1 - House': ramal de uso comum
+            resp = None
+        regs.append((ramal, unidade, setor, setor_grupo, resp, vago, desc))
+    return regs, avisos, aba
+
+
+def carregar_ramais(conn, xlsx: Path) -> int:
+    """Carrega silver.dpara_ramais (telefonia da MDnet) da planilha de ramais. A tabela nasce
+    no sql/silver/mdnet.sql (aplicar_silver.py --so-mdnet), e não no seeds.sql, porque a view
+    silver.mdnet_chamadas depende dela."""
+    from psycopg import sql
+
+    regs, avisos, aba = ler_ramais(xlsx)
+    for aviso in avisos:
+        log.warning("  ramais: %s", aviso)
+    if not regs:
+        log.warning("  ramais: nenhuma linha lida de %s, dpara_ramais mantida como está.", xlsx.name)
+        return 0
+    with conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('silver.dpara_ramais')")
+        if cur.fetchone()[0] is None:
+            log.error("  silver.dpara_ramais não existe. Rode antes: python aplicar_silver.py --so-mdnet")
+            return 0
+        origem_txt = f"SharePoint: {xlsx.name} (aba {aba})"
+        cur.execute("TRUNCATE silver.dpara_ramais")
+        for ramal, unidade, setor, setor_grupo, resp, vago, desc in regs:
+            cur.execute(
+                sql.SQL("INSERT INTO silver.dpara_ramais "
+                        "(ramal, unidade, setor, setor_grupo, responsavel, eh_vago, descricao, _origem) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)"),
+                (ramal, unidade, setor, setor_grupo, resp, vago, desc, origem_txt),
+            )
+    por_unidade = {u: sum(1 for r in regs if r[1] == u) for u in sorted({r[1] for r in regs})}
+    log.info("  silver.%-24s <- %4d ramais (%s; %d vagos)", "dpara_ramais", len(regs),
+             ", ".join(f"{u} {n}" for u, n in por_unidade.items()), sum(1 for r in regs if r[5]))
+    return len(regs)
+
+
+def _ramais_padrao() -> str | None:
+    """Sem --ramais nem DEPARA_RAMAIS_XLSX, usa o xlsx da pasta de de-paras
+    (DEPARA_DIR/depara_ramais/arquivo), a mesma que o montar_estrutura_depara.py preenche."""
+    pasta = os.getenv("DEPARA_DIR")
+    if not pasta:
+        return None
+    achados = sorted(p for p in (Path(pasta) / "depara_ramais" / "arquivo").glob("*.xlsx")
+                     if not p.name.startswith("~$"))
+    return str(achados[0]) if achados else None
+
+
 # Escopo de colunas do perfil de cliente (DP-15): das 148 colunas do CSV legado,
 # só as de valor analítico real e proporcional ao risco de LGPD (ver plano/decisão
 # registrada em REGRAS_NEGOCIO.md DP-15). EXCLUÍDO de propósito: nome, e-mail,
@@ -1391,6 +1488,10 @@ def main() -> int:
     ap.add_argument("--profissoes", help="caminho de 'de_para profissões.xlsx' (recarrega "
                                           "silver.dpara_profissoes, DP-07). "
                                           "Default: DEPARA_PROFISSOES_XLSX do .env")
+    ap.add_argument("--ramais", nargs="?", const="", help="caminho de 'RAMAIS ATIVOS 2026.xlsx' "
+                                          "(recarrega silver.dpara_ramais, telefonia da MDnet). "
+                                          "Pode ser dado sem valor. Default: DEPARA_RAMAIS_XLSX do "
+                                          ".env, ou o xlsx de DEPARA_DIR/depara_ramais/arquivo")
     ap.add_argument("--perfil-cliente-precadastro", help="caminho de perfil_cliente_precadastro.csv "
                                           "(recarrega silver.perfil_cliente_precadastro, DP-15). "
                                           "Default: PERFIL_CLIENTE_PRECADASTRO_CSV do .env")
@@ -1418,6 +1519,7 @@ def main() -> int:
     viabilidade_path = args.viabilidade or os.getenv("VIABILIDADE_XLSX")
     distratos_2025_path = args.distratos_2025 or os.getenv("DISTRATOS_2025_XLSX")
     profissoes_path = args.profissoes or os.getenv("DEPARA_PROFISSOES_XLSX")
+    ramais_path = args.ramais or os.getenv("DEPARA_RAMAIS_XLSX") or _ramais_padrao()
     perfil_precadastro_path = (args.perfil_cliente_precadastro
                                 or os.getenv("PERFIL_CLIENTE_PRECADASTRO_CSV"))
     perfil_reserva_path = args.perfil_cliente_reserva or os.getenv("PERFIL_CLIENTE_RESERVA_CSV")
@@ -1535,6 +1637,13 @@ def main() -> int:
                 n_seeds += 1
             else:
                 log.warning("  profissoes xlsx não encontrado (%s) — dpara_profissoes mantida como está.", pf)
+        if ramais_path:
+            rm = Path(ramais_path)
+            if rm.exists():
+                total += carregar_ramais(conn, rm)
+                n_seeds += 1
+            else:
+                log.warning("  ramais xlsx não encontrado (%s), dpara_ramais mantida como está.", rm)
         if perfil_precadastro_path:
             pp = Path(perfil_precadastro_path)
             if pp.exists():
